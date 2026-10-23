@@ -1,0 +1,10 @@
+src/**
+webview/**
+test/**
+test-out/**
+node_modules/**
+build.mjs
+tsconfig.json
+reinstall.sh
+**/*.map
+.gitignore
