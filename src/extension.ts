@@ -460,7 +460,8 @@ export function activate(context: vscode.ExtensionContext): void {
     if (rec.ours) return true;
     const refuse = (why: string) => {
       rec.resumable = false;
-      rec.chat.preload([{ type: "_note", text: `${why} Your message was not sent:`, tone: "error", kept: text }]);
+      // Kept past this view: opening another thread drops it, and the transcript alone would rebuild it without the message.
+      manager.keepNote(sid, { type: "_note", text: `${why} Your message was not sent:`, tone: "error", kept: text });
       return false;
     };
     if (!rec.resumable) return refuse("This chat is read-only here.");

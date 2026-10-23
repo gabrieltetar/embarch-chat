@@ -59,6 +59,12 @@ export interface ChatSettings {
 export class ChatManager extends EventEmitter {
   readonly records = new Map<string, ChatRecord>();
   current: string | null = null;
+  /**
+   * Notes a read-only thread keeps for this window's life — a refused
+   * message, to copy — though its view is dropped when another thread
+   * opens and rebuilt from the transcript when it opens again.
+   */
+  private kept = new Map<string, WireMessage[]>();
 
   constructor(private settings: () => ChatSettings) {
     super();
@@ -132,8 +138,14 @@ export class ChatManager extends EventEmitter {
     this.records.set(sessionId, rec);
     this.wire(sessionId, rec);
     if (file) this.loadTranscript(rec, file);
-    else chat.preload([{ type: "_note", text: "No transcript for this session on this machine (Claude Code keeps them 30 days).", tone: "info" }]);
+    else chat.preload([{ type: "_note", text: "No transcript for this session on this machine (Claude Code keeps them 30 days).", tone: "info" }, ...(this.kept.get(sessionId) ?? [])]);
     return rec;
+  }
+
+  /** A note for a thread shown read-only here, kept with it while this window lives (`kept`). */
+  keepNote(sessionId: string, note: WireMessage): void {
+    this.kept.set(sessionId, [...(this.kept.get(sessionId) ?? []), note].slice(-5));
+    this.records.get(sessionId)?.chat.preload([note]);
   }
 
   private loadTranscript(rec: ChatRecord, file: string): void {
@@ -141,7 +153,7 @@ export class ChatManager extends EventEmitter {
     rec.transcript = { file, mtimeMs, size: meta.size, end, named: meta.named, mark: markFile(file, end) };
     if (meta.cwd && !rec.chat.opts.cwd) (rec.chat.opts as { cwd: string }).cwd = meta.cwd;
     rec.chat.state = { ...rec.chat.state, timeline: [], entries: {}, seen: {}, finalized: {}, unconfirmed: [], cwd: meta.cwd ?? rec.chat.state.cwd };
-    rec.chat.preload(events);
+    rec.chat.preload([...events, ...(this.kept.get(rec.chat.sessionId) ?? [])]);
   }
 
   /**
@@ -222,5 +234,6 @@ export class ChatManager extends EventEmitter {
   dispose(): void {
     for (const r of this.records.values()) r.chat.dispose();
     this.records.clear();
+    this.kept.clear();
   }
 }

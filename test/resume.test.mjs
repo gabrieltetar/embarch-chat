@@ -196,6 +196,15 @@ test("a past chat something else runs is not taken over: not offered, and not re
   }, 5000, "S3 read-only");
   assert.equal(s3.view.resumable, false);
   process.env.FAKE_CLAUDE_AGENTS = "[]";
+
+  // Opening S3 dropped S2's view; opened again from its transcript, the refused message is still there to copy.
+  threadsView.webview.fromPage({ t: "open", sid: S2 });
+  const again = await waitFor(() => {
+    const m = lastSnapshot();
+    return m?.state.sessionId === S2 && m;
+  }, 5000, "S2 again");
+  const kept = Object.values(again.state.entries).filter((e) => e.kind === "note" && e.kept === "take it over");
+  assert.equal(kept.length, 1, "the refused message outlives its view");
 });
 
 test("the list shows the window's own desk's cards when the open desk is another; a deleted desk falls back to the open one", { skip }, async () => {
