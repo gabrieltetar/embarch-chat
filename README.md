@@ -35,7 +35,10 @@ whose decision numbers the code cites.
   questions as forms, plans with approve and keep planning, Stop, the mode
   and model switches, subagent steps nested under their call, Edit and Write
   as diffs that open VS Code's diff editor, `@` completion of workspace paths
-  (with the selected lines), `/` completion of the session's commands.
+  (with the selected lines), `/` completion of the session's commands. A
+  tool's whole input or output opens in a read-only editor tab (a Bash
+  output as a log, JSON as JSON) — a 100K serial or build log gets search
+  and the minimap.
 - **An open file's unsaved changes are saved before Claude reads, edits or
   writes it**, as Claude Code's own panel does: a PreToolUse hook declared
   in the CLI's `initialize`, which the CLI calls back over stdio and waits

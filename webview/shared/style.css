@@ -550,6 +550,11 @@ details.thinking .md {
 .tool .body {
   margin: 4px 0 2px;
 }
+.tool .open-tab {
+  display: flex;
+  gap: 4px;
+  margin-top: 2px;
+}
 .tool pre.out {
   margin: 2px 0;
   max-height: 260px;

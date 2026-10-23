@@ -15,6 +15,7 @@ import { readLibrary } from "./library/files";
 import { ChatManager, ChatRecord, DeskDue } from "./chats";
 import { AssignBody, DeskClient, DeskError, MailboxEntry, expandHome } from "./desk/client";
 import { DeskService } from "./deskService";
+import { CONTENT_SCHEME, ContentDocs } from "./content";
 import { DIFF_SCHEME, DiffContent } from "./diff";
 import { hostHooks } from "./hostHooks";
 import { agentPid, jump } from "./jump";
@@ -85,6 +86,8 @@ export function activate(context: vscode.ExtensionContext): void {
   const desk = deskService;
   const diff = new DiffContent();
   context.subscriptions.push(vscode.workspace.registerTextDocumentContentProvider(DIFF_SCHEME, diff));
+  const content = new ContentDocs();
+  context.subscriptions.push(vscode.workspace.registerTextDocumentContentProvider(CONTENT_SCHEME, content));
 
   // Decision 30: the CLI on PATH, a one-line warning outside the tested range.
   let warning: string | null = null;
@@ -129,6 +132,7 @@ export function activate(context: vscode.ExtensionContext): void {
     chats: manager,
     desk,
     diff,
+    content,
     log,
     claudePath: () => cfg().claudePath,
     deskUrl,

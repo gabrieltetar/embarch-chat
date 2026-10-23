@@ -79,6 +79,8 @@ export type ChatToHost =
   | { t: "model"; model: string }
   | { t: "compact" }
   | { t: "openDiff"; toolId?: string; requestId?: string }
+  /** A tool's whole input or output in an editor tab (decision 62). */
+  | { t: "openContent"; toolId: string; part: "input" | "output" }
   | { t: "openFile"; path: string; line?: number }
   | { t: "openLink"; url: string }
   | { t: "atlas"; doc?: string; page?: number; board?: string; ref?: string }

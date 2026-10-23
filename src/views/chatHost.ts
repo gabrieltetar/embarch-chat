@@ -6,6 +6,7 @@ import * as path from "path";
 import * as vscode from "vscode";
 import type { ChatManager } from "../chats";
 import type { DeskService } from "../deskService";
+import type { ContentDocs } from "../content";
 import type { DiffContent } from "../diff";
 import { diffSides } from "../diff";
 import { atlasInfo, citationTarget } from "../atlas";
@@ -27,6 +28,8 @@ export interface HostCtx {
   chats: ChatManager;
   desk: DeskService;
   diff: DiffContent;
+  /** A tool's whole input or output in an editor tab (decision 62). */
+  content: ContentDocs;
   log: (s: string) => void;
   claudePath: () => string;
   deskUrl: (itemId: string | null) => string;
@@ -287,6 +290,11 @@ export class ChatHost implements vscode.Disposable {
           if (p) d = diffSides(p.toolName, p.input, undefined, cwd);
         }
         if (d) await this.ctx.diff.open(d);
+        return;
+      }
+      case "openContent": {
+        const e = chat.state.entries[m.toolId];
+        if (e?.kind === "tool") await this.ctx.content.open(e, m.part);
         return;
       }
       case "openFile": {

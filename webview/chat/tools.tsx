@@ -12,6 +12,7 @@ import type { Entry, ToolEntry } from "../../src/wire/reducer";
 import { Markdown, MdCtx } from "../shared/markdown";
 import { failedText, foldRuns, quietTool, runHead, runTally, toolIntent } from "./runs";
 import { Elapsed } from "./clock";
+import { vscodeApi } from "../shared/vscode";
 
 export interface ToolCtx extends MdCtx {
   openDiff(toolId: string): void;
@@ -235,6 +236,11 @@ function ToolViewInner({ t, entries, ctx, render }: ToolProps) {
             <>
               {t.name === "Bash" ? <pre class="out">$ {String(t.input.command ?? "")}</pre> : <pre class="out">{JSON.stringify(t.input, null, 2)}</pre>}
               {t.result !== undefined && <Result text={t.result} />}
+              {/* The whole of either in an editor tab: search, minimap, log colours (decision 62). */}
+              <div class="open-tab">
+                <button onClick={() => vscodeApi.postMessage({ t: "openContent", toolId: t.id, part: "input" })}>Open input</button>
+                {t.result && <button onClick={() => vscodeApi.postMessage({ t: "openContent", toolId: t.id, part: "output" })}>Open output</button>}
+              </div>
             </>
           )}
           {editLike && t.status === "error" && t.result && <Result text={t.result} />}

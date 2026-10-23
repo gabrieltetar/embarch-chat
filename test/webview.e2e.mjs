@@ -232,6 +232,18 @@ await check("a turn streams, then folds into a message, a Bash call and a reply"
   await shot("chat-basic");
 });
 
+await check("a tool's whole input or output opens in an editor tab (decision 62)", async () => {
+  await send([snapshot(), sent("b"), ...events(outLines("basic"))]);
+  if (!(await text(".tool .open-tab")).length) await click(".tool .line");
+  await clearPosts();
+  await click(".tool .open-tab button", "Open output");
+  await click(".tool .open-tab button", "Open input");
+  const ps = (await posts()).filter((p) => p.t === "openContent");
+  assert.deepEqual(ps.map((p) => p.part), ["output", "input"]);
+  assert.match(ps[0].toolId, /^toolu_/);
+  await shot("chat-open-tab");
+});
+
 await check("text shows while it streams, with a cursor", async () => {
   const lines = outLines("interrupt");
   const cut = lines.findIndex((o) => o.type === "stream_event" && o.event?.delta?.type === "text_delta");

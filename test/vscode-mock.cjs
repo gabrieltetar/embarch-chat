@@ -104,6 +104,9 @@ const state = {
   textDocuments: [],
   /** The Problems panel: [uri, diagnostics] pairs. */
   diagnostics: [],
+  /** Content providers by scheme, and the documents shown in an editor. */
+  contentProviders: new Map(),
+  shown: [],
 };
 
 const vscode = {
@@ -158,7 +161,7 @@ const vscode = {
     showInformationMessage: async (m) => void state.messages.push(["info", m]),
     showQuickPick: (items, opts) => state.quickPick(items, opts),
     showInputBox: (opts) => state.inputBox(opts),
-    showTextDocument: async () => ({ selection: null, revealRange() {} }),
+    showTextDocument: async (doc, opts) => (state.shown.push({ doc, opts }), { selection: null, revealRange() {} }),
     activeTextEditor: undefined,
     terminals: [],
   },
@@ -178,11 +181,20 @@ const vscode = {
       },
     }),
     onDidChangeConfiguration: () => disposable(),
-    registerTextDocumentContentProvider: () => disposable(),
+    registerTextDocumentContentProvider: (scheme, provider) => {
+      state.contentProviders.set(scheme, provider);
+      return disposable(() => state.contentProviders.delete(scheme));
+    },
     findFiles: async () => [],
-    openTextDocument: async (p) => (state.opened.push(String(p)), null),
+    openTextDocument: async (p) => {
+      state.opened.push(String(p));
+      // A virtual document: its provider's text, as VS Code reads it.
+      const provider = p && typeof p === "object" && state.contentProviders.get(p.scheme);
+      return provider ? { uri: p, languageId: "plaintext", getText: () => provider.provideTextDocumentContent(p) } : null;
+    },
   },
   languages: {
+    setTextDocumentLanguage: async (doc, languageId) => ({ ...doc, languageId }),
     getDiagnostics: (uri) => (uri ? (state.diagnostics.find(([u]) => u.fsPath === uri.fsPath)?.[1] ?? []) : state.diagnostics),
   },
   commands: {

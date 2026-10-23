@@ -433,3 +433,28 @@ test("with the diagnostics tool on, a chat's Claude reads the Problems panel thr
     mock.state.diagnostics.length = 0;
   }
 });
+
+test("a tool's whole input or output opens in a read-only editor tab, in a language that suits it (decision 62)", { skip }, async () => {
+  await startUntracked("basic");
+  const n = chatView.webview.posted.length;
+  chatView.webview.fromPage({ t: "send", text: "Run the bash command `echo hello-from-bash` and then reply with just: done" });
+  await waitFor(() => chatView.webview.posted.slice(n).some((m) => m.t === "event" && m.e.type === "result"), 5000, "the turn");
+  const call = chatView.webview.posted.slice(n).find((m) => m.t === "event" && m.e.type === "assistant" && m.e.message.content.some((b) => b.type === "tool_use"));
+  const toolId = call.e.message.content.find((b) => b.type === "tool_use").id;
+  const shown = mock.state.shown.length;
+  chatView.webview.fromPage({ t: "openContent", toolId, part: "output" });
+  chatView.webview.fromPage({ t: "openContent", toolId, part: "input" });
+  await waitFor(() => mock.state.shown.length === shown + 2, 3000, "two tabs");
+  const [out, inp] = mock.state.shown.slice(shown);
+  assert.equal(out.doc.uri.scheme, "embarch-chat-content", "a virtual document: closing it asks nothing");
+  assert.ok(out.doc.uri.path.endsWith("/Bash output.log"));
+  assert.equal(out.doc.languageId, "log");
+  assert.equal(out.doc.getText(), "hello-from-bash");
+  assert.equal(out.opts.preview, true);
+  assert.equal(inp.doc.languageId, "shellscript");
+  assert.equal(inp.doc.getText(), "echo hello-from-bash");
+  // Only a tool of this chat's, by id.
+  chatView.webview.fromPage({ t: "openContent", toolId: "toolu_not_here", part: "output" });
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(mock.state.shown.length, shown + 2);
+});
