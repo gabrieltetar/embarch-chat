@@ -27,6 +27,7 @@ const swaps = [
 
 const KEEP_INIT = ["type", "subtype", "session_id", "uuid", "cwd", "model", "permissionMode", "tools", "agents", "claude_code_version", "output_style", "apiKeySource", "capabilities", "mcp_servers"];
 const NEUTRAL_COMMANDS = ["compact", "context", "cost", "init", "review", "security-review", "simplify"];
+const NEUTRAL_COST = "Total cost:            $0.0000\nTotal duration (API):  0s\nTotal duration (wall): 1s\nUsage:                 0 input, 0 output, 0 cache read, 0 cache write";
 
 const scrub = (s) => {
   for (const [from, to] of swaps) {
@@ -73,6 +74,13 @@ for (const line of fs.readFileSync(src, "utf8").split("\n")) {
   }
   flush();
   if (o.type === "rate_limit_event") continue;
+  // /cost answers with the account's own usage and limits: a neutral answer instead.
+  delete o.usage_report;
+  if (o.type === "assistant" && ["cost", "usage"].includes(o.local_command_run?.command)) {
+    o.message.content = [{ type: "text", text: NEUTRAL_COST }];
+    o.local_command_source = `<local-command-stdout>${NEUTRAL_COST}</local-command-stdout>`;
+  }
+  if (o.type === "result" && ["cost", "usage"].includes(o.local_command)) o.result = NEUTRAL_COST;
   if (o.type === "system" && o.subtype === "init") {
     const keep = {};
     for (const k of KEEP_INIT) if (k in o) keep[k] = o[k];

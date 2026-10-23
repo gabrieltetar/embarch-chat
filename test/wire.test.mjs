@@ -399,6 +399,45 @@ test("a message the CLI never took before it died goes back to the draft", async
   chat.dispose();
 });
 
+test("a local slash command the CLI ran is sent, though nothing echoes it: a later crash gives back only what it never took", async () => {
+  const { chat, spawns } = makeChat("slash");
+  const unsent = [];
+  chat.on("unsent", (t) => unsent.push(t));
+  const users = () => top(chat.state).filter((e) => e.kind === "user").map((e) => [e.text, !!e.pending, !!e.unsent]);
+  let t = turns(chat, 1);
+  chat.send("/context");
+  await t;
+  t = turns(chat, 1);
+  chat.send("/cost");
+  await t;
+  assert.deepEqual(users(), [["/context", false, false], ["/cost", false, false]], "each one ran: neither waits on Claude");
+  assert.deepEqual(chat.state.unconfirmed, []);
+  // Closed when idle; much later the next process dies on the owner's next message.
+  let closed = once(chat, "closed");
+  chat.closeProcess();
+  await closed;
+  chat.opts.env.FAKE_CLAUDE_SIGNAL = "SIGKILL";
+  closed = once(chat, "closed");
+  chat.send("now fix the loader");
+  await closed;
+  assert.equal(spawns().length, 2);
+  assert.deepEqual(unsent, ["now fix the loader"], "only the message the CLI never took goes back to the draft");
+  assert.deepEqual(users(), [["/context", false, false], ["/cost", false, false], ["now fix the loader", false, true]]);
+  chat.dispose();
+});
+
+test("a result names its local command: only that command's message is confirmed, never one still queued or held", () => {
+  let s = core.initialState("11111111-2222-4333-8444-555555555555");
+  for (const [n, text, held] of [[1, "/compact focus on: the loader", false], [2, "/context", true], [3, "/cost", false], [4, "/context", false]]) s = core.reduce(s, { type: "_sent", n, text, images: 0, held });
+  s = core.reduce(s, { type: "user", message: { role: "user", content: "<local-command-stdout>Compacted</local-command-stdout>" } });
+  s = core.reduce(s, { type: "result", subtype: "success", is_error: false, local_command: "compact" });
+  assert.deepEqual(s.unconfirmed, ["s:2", "s:3", "s:4"], "/compact's own output confirmed it; its result confirms nothing else");
+  s = core.reduce(s, { type: "result", subtype: "success", is_error: false, local_command: "context" });
+  assert.deepEqual(s.unconfirmed, ["s:2", "s:3"], "the /context that was sent, not the held one");
+  s = core.reduce(s, { type: "result", subtype: "success", is_error: false });
+  assert.deepEqual(s.unconfirmed, ["s:2", "s:3"], "a prompt's result confirms nothing by itself");
+});
+
 test("a transcript rewritten in place, larger or the same size, is read again from the start", () => {
   const root = tmp("rewrite-");
   const prev = process.env.CLAUDE_CONFIG_DIR;

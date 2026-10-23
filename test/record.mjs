@@ -225,6 +225,18 @@ const scenarios = {
     await r.result();
     await r.close();
   },
+  // Local slash commands: the CLI answers each with a text and a result and
+  // echoes nothing back, unlike a prompt (or /compact's stdout).
+  async slash() {
+    const r = new Rec("slash", ["--tools", ""]);
+    r.user("/context");
+    await r.result();
+    r.user("/cost");
+    await r.result();
+    r.user("Reply with just: ok");
+    await r.result();
+    await r.close();
+  },
   // A turn that writes a handoff (decision 36), asked as the handoff card asks.
   async handoff() {
     const r = new Rec("handoff", ["--tools", "Read"]);

@@ -461,6 +461,17 @@ export function reduce(s: ChatState, o: WireMessage): ChatState {
       // after the main turn ends, and wait until answered or cancelled.
       const pending = s.pending.some((p) => inBackground(s, p.toolUseId)) ? s.pending.filter((p) => inBackground(s, p.toolUseId)) : [];
       let n: ChatState = { ...s, busy: false, compacting: false, streaming: null, pending, lastTurn: { ok, subtype: String(o.subtype ?? "") } };
+      // A local command (/context, /cost, /model …) echoes nothing back: its
+      // result, which names it, is what says the CLI took it — else it would
+      // wait on Claude for good, and a crash hours later would hand it back.
+      if (typeof o.local_command === "string") {
+        const ran = `/${o.local_command}`;
+        const id = (n.unconfirmed ?? []).find((x) => {
+          const e = n.entries[x];
+          return e?.kind === "user" && e.pending && !e.held && e.text.trim().split(/\s/, 1)[0] === ran;
+        });
+        if (id) n = confirm(n, id);
+      }
       if (!ok && !interrupted) {
         const errs = Array.isArray(o.errors) ? (o.errors as string[]).join("; ") : "";
         const text = errs || (typeof o.result === "string" && o.result) || `The turn ended with ${o.subtype}`;
