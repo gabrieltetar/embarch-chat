@@ -725,10 +725,16 @@ export function activate(context: vscode.ExtensionContext): void {
       if (e.closed.some((t) => !(t.input instanceof vscode.TabInputWebview && t.input.viewType.includes("embarchChat.chatTab")))) lastClosed(false);
     }),
     vscode.commands.registerCommand("embarchChat.focus", async () => {
-      // As Claude Code's: selected lines come along as an @-mention.
+      // As Claude Code's: selected lines come along as an @-mention — but
+      // not twice: when the editor chip (60) carries the same lines, the
+      // chip wins. The chip is brought up to date first, not after the
+      // selection's 300 ms pause, and the page then skips the mention.
       const ed = vscode.window.activeTextEditor;
       const host = await keyTarget();
-      if (ed && !ed.selection.isEmpty && ed.document.uri.scheme === "file") host?.insertMention(ed);
+      if (ed && !ed.selection.isEmpty && ed.document.uri.scheme === "file") {
+        editor.refresh(ed);
+        host?.insertMention(ed, { unlessChip: true });
+      }
       host?.focusInput();
     }),
     vscode.commands.registerCommand("embarchChat.blur", () => vscode.commands.executeCommand("workbench.action.focusFirstEditorGroup")),

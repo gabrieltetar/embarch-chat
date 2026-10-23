@@ -1966,6 +1966,26 @@ await check("Alt+Shift+K's @-mention lands at the caret, spaced from the word be
   assert.equal(await value(), "look at @a.c ");
 });
 
+await check("Ctrl+Alt+Esc's mention of the selected lines is skipped when the editor chip carries the same lines: they go once (59, 60)", async () => {
+  await fresh({}, false);
+  const unlessChip = { path: SEL.path, startLine: 10, endLine: 24 };
+  await send([{ t: "editor", editor: { ...SEL, label: "src/main.c#L10-24" } }]);
+  await send([{ t: "insert", text: "@src/main.c#L10-24 ", unlessChip }]);
+  assert.equal(await value(), "", "the chip wins");
+  assert.equal(await chipText(), "Selectionsrc/main.c#L10-24×");
+  assert.equal(await exec("return document.activeElement === document.querySelector('.composer textarea')"), true, "the input still takes focus");
+  // Other lines than the chip's: the mention goes in.
+  await send([{ t: "insert", text: "@src/main.c#L1-2 ", unlessChip: { ...unlessChip, startLine: 1, endLine: 2 } }]);
+  assert.equal(await value(), "@src/main.c#L1-2 ");
+  // The chip taken off with its ×: the key brings the lines as a mention.
+  await exec("const t=document.querySelector('.composer textarea'); t.value=''; t.dispatchEvent(new Event('input', {bubbles:true}))");
+  await click(".composer .ctx-chip .remove");
+  await settle();
+  await send([{ t: "insert", text: "@src/main.c#L10-24 ", unlessChip }]);
+  assert.equal(await value(), "@src/main.c#L10-24 ");
+  await send([{ t: "editor", editor: null }]);
+});
+
 await check("what went with a message shows as rows under it: a selection and a terminal open to their text, the file opens in the editor (58, 60)", async () => {
   await fresh({}, false);
   const context = [SEL, { kind: "file", path: "/work/rec/x/README.md" }, { kind: "terminal", name: "west build", text: "[1/2] Building C object\nerror: 'x' undeclared" }];

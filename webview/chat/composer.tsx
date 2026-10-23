@@ -273,6 +273,13 @@ export function Composer(p: Props) {
         return;
       }
       if (m.t === "insert") {
+        // The editor chip already carries these lines (60): it wins, and they go once.
+        const chip = props.current.editor;
+        const u = m.unlessChip;
+        if (u && chip?.kind === "selection" && chip.path === u.path && chip.startLine === u.startLine && chip.endLine === u.endLine && editorKey(chip) !== dismissedNow.current) {
+          ta.current?.focus();
+          return;
+        }
         // At the caret — at the end when the input was never in use — spaced from the word before.
         const el = ta.current;
         if (!el) return;

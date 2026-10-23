@@ -26,7 +26,7 @@ import { historyMessage } from "./history";
 import type { Attachment, ContextItem } from "../wire/message";
 import { IMAGE_TYPES } from "../wire/message";
 import type { EditorContext, EditorItem } from "../editorContext";
-import { editorLabel } from "../editorContext";
+import { editorItem, editorLabel } from "../editorContext";
 import { terminalOutput } from "../terminals";
 import type { ChatToHost, Header, HostToChat } from "../../webview/shared/protocol";
 
@@ -499,12 +499,19 @@ export class ChatHost implements vscode.Disposable {
     this.postKeyed({ t: "focus" });
   }
 
-  /** The editor's file and selected lines as an @-mention at the input's caret (Alt+Shift+K, 59), from this chat's folder. */
-  insertMention(ed: vscode.TextEditor): void {
+  /**
+   * The editor's file and selected lines as an @-mention at the input's
+   * caret (Alt+Shift+K, 59), from this chat's folder. `unlessChip`: not when
+   * the editor chip (60) already carries the same lines — the page knows
+   * whether it shows it.
+   */
+  insertMention(ed: vscode.TextEditor, opts: { unlessChip?: boolean } = {}): void {
     const rec = this.sid ? this.ctx.chats.get(this.sid) : undefined;
     if (!rec) return;
     this.reveal();
-    this.postKeyed({ t: "insert", text: `@${mentionOf(ed, rec.chat.opts.cwd || rec.chat.state.cwd || "")} ` });
+    const sel = editorItem(ed, { attachOpenFile: false, attachSelection: true });
+    const lines = opts.unlessChip && sel?.kind === "selection" ? { unlessChip: { path: sel.path, startLine: sel.startLine, endLine: sel.endLine } } : {};
+    this.postKeyed({ t: "insert", text: `@${mentionOf(ed, rec.chat.opts.cwd || rec.chat.state.cwd || "")} `, ...lines });
   }
 
   dispose(): void {

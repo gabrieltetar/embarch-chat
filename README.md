@@ -151,7 +151,8 @@ whose decision numbers the code cites.
 
 - **Keys**, after Claude Code's own: **Ctrl+Alt+Esc** focuses the chat's
   input from an editor (with lines selected, it brings them as an
-  @-mention) and again leaves it; **Alt+Shift+K** inserts the editor's file
+  @-mention — unless the editor chip already carries those lines, which
+  then go once) and again leaves it; **Alt+Shift+K** inserts the editor's file
   and selected lines as `@path#L10-24` at the input's caret;
   **Ctrl+Shift+T** reopens the last closed chat tab while a chat tab was
   the last tab closed, else VS Code's own reopen. Claude Code binds

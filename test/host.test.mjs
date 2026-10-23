@@ -925,3 +925,31 @@ test("keys: focus the chat's input, an @-mention of the selection, reopen the la
   assert.ok(mock.state.executed.includes("workbench.action.reopenClosedEditor"), "nothing of ours: VS Code's own");
   for (const p of reopened) p.dispose();
 });
+
+test("Ctrl+Alt+Esc with lines selected: the editor chip is brought up to date first and the page told to skip a mention of the same lines — they go once (decisions 59, 60)", { skip }, async () => {
+  await startUntracked("basic");
+  const ed = fakeEditor("src/main.c", Array.from({ length: 30 }, (_, i) => `line ${i + 1}`));
+  mock.vscode.window.activeTextEditor = ed;
+  mock.vscode.window.visibleTextEditors = [ed];
+  try {
+    mock.bus.emit("activeEditor", ed);
+    await waitFor(() => lastEditor()?.editor?.kind === "file", 3000, "the file's chip");
+    // Selected just now: the key comes before the selection's 300 ms pause.
+    select(ed, 9, 24);
+    const n = chatView.webview.posted.length;
+    await mock.state.commands.get("embarchChat.focus")();
+    const after = chatView.webview.posted.slice(n);
+    const chip = after.findIndex((m) => m.t === "editor" && m.editor?.label === "src/main.c#L10-24");
+    const ins = after.findIndex((m) => m.t === "insert");
+    assert.ok(chip >= 0 && ins > chip, "the chip's lines reach the page before the mention");
+    assert.deepEqual(after[ins], { t: "insert", text: "@src/main.c#L10-24 ", unlessChip: { path: path.join(folder, "src/main.c"), startLine: 10, endLine: 24 } });
+    assert.ok(after.some((m) => m.t === "focus"));
+    // Alt+Shift+K asks for the mention itself: always inserted.
+    await mock.state.commands.get("embarchChat.insertAtMention")();
+    assert.deepEqual(posted((m) => m.t === "insert"), { t: "insert", text: "@src/main.c#L10-24 " });
+  } finally {
+    mock.vscode.window.activeTextEditor = undefined;
+    mock.vscode.window.visibleTextEditors = [];
+    mock.bus.emit("activeEditor", undefined);
+  }
+});

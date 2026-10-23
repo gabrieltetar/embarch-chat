@@ -72,6 +72,11 @@ export class EditorContext extends EventEmitter implements vscode.Disposable {
     this.follow(w.activeTextEditor);
   }
 
+  /** Now, not after the selection's pause: a key that acts on the selection reads it at once (59). */
+  refresh(ed: vscode.TextEditor): void {
+    this.follow(ed);
+  }
+
   /** An editor on something other than a file on disk (a diff side, an output pane) leaves the last one as it was. */
   private follow(ed: vscode.TextEditor | undefined): void {
     clearTimeout(this.timer);
