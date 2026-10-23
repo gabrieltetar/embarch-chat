@@ -38,6 +38,8 @@ export interface ChatRecord {
   deskDue: DeskDue | null;
   /** Text waiting to go into the draft of the page that shows it next. */
   draft?: string | null;
+  /** A turn ended while it was off screen, and the owner has not looked since (Claude Code's unread mark). */
+  unread?: boolean;
   createdMs: number;
   lastMs: number;
   /** A viewer's transcript: read up to `end`; `named` when it holds a custom title; `mark` says it is still that file. */
@@ -96,6 +98,14 @@ export class ChatManager extends EventEmitter {
     if (!rec || !text.trim()) return;
     rec.draft = rec.draft ? `${rec.draft}\n\n${text}` : text;
     this.emit("draft", sid);
+  }
+
+  /** Marks a chat unread or read; `changed` when that moved, for the list and the tab's icon. */
+  setUnread(sessionId: string, unread: boolean): void {
+    const rec = this.records.get(sessionId);
+    if (!rec || !!rec.unread === unread) return;
+    rec.unread = unread;
+    this.emit("changed");
   }
 
   /**
@@ -233,6 +243,7 @@ export class ChatManager extends EventEmitter {
         lastMs: r.lastMs,
         cwd: r.chat.opts.cwd,
         waitingFor: p ? (p.form === "question" ? "your answer" : p.form === "plan" ? "plan approval" : `permission: ${p.toolName}`) : null,
+        unread: !!r.unread,
       });
     }
     return out;

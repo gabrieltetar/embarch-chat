@@ -222,9 +222,34 @@ export function activate(context: vscode.ExtensionContext): void {
     } else status.hide();
   };
 
+  // ------------------------------------------------------------ unread
+
+  // A turn that ends while its chat is off screen leaves it unread until the
+  // owner looks at it, as Claude Code marks one (its changelog L6933): a dot
+  // in the list and on the chat's tab. It joins no count: the badge and the
+  // status bar count what waits on the owner (decision 35), as Claude Code's
+  // badge counts only sessions waiting for input; nothing pops up.
+  manager.on("turn", (sid: string) => {
+    if (manager.get(sid)?.ours && !onScreen(sid)) manager.setUnread(sid, true);
+  });
+  /** What shows now has been seen. */
+  const seen = () => {
+    for (const [sid, rec] of manager.records) if (rec.unread && onScreen(sid)) manager.setUnread(sid, false);
+  };
+  /** Each chat tab's icon (Claude Code's pending and done marks): waiting on the owner, a turn finished unread, or the plain mark. */
+  const refreshTabs = () => {
+    for (const sid of panels.sessions()) {
+      const rec = manager.get(sid);
+      const st = rec?.chat.state;
+      const waiting = !!st?.pending.length || desk.thread(sid)?.thread.state === "waiting";
+      panels.setState(sid, waiting ? "pending" : rec?.unread && !st?.busy && !st?.compacting ? "done" : "plain");
+    }
+  };
+
   desk.on("changed", () => {
     threads.push();
     refreshCount();
+    refreshTabs();
     for (const [sid, rec] of manager.records) panels.retitle(sid, titleOf(rec));
     // The desk is back: what it missed while it was down (decision 10).
     if (!desk.error) for (const rec of manager.records.values()) if (rec.ours && rec.deskDue) void tellDesk(rec);
@@ -258,10 +283,13 @@ export function activate(context: vscode.ExtensionContext): void {
     chatView.show(sid);
     threads.push();
     await reveal();
+    seen();
     refreshCount();
   };
-  chatView.onShown = refreshCount;
-  panels.onShown = refreshCount;
+  chatView.onShown = panels.onShown = () => {
+    seen();
+    refreshCount();
+  };
 
   /**
    * Whether a thread may be taken over here (decisions 5, 31): nothing runs
@@ -329,6 +357,7 @@ export function activate(context: vscode.ExtensionContext): void {
       checkResumable(sid);
     }
     panels.open(sid, titleOf(manager.get(sid)));
+    refreshTabs();
   }
 
   async function jumpTo(sid: string): Promise<void> {
@@ -702,10 +731,24 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("embarchChat.refresh", () => desk.refresh()),
     // The chat's tab or the sidebar's, from their context menu or the palette (Claude Code's renameSessionTab).
     vscode.commands.registerCommand("embarchChat.renameChat", (sid?: unknown) => {
-      const target = typeof sid === "string" ? sid : (panels.active() ?? manager.current);
+      // From a chat page's right-click the page names its chat (data-vscode-context), as for Mark as Unread.
+      const named = typeof sid === "string" ? sid : typeof (sid as { sid?: unknown } | undefined)?.sid === "string" ? (sid as { sid: string }).sid : null;
+      const target = named ?? panels.active() ?? manager.current;
       if (target) return renameChat(target);
     }),
     vscode.commands.registerCommand("embarchChat.showLog", () => output.show()),
+    // Claude Code's Mark as Unread: a row of the list or a chat page names its
+    // chat (their data-vscode-context); from the palette, the active chat tab,
+    // else the sidebar's chat. It stays unread until the owner looks again.
+    vscode.commands.registerCommand("embarchChat.markUnread", (arg?: { sid?: unknown }) => {
+      const sid = typeof arg?.sid === "string" ? arg.sid : (panels.active() ?? (chatView.view?.visible ? manager.current : null));
+      const rec = sid ? manager.get(sid) : undefined;
+      if (!rec?.ours) {
+        void vscode.window.showInformationMessage("No chat of this window's to mark as unread.");
+        return;
+      }
+      manager.setUnread(rec.chat.sessionId, true);
+    }),
   );
 
   // ------------------------------------------------------------ keys (decision 59)

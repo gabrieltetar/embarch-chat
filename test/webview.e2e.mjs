@@ -2227,6 +2227,32 @@ await check("the list's ✎ names a thread this window runs or nothing runs; one
   assert.deepEqual((await posts()).filter((p) => p.t !== "ready"), [{ t: "rename", sid: "o" }], "it does not open the thread too");
 });
 
+await check("a chat whose turn finished unseen lists unread: a filled dot in the done colour, and Mark as Unread on its right-click", async () => {
+  const groups = core.buildThreads({
+    view: null,
+    desk: null,
+    repos: ["/work/fw"],
+    own: [
+      { sessionId: "u1", title: "Flash finished", status: "idle", itemId: null, lastMs: Date.now() - 60000, cwd: "/work/fw", unread: true },
+      { sessionId: "r1", title: "Read already", status: "idle", itemId: null, lastMs: Date.now(), cwd: "/work/fw" },
+    ],
+    past: [{ sessionId: "p1", title: "Yesterday's chat", firstPrompt: null, cwd: "/work/fw", lastMs: Date.now() - 86400000 }],
+    itemOf: {},
+    now: Date.now(),
+  });
+  await send([{ t: "groups", groups, desk: "Example", error: null, selected: null, now: Date.now() }]);
+  assert.deepEqual(await text(".thread .ttitle"), ["Flash finished", "Read already", "Yesterday's chat"], "unread ahead of what was read");
+  assert.equal(await exec("return document.querySelectorAll('.dot.unread').length"), 1);
+  assert.ok((await text(".thread .tmeta"))[0].includes("finished — unread"));
+  const ok = await exec("const c = getComputedStyle(document.body).getPropertyValue('--ok').trim(); const d = document.createElement('i'); d.style.color = c; document.body.append(d); const v = getComputedStyle(d).color; d.remove(); return [v, getComputedStyle(document.querySelector('.dot.unread')).backgroundColor]");
+  assert.equal(ok[1], ok[0], "filled in --ok");
+  // This window's rows name their chat for the right-click menu; a past chat's offers nothing.
+  const ctx = await exec("return [...document.querySelectorAll('.thread')].map((e) => e.getAttribute('data-vscode-context'))");
+  assert.deepEqual(JSON.parse(ctx[0]), { webviewSection: "embarchChat", sid: "u1" });
+  assert.equal(ctx[2], null);
+  await shot("list-unread");
+});
+
 await check("the list says so when the desk is down", async () => {
   await send([{ t: "groups", groups: [], desk: null, error: "The desk is not running — showing this window's chats only.", selected: null, now: Date.now() }]);
   assert.ok((await text(".warn-line"))[0].includes("not running"));
@@ -2307,6 +2333,46 @@ await check("dark and light take EmbArch's accents and semantics; a high-contras
   await send([listMsg]);
   await shot("list-light");
   assert.deepEqual(await exec("return window.__violations"), []);
+});
+
+await check("a chat tab's mark at 16 px: plain, amber while it waits, green when a turn finished unread; the mark's red never moves", async () => {
+  // Each SVG drawn as VS Code draws a tab icon, at 16 px, and read back pixel by pixel.
+  const files = ["", "pending-", "done-"].flatMap((st) => ["dark", "light"].map((th) => `embarch-tab-${st}${th}`));
+  const urls = Object.fromEntries(files.map((f) => [f, `data:image/svg+xml;base64,${fs.readFileSync(path.join(root, "media", `${f}.svg`)).toString("base64")}`]));
+  await wd("POST", `${S}/url`, { url: "about:blank" });
+  const px = await wd("POST", `${S}/execute/async`, {
+    script: `const [urls, done] = arguments; (async () => { const out = {};
+      const big = document.createElement("canvas"); big.width = 3 * 136; big.height = 300; document.body.style.cssText = "margin:0;background:#fff"; document.body.append(big);
+      const g = big.getContext("2d"); g.imageSmoothingEnabled = false;
+      let i = 0;
+      for (const [name, url] of Object.entries(urls)) {
+        const img = new Image(); img.src = url; await img.decode();
+        const c = document.createElement("canvas"); c.width = c.height = 16;
+        const x = c.getContext("2d"); x.drawImage(img, 0, 0, 16, 16);
+        const at = (px, py) => [...x.getImageData(px, py, 1, 1).data];
+        out[name] = { dot: at(12, 3), a: at(13, 13), png: c.toDataURL("image/png") };
+        // Plain, pending, done across; dark over light: magnified, and at 16 px under each.
+        const X = Math.floor(i / 2) * 136, Y = (i % 2) * 150;
+        g.fillStyle = name.endsWith("dark") ? "#1f1f1f" : "#f8f8f8"; g.fillRect(X, Y, 136, 150);
+        g.drawImage(c, X + 4, Y + 4, 128, 128); g.drawImage(c, X + 60, Y + 134);
+        i++;
+      }
+      done(out); })();`,
+    args: [urls],
+  });
+  const hex = (p) => "#" + p.slice(0, 3).map((v) => v.toString(16).padStart(2, "0")).join("");
+  assert.equal(hex(px["embarch-tab-pending-dark"].dot), "#e3ae28", "amber, --waiting");
+  assert.equal(hex(px["embarch-tab-pending-light"].dot), "#9b6500");
+  assert.equal(hex(px["embarch-tab-done-dark"].dot), "#53be70", "green, --ok");
+  assert.equal(hex(px["embarch-tab-done-light"].dot), "#067132");
+  assert.equal(hex(px["embarch-tab-dark"].dot), "#e74c3c", "the plain mark: the A's apex where the dot goes");
+  for (const th of ["dark", "light"]) for (const st of ["pending-", "done-"]) assert.deepEqual(px[`embarch-tab-${st}${th}`].a, px[`embarch-tab-${th}`].a, `the A's red, ${st}${th}`);
+  assert.equal(hex(px["embarch-tab-dark"].a), "#e74c3c");
+  if (SHOTS) {
+    fs.mkdirSync(SHOTS, { recursive: true });
+    for (const [name, v] of Object.entries(px)) fs.writeFileSync(path.join(SHOTS, `${name}-16px.png`), Buffer.from(v.png.split(",")[1], "base64"));
+  }
+  await shot("tab-icons");
 });
 
 await teardown();

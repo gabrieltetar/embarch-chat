@@ -21,6 +21,10 @@ Outputs, all in media/:
     embarch-glyph.svg        the same shape, for the view containers
     embarch-tab-dark.svg     the editor tab's icon on a dark theme
     embarch-tab-light.svg    ... and on a light one
+    embarch-tab-<state>-<theme>.svg
+                             the tab with a state dot, as Claude Code's
+                             claude-logo-pending/-done.svg carry one: the
+                             chat waits on the owner, or finished unread
 
 It needs fontTools and skia-pathops (the boolean ops), which nothing at
 runtime does, so they live in a scratch venv rather than in package.json:
@@ -73,6 +77,18 @@ SHIP = "c-gap-snapped"
 #   dark:  oklch(72% 0.008 250), oklch(63% 0.194 29) -- the mark's own #e74c3c
 #   light: oklch(42% 0.01 250),  oklch(56% 0.19 29)
 TAB = {"dark": ("#a1a5a9", "#e74c3c"), "light": ("#494e52", "#cc3529")}
+
+# The tab's state dot (decision 53's semantics, never the mark's red): amber
+# while the chat waits on the owner, green once a turn finished unread.
+# embarch-chat's webview tokens (webview/shared/style.css), as hex:
+#   pending: --waiting  dark oklch(78% 0.15 85),  light oklch(55% 0.14 80)
+#   done:    --ok       dark oklch(72% 0.15 150), light oklch(48% 0.13 150)
+STATE = {"pending": {"dark": "#e3ae28", "light": "#9b6500"}, "done": {"dark": "#53be70", "light": "#067132"}}
+# Claude Code's badge, scaled from its 24 px box to 16: a dot of radius 3
+# in the top-right corner, the mark cut back a pixel and a third round it so
+# the dot stands clear of the A.
+DOT = (12.5, 3.5, 3.0)
+DOT_CUT = 4.33
 
 
 def mark_paths():
@@ -207,16 +223,25 @@ def write_woff(path, polys):
     fb.save(path)
 
 
-def write_tab(path, theme):
+def write_tab(path, theme, state=None):
     """The tab's mark: the silhouette in the E's colour, the A over it, both
-    snapped together so an edge they share stays shared."""
+    snapped together so an edge they share stays shared. With a state, the
+    mark is masked round the corner and the state's dot sits there."""
     e, a = TAB[theme]
     sil = to_px(polygons(path_of(mark_paths()[0])))
     a_fat = to_px(polygons(letters()[1]))
     both = snap(sil + a_fat)
+    mask = ' mask="url(#cut)"' if state else ""
     paths = "".join(
-        '<path d="%s" fill="%s"/>' % (d_attr(p), fill) for p, fill in ((both[: len(sil)], e), (both[len(sil) :], a))
+        '<path d="%s" fill="%s"%s/>' % (d_attr(p), fill, mask) for p, fill in ((both[: len(sil)], e), (both[len(sil) :], a))
     )
+    if state:
+        x, y, r = DOT
+        paths = (
+            '<defs><mask id="cut"><rect width="16" height="16" fill="white"/>'
+            '<circle cx="%g" cy="%g" r="%g" fill="black"/></mask></defs>%s'
+            '<circle cx="%g" cy="%g" r="%g" fill="%s"/>' % (x, y, DOT_CUT, paths, x, y, r, STATE[state][theme])
+        )
     open(path, "w").write(
         '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">%s</svg>\n' % paths
     )
@@ -237,4 +262,6 @@ if __name__ == "__main__":
         write_svg(os.path.join(MEDIA, "embarch-glyph.svg"), polys)
         for theme in TAB:
             write_tab(os.path.join(MEDIA, "embarch-tab-%s.svg" % theme), theme)
-        print("wrote media/embarch-glyph.{woff,svg}, media/embarch-tab-{dark,light}.svg from", SHIP)
+            for state in STATE:
+                write_tab(os.path.join(MEDIA, "embarch-tab-%s-%s.svg" % (state, theme)), theme, state)
+        print("wrote media/embarch-glyph.{woff,svg}, media/embarch-tab-{,pending-,done-}{dark,light}.svg from", SHIP)

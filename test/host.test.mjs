@@ -583,6 +583,78 @@ test("Always allow from the card: the suggestions kept go where the owner picked
   }
 });
 
+test("a turn that ends off screen leaves its chat unread — a dot in the list and on its tab — until the owner looks; Mark as Unread sets it again", { skip }, async () => {
+  const sid = await startUntracked("basic");
+  await mock.state.commands.get("embarchChat.openInEditor")();
+  const panel = mock.state.panels.at(-1);
+  const thread = () => lastGroups()?.groups.flatMap((g) => g.threads).find((t) => t.sessionId === sid);
+  const icon = () => path.basename(panel.iconPath.dark.fsPath);
+  assert.equal(icon(), "embarch-tab-dark.svg");
+  try {
+    // Neither the sidebar nor the tab shows it while its turn runs.
+    chatView.visible = false;
+    chatView.em.emit("vis");
+    panel.visible = false;
+    panel.em.emit("view");
+    // Earlier tests' chats may wait off screen now: what counts is that this one adds nothing.
+    await new Promise((r) => setTimeout(r, 200));
+    const count = () => mock.state.statusItems.find((s) => s.command === "embarchChat.openWaiting");
+    const before = { text: count().visible ? count().text : null, badge: threadsView.badge?.value, messages: mock.state.messages.length };
+    const n = chatView.webview.posted.length;
+    chatView.webview.fromPage({ t: "send", text: "Run the bash command `echo hello-from-bash` and then reply with just: done" });
+    await waitFor(() => chatView.webview.posted.slice(n).some((m) => m.t === "event" && m.e.type === "result"), 5000, "the turn's end");
+    await waitFor(() => thread()?.unread, 5000, "the unread mark in the list");
+    assert.equal(icon(), "embarch-tab-done-dark.svg");
+    assert.equal(path.basename(panel.iconPath.light.fsPath), "embarch-tab-done-light.svg");
+    // It waits on no one: it joins no count, and nothing pops up (decision 35).
+    assert.deepEqual({ text: count().visible ? count().text : null, badge: threadsView.badge?.value, messages: mock.state.messages.length }, before);
+    // The owner looks at its tab: read.
+    panel.visible = true;
+    panel.active = true;
+    panel.em.emit("view");
+    await waitFor(() => thread() && !thread().unread, 5000, "the mark gone once seen");
+    assert.equal(icon(), "embarch-tab-dark.svg");
+    // Mark as Unread on the active tab; it stays so until the owner looks again.
+    await mock.state.commands.get("embarchChat.markUnread")();
+    await waitFor(() => thread()?.unread, 5000, "marked unread");
+    assert.equal(icon(), "embarch-tab-done-dark.svg");
+    panel.em.emit("view");
+    await waitFor(() => !thread().unread, 5000, "read again");
+    // From a row's right-click: the row names its chat.
+    panel.visible = false;
+    panel.active = false;
+    panel.em.emit("view");
+    await mock.state.commands.get("embarchChat.markUnread")({ webviewSection: "embarchChat", sid });
+    await waitFor(() => thread()?.unread, 5000, "marked from the list");
+    // Its manifest entry: the palette, and right-click on a chat or one of this window's rows.
+    const manifest = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+    assert.ok(manifest.contributes.commands.some((c) => c.command === "embarchChat.markUnread" && c.title === "Mark as Unread"));
+    assert.ok(manifest.contributes.menus["webview/context"].some((m) => m.command === "embarchChat.markUnread" && /webviewSection == 'embarchChat'/.test(m.when)));
+    for (const f of ["pending", "done"]) for (const theme of ["dark", "light"]) assert.ok(fs.existsSync(path.join(root, "media", `embarch-tab-${f}-${theme}.svg`)), `${f}-${theme}`);
+  } finally {
+    chatView.visible = true;
+    chatView.em.emit("vis");
+    panel.dispose();
+  }
+});
+
+test("a tab whose chat waits on the owner wears the pending mark", { skip }, async () => {
+  await startUntracked("deny");
+  await mock.state.commands.get("embarchChat.openInEditor")();
+  const panel = mock.state.panels.at(-1);
+  try {
+    const n = chatView.webview.posted.length;
+    chatView.webview.fromPage({ t: "send", text: "touch it" });
+    await waitFor(() => chatView.webview.posted.slice(n).some((m) => m.t === "event" && m.e.type === "control_request"), 5000, "the permission prompt");
+    await waitFor(() => path.basename(panel.iconPath.dark.fsPath) === "embarch-tab-pending-dark.svg", 5000, "the pending mark");
+    const ask = [...chatView.webview.posted].reverse().find((m) => m.t === "event" && m.e.type === "control_request").e;
+    chatView.webview.fromPage({ t: "deny", requestId: ask.request_id, message: "no" });
+    await waitFor(() => path.basename(panel.iconPath.dark.fsPath) !== "embarch-tab-pending-dark.svg", 5000, "the mark gone with the answer");
+  } finally {
+    panel.dispose();
+  }
+});
+
 // ------------------------------------------------------------ a window reload (decision 63)
 
 /** The window reloads: this extension host deactivates and a new one activates, with the same workspace state. */

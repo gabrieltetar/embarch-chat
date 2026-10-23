@@ -1595,6 +1595,14 @@ details.thinking .md {
 .dot.idle {
   border-color: var(--ok);
 }
+/* A turn finished off screen, not yet seen: the done colour, filled. */
+.dot.unread {
+  background: var(--ok);
+  border-color: var(--ok);
+}
+.thread .tmeta .u {
+  color: var(--ok);
+}
 .dot.ended {
   opacity: 0.45;
 }

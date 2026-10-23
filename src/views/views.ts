@@ -42,9 +42,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 }
 
+/**
+ * What a chat's tab icon says, as Claude Code's does (its
+ * claude-logo-pending/-done.svg): it waits on the owner, or a turn finished
+ * unread; else the plain mark.
+ */
+export type TabState = "plain" | "pending" | "done";
+
 /** Chats opened as editor tabs, one per session. */
 export class ChatPanels implements vscode.Disposable {
-  private panels = new Map<string, { panel: vscode.WebviewPanel; host: ChatHost }>();
+  private panels = new Map<string, { panel: vscode.WebviewPanel; host: ChatHost; icon: TabState }>();
   /** Called when a tab shows or hides. */
   onShown: () => void = () => {};
   /** Called when the owner closed a tab: Ctrl+Shift+T can bring it back (59). */
@@ -72,13 +79,10 @@ export class ChatPanels implements vscode.Disposable {
       localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, "dist")],
     });
     // The mark in its two colours, a file per theme (decision 54).
-    panel.iconPath = {
-      light: vscode.Uri.joinPath(this.extensionUri, "media", "embarch-tab-light.svg"),
-      dark: vscode.Uri.joinPath(this.extensionUri, "media", "embarch-tab-dark.svg"),
-    };
+    panel.iconPath = this.iconFor("plain");
     const host = new ChatHost(panel.webview, this.ctx, sid, true, () => panel.reveal(undefined, false));
     panel.webview.html = webviewHtml(panel.webview, this.extensionUri, "chat", title);
-    this.panels.set(sid, { panel, host });
+    this.panels.set(sid, { panel, host, icon: "plain" });
     panel.onDidChangeViewState?.(() => {
       if (panel.active) this.lastActive = sid;
       this.onShown();
@@ -107,6 +111,23 @@ export class ChatPanels implements vscode.Disposable {
   shownHost(): ChatHost | undefined {
     const p = this.lastActive ? this.panels.get(this.lastActive) : undefined;
     return p?.panel.visible ? p.host : undefined;
+  }
+
+  /** The mark, with the state's dot in the corner unless plain. */
+  private iconFor(state: TabState): { light: vscode.Uri; dark: vscode.Uri } {
+    const name = (theme: string) => `embarch-tab-${state === "plain" ? "" : `${state}-`}${theme}.svg`;
+    return {
+      light: vscode.Uri.joinPath(this.extensionUri, "media", name("light")),
+      dark: vscode.Uri.joinPath(this.extensionUri, "media", name("dark")),
+    };
+  }
+
+  /** The tab's icon for its chat's state, set only when it moved. */
+  setState(sid: string, state: TabState): void {
+    const p = this.panels.get(sid);
+    if (!p || p.icon === state) return;
+    p.icon = state;
+    p.panel.iconPath = this.iconFor(state);
   }
 
   retitle(sid: string, title: string): void {

@@ -195,7 +195,8 @@ const vscode = {
     },
     createWebviewPanel: (viewType, title) => {
       const em = new EventEmitter();
-      const p = { viewType, title, webview: new FakeWebview(), iconPath: undefined, reveal() {}, onDidDispose: event(em, "dispose"), dispose: () => em.emit("dispose") };
+      // `visible` and `active` are the test's to set; `em.emit("view")` is onDidChangeViewState.
+      const p = { viewType, title, webview: new FakeWebview(), iconPath: undefined, visible: undefined, active: undefined, em, reveal() {}, onDidChangeViewState: event(em, "view"), onDidDispose: event(em, "dispose"), dispose: () => em.emit("dispose") };
       state.panels.push(p);
       return p;
     },

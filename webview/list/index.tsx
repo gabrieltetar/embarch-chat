@@ -24,13 +24,21 @@ function where(t: Thread): string {
 }
 
 function Row({ t, selected, now }: { t: Thread; selected: boolean; now: number }) {
+  // A turn that finished off screen, not yet seen: a filled dot, Claude Code's unread.
+  const unread = !!t.unread && t.state === "idle";
   return (
-    <div class={`thread ${selected ? "sel" : ""}`} onClick={() => post({ t: "open", sid: t.sessionId })} title={t.title}>
-      <span class={`dot ${t.state}`} title={t.state} />
+    <div
+      class={`thread ${selected ? "sel" : ""}`}
+      onClick={() => post({ t: "open", sid: t.sessionId })}
+      title={t.title}
+      // This window's chats get Mark as Unread on right-click (package.json, webview/context).
+      data-vscode-context={t.ours ? JSON.stringify({ webviewSection: "embarchChat", sid: t.sessionId }) : undefined}
+    >
+      <span class={`dot ${unread ? "unread" : t.state}`} title={unread ? "finished — unread" : t.state} />
       <div class="tbody">
         <div class="ttitle">{t.title}</div>
         <div class="tmeta">
-          {t.state === "waiting" ? <span class="w">{t.waitingFor ?? "waits on you"}</span> : where(t)} · {ago(t.lastMs, now)}
+          {t.state === "waiting" ? <span class="w">{t.waitingFor ?? "waits on you"}</span> : unread ? <span class="u">finished — unread</span> : where(t)} · {ago(t.lastMs, now)}
         </div>
       </div>
       <span class="acts">

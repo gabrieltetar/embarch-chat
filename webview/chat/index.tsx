@@ -371,7 +371,8 @@ function App() {
   const placeholder = view.readOnly ? "" : view.resumable ? "Message to resume this chat here" : busy ? "Queue a message…" : "Message Claude — @ for files, / for commands";
 
   return (
-    <div class="chat">
+    // A chat of this window's gets Mark as Unread on right-click (package.json, webview/context).
+    <div class="chat" data-vscode-context={view.ours ? JSON.stringify({ webviewSection: "embarchChat", sid: state.sessionId }) : undefined}>
       <HeaderBar h={model.header} state={state} view={view} />
       <div
         class="timeline"

@@ -102,6 +102,11 @@
         "category": "EmbArch Chat"
       },
       {
+        "command": "embarchChat.markUnread",
+        "title": "Mark as Unread",
+        "category": "EmbArch Chat"
+      },
+      {
         "command": "embarchChat.acceptChanges",
         "title": "Accept the Kept Changes",
         "category": "EmbArch Chat",
@@ -259,7 +264,13 @@
       "webview/context": [
         {
           "command": "embarchChat.renameChat",
-          "when": "webviewId == 'embarchChat.chatTab' || webviewId == 'embarchChat.chat'"
+          "when": "webviewId == 'embarchChat.chatTab' || webviewId == 'embarchChat.chat'",
+          "group": "embarchChat@1"
+        },
+        {
+          "command": "embarchChat.markUnread",
+          "when": "webviewSection == 'embarchChat'",
+          "group": "embarchChat@2"
         }
       ]
     },

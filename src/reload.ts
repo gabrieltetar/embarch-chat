@@ -48,6 +48,8 @@ interface SavedChat {
   title?: string;
   /** A fork no message was sent to yet: where it starts from (decision 73). */
   fork?: { from: string; at: string };
+  /** A turn finished unseen: it comes back unread, as Claude Code keeps its marks. */
+  unread?: boolean;
 }
 
 interface Saved {
@@ -104,6 +106,7 @@ export class ReloadMemory implements vscode.Disposable {
         reruns: this.rerunsOf(sid),
         ...(r.chat.pendingName ? { title: r.chat.pendingName } : {}),
         ...(r.chat.pendingFork ? { fork: r.chat.pendingFork } : {}),
+        ...(r.unread ? { unread: true } : {}),
       });
     }
     const saved: Saved | undefined = chats.length ? { at: Date.now(), current: this.manager.current, chats } : undefined;
@@ -155,6 +158,7 @@ export async function restoreAfterReload(o: RestoreCtx): Promise<void> {
     if (parent) rec.chat.preload(historyUpTo(parent, c.fork!.at));
     if (fresh && c.title) void rec.chat.renameByHand(c.title);
     rec.untracked = c.untracked;
+    if (c.unread) rec.unread = true;
     o.memory.noteRerun(c.sid, c.reruns);
     if (c.tab) o.openTab(c.sid);
     void bringBack(o, c);

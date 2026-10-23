@@ -22,6 +22,8 @@ export interface Thread {
   client?: string | null;
   folderUri?: string;
   sessionUri?: string;
+  /** A turn of this window's chat ended off screen and the owner has not looked since. */
+  unread?: boolean;
 }
 
 export interface GroupItem {
@@ -52,6 +54,7 @@ export interface OwnChat {
   lastMs: number;
   cwd: string;
   waitingFor?: string | null;
+  unread?: boolean;
 }
 
 export interface PastChat {
@@ -97,6 +100,8 @@ export function resolveDesk(folders: string[], desks: ViewDesk[], openDesk: View
 }
 
 const RANK: Record<ThreadState, number> = { waiting: 0, busy: 1, idle: 2, ended: 3 };
+/** Claude Code's order: waiting, running, then a finished turn not yet seen, then the rest. */
+const rank = (t: Thread) => RANK[t.state] - (t.unread && t.state === "idle" ? 0.5 : 0);
 
 function normState(s: string | undefined | null): ThreadState {
   if (s === "waiting" || s === "busy" || s === "idle" || s === "ended") return s;
@@ -215,6 +220,7 @@ export function buildThreads(inp: ThreadInputs): ThreadGroup[] {
       ours: true,
       live: o.status !== "closed",
       client: "embarch-chat",
+      ...(o.unread ? { unread: true } : {}),
     });
   }
 
@@ -242,7 +248,7 @@ export function buildThreads(inp: ThreadInputs): ThreadGroup[] {
   for (const key of order) {
     const g = groups.get(key)!;
     if (!g.threads.length && g.item === null) continue;
-    g.threads.sort((a, b) => RANK[a.state] - RANK[b.state] || b.lastMs - a.lastMs);
+    g.threads.sort((a, b) => rank(a) - rank(b) || b.lastMs - a.lastMs);
     g.waiting = g.threads.filter((t) => t.state === "waiting").length;
     g.lastMs = Math.max(g.lastMs, ...g.threads.map((t) => t.lastMs));
     out.push(g);

@@ -461,6 +461,25 @@ test("without a desk the window's own chats still list", () => {
   assert.equal(groups[0].threads[0].title, "New chat");
 });
 
+test("a chat of this window's whose turn finished unseen lists unread, after what runs and before the rest, as Claude Code orders them", () => {
+  const own = (sessionId, status, lastMs, unread) => ({ sessionId, title: sessionId, status, itemId: null, lastMs, cwd: "/work/fw", ...(unread ? { unread } : {}) });
+  const groups = core.buildThreads({
+    view: null,
+    desk: null,
+    repos: ["/work/fw"],
+    own: [own("idle-new", "idle", 9), own("unread-old", "idle", 1, true), own("busy", "busy", 2), own("waits", "waiting", 3), own("busy-unread", "busy", 4, true)],
+    past: [],
+    itemOf: {},
+    now: 10,
+  });
+  const ts = groups[0].threads;
+  assert.deepEqual(ts.map((t) => t.sessionId), ["waits", "busy-unread", "busy", "unread-old", "idle-new"]);
+  assert.equal(ts.find((t) => t.sessionId === "unread-old").unread, true);
+  assert.equal(ts.find((t) => t.sessionId === "idle-new").unread, undefined);
+  // It waits on no one: the count stays the waiting chats'.
+  assert.deepEqual(core.waitingThreads(groups).map((t) => t.sessionId), ["waits"]);
+});
+
 test("an ended chat a card keeps shows its transcript's title, not its folder's name", () => {
   const sid = "03ac71e1-6c27-4537-8d5d-a88242b53312";
   const row = { session_id: sid, name: "fw", status: "ended", state: "ended", waiting_for: null, last_ms: 1, client: "embarch-chat", cwd: "/work/fw" };
