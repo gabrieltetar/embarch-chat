@@ -6,47 +6,34 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import * as http from "node:http";
+import { ScratchDesk, haveDesk } from "./scratch-desk.mjs";
 
 const require = createRequire(import.meta.url);
 const core = require("../test-out/core.js");
 
-const BIN = process.env.EMBARCH_DESK_BIN;
-const PORT = 4950 + Math.floor(Math.random() * 30);
+const PORT = 4980;
+const PROBE_PORT = 4981;
 let desk = null;
 let dir = null;
 let client = null;
 
 before(async () => {
-  if (!BIN || !fs.existsSync(BIN)) return;
+  if (!haveDesk) return;
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "embarch-chat-desk-"));
-  fs.mkdirSync(path.join(dir, "data"));
-  fs.mkdirSync(path.join(dir, "config"));
-  desk = spawn(BIN, ["serve"], {
-    env: { ...process.env, EMBARCH_DESK_DATA_DIR: path.join(dir, "data"), EMBARCH_DESK_CONFIG_DIR: path.join(dir, "config"), EMBARCH_DESK_PORT: String(PORT) },
-    stdio: "ignore",
-  });
-  client = new core.DeskClient({ baseUrl: `http://127.0.0.1:${PORT}`, tokenPath: path.join(dir, "config", "desk-token") });
-  for (let i = 0; i < 100; i++) {
-    try {
-      await client.call("GET", "/health");
-      return;
-    } catch {
-      await new Promise((r) => setTimeout(r, 100));
-    }
-  }
-  throw new Error("scratch desk did not start");
+  desk = await new ScratchDesk(dir, PORT).start();
+  client = desk.client;
 });
 
-after(() => {
-  desk?.kill();
+after(async () => {
+  await desk?.stop();
   if (dir) fs.rmSync(dir, { recursive: true, force: true });
 });
 
-const live = { skip: !BIN ? "EMBARCH_DESK_BIN not set" : false };
+const live = { skip: !haveDesk ? "EMBARCH_DESK_BIN not set" : false };
 
 test("assign marks the session as this panel's, and /view reports it", live, async () => {
   const { id } = await client.call("POST", "/items", { title: "ABC-123 a test item", desk: "none" });
@@ -73,7 +60,8 @@ test("an untracked chat, and a new title, assign too", live, async () => {
 test("the mailbox: a start entry for this folder, taken once", live, async () => {
   const { id: item } = await client.call("POST", "/items", { title: "ABC-124 mailbox item", desk: "none" });
   const folder = "/work/repo-abc-124";
-  const { id } = await client.call("POST", "/mailbox", { kind: "start", item_id: item, folder, prompt: "Read the issue and start." });
+  // Only Start work leaves a start, server-side; the test seeds the store as it would.
+  const id = await desk.withStart({ item_id: item, folder, prompt: "Read the issue and start." });
   const entries = await client.mailbox(folder);
   const e = entries.find((x) => x.id === id);
   assert.equal(e.kind, "start");
@@ -84,6 +72,11 @@ test("the mailbox: a start entry for this folder, taken once", live, async () =>
   assert.equal(got.id, id);
   assert.equal(await client.take(id), null, "a second take is a 409");
   await assert.rejects(client.take("no-such-entry"), (err) => err.status === 404);
+});
+
+test("the desk refuses a start posted to the mailbox: only Start work leaves one", live, async () => {
+  await assert.rejects(client.call("POST", "/mailbox", { kind: "start", item_id: "x", folder: "/work/x", prompt: "rm -rf" }), (err) => err.status === 400);
+  assert.deepEqual(await client.mailbox("/work/x"), []);
 });
 
 test("Jump to another window's chat leaves a focus entry", live, async () => {
@@ -99,8 +92,40 @@ test("a wrong token is refused after one re-read", live, async () => {
   await assert.rejects(bad.view(), (err) => err.status === 401);
 });
 
+test("the desk is this machine's: only http on a loopback address is ever called", () => {
+  for (const ok of ["http://127.0.0.1:4891", "http://localhost:4891/", "http://[::1]:4891", "http://127.0.0.2:1"]) assert.ok(core.loopbackUrl(ok), ok);
+  for (const no of ["http://10.0.0.1:4891", "http://127.0.0.1.example.com:4891", "https://127.0.0.1:4891", "http://user:pw@127.0.0.1:4891", "http://example.invalid", "file:///etc/passwd", "not a url", ""]) {
+    assert.equal(core.loopbackUrl(no), null, no);
+  }
+});
+
+test("a desk URL off this machine is refused before anything is sent, the token included", async () => {
+  const secret = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "embarch-chat-refuse-")), "secret");
+  fs.writeFileSync(secret, "sk-FAKE-not-real");
+  // A listener on this machine's own non-loopback address, where a reachable host would be.
+  const addr = Object.values(os.networkInterfaces())
+    .flat()
+    .find((a) => a && a.family === "IPv4" && !a.internal)?.address;
+  const seen = [];
+  const srv = addr ? http.createServer((req, res) => (seen.push(req.headers.authorization ?? ""), res.end("{}"))) : null;
+  if (srv) await new Promise((r) => srv.listen(PROBE_PORT, addr, r));
+  try {
+    for (const url of [addr ? `http://${addr}:${PROBE_PORT}` : "http://10.255.255.1:1", "http://desk.example.invalid:4891"]) {
+      const c = new core.DeskClient({ baseUrl: url, tokenPath: secret });
+      assert.ok(c.refusal);
+      await assert.rejects(c.view(), (err) => err.refused === true && !err.unreachable, url);
+      await assert.rejects(c.mailbox("/work/x"), (err) => err.refused === true, url);
+      await assert.rejects(c.assign("0b0e1a1e-0000-4000-8000-00000000000f", { untracked: true }), (err) => err.refused === true, url);
+    }
+    assert.deepEqual(seen, [], "nothing reached the other host");
+  } finally {
+    if (srv) await new Promise((r) => srv.close(r));
+  }
+});
+
 test("a stopped desk reads as unreachable", async () => {
-  const c = new core.DeskClient({ baseUrl: "http://127.0.0.1:9", tokenPath: "/nonexistent" });
+  // Nothing listens on the probe port's loopback side.
+  const c = new core.DeskClient({ baseUrl: `http://127.0.0.1:${PROBE_PORT}`, tokenPath: "/nonexistent" });
   await assert.rejects(c.view(), (err) => err.unreachable === true);
 });
 

@@ -23,6 +23,12 @@
   "activationEvents": [
     "onStartupFinished"
   ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "It runs `claude` and reads the desk's token; a workspace must be trusted first."
+    }
+  },
   "main": "./dist/extension.js",
   "contributes": {
     "viewsContainers": {
@@ -133,7 +139,8 @@
           "embarchChat.claudePath": {
             "type": "string",
             "default": "claude",
-            "description": "The `claude` each chat runs. Defaults to the one on PATH, as the desk and terminals use (decision 30)."
+            "scope": "machine",
+            "description": "The `claude` each chat runs. Defaults to the one on PATH, as the desk and terminals use (decision 30). User or Remote settings only — a workspace cannot set it."
           },
           "embarchChat.idleMinutes": {
             "type": "number",
@@ -144,12 +151,14 @@
           "embarchChat.deskUrl": {
             "type": "string",
             "default": "http://127.0.0.1:4891",
-            "description": "The embarch-desk service. Only the extension's Node side calls it; the webview never holds the token."
+            "scope": "machine",
+            "description": "The embarch-desk service, on this machine only: a loopback address (127.0.0.1, ::1 or localhost); the extension refuses any other host and never sends the token to one. Only the extension's Node side calls it; the webview never holds the token. User or Remote settings only — a workspace cannot set it."
           },
           "embarchChat.deskTokenPath": {
             "type": "string",
             "default": "~/.config/embarch-desk/desk-token",
-            "description": "The desk's bearer token file."
+            "scope": "machine",
+            "description": "The desk's bearer token file. User or Remote settings only — a workspace cannot set it."
           },
           "embarchChat.assistant": {
             "type": "boolean",
@@ -164,26 +173,31 @@
           "embarchUi.binaryPath": {
             "type": "string",
             "default": "embarch-ui",
+            "scope": "machine",
             "description": "Path to the embarch-ui binary. Defaults to 'embarch-ui' on PATH — set an absolute path if it isn't installed there."
           },
           "embarchUi.host": {
             "type": "string",
             "default": "127.0.0.1",
+            "scope": "machine",
             "description": "Host embarch-ui binds to. Must match embarch-ui's own BIND_ADDR (127.0.0.1 by default, loopback-only)."
           },
           "embarchUi.port": {
             "type": "number",
             "default": 4890,
+            "scope": "machine",
             "description": "Port embarch-ui binds to. Must match embarch-ui's own BIND_PORT."
           },
           "embarchUi.configPath": {
             "type": "string",
             "default": "",
+            "scope": "machine",
             "description": "Optional path to an embarch-ui TOML config file. Sets EMBARCH_UI_CONFIG for the spawned process; left empty, embarch-ui's own zero-config defaults apply."
           },
           "embarchUi.autoStart": {
             "type": "boolean",
             "default": false,
+            "scope": "machine",
             "description": "Start embarch-ui automatically when VS Code starts (and stop it when VS Code closes)."
           }
         }

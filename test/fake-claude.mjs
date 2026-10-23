@@ -15,7 +15,8 @@
 // from stdin, picks the recording by the prompt's TASK line, and writes it.
 //
 // Env: FAKE_CLAUDE_FIXTURE (the recording), FAKE_CLAUDE_ARGS_LOG (a file each
-// invocation appends its argv to as one JSON line), FAKE_CLAUDE_VERSION;
+// invocation appends its argv to as one JSON line, `--version` and `agents`
+// too), FAKE_CLAUDE_VERSION, FAKE_CLAUDE_AGENTS (what `agents --json` lists);
 // for -p, FAKE_HAIKU_DIR (default test/fixtures/haiku), FAKE_HAIKU_<TASK>
 // (a recording for one task, e.g. FAKE_HAIKU_CARDS), FAKE_HAIKU_DELAY_MS
 // (between lines, default 5); FAKE_CLAUDE_INPUT_LOG (each line the client
@@ -26,12 +27,20 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const argv = process.argv.slice(2);
+const logArgs = (extra = {}) => {
+  if (process.env.FAKE_CLAUDE_ARGS_LOG) {
+    fs.appendFileSync(process.env.FAKE_CLAUDE_ARGS_LOG, JSON.stringify({ argv, cwd: process.cwd(), ...extra, env: { EMBARCH_DESK_INTERNAL: process.env.EMBARCH_DESK_INTERNAL ?? null } }) + "\n");
+  }
+};
 if (argv.includes("--version")) {
+  logArgs();
   process.stdout.write(`${process.env.FAKE_CLAUDE_VERSION ?? "2.1.287"} (Claude Code)\n`);
   process.exit(0);
 }
 if (argv[0] === "agents") {
-  process.stdout.write("[]\n");
+  // FAKE_CLAUDE_AGENTS: the sessions running elsewhere, as `claude agents --json` lists them.
+  logArgs();
+  process.stdout.write((process.env.FAKE_CLAUDE_AGENTS ?? "[]") + "\n");
   process.exit(0);
 }
 if (argv.includes("-p")) {
@@ -39,9 +48,7 @@ if (argv.includes("-p")) {
   process.stdin.setEncoding("utf8");
   for await (const d of process.stdin) prompt += d;
   const task = /^TASK: (\S+)/m.exec(prompt)?.[1] ?? "none";
-  if (process.env.FAKE_CLAUDE_ARGS_LOG) {
-    fs.appendFileSync(process.env.FAKE_CLAUDE_ARGS_LOG, JSON.stringify({ argv, cwd: process.cwd(), prompt, task, env: { EMBARCH_DESK_INTERNAL: process.env.EMBARCH_DESK_INTERNAL ?? null } }) + "\n");
-  }
+  logArgs({ prompt, task });
   const dir = process.env.FAKE_HAIKU_DIR ?? path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "haiku");
   const file = process.env[`FAKE_HAIKU_${task.toUpperCase()}`] ?? path.join(dir, `${task}.jsonl`);
   if (!fs.existsSync(file)) {
@@ -58,9 +65,7 @@ if (argv.includes("-p")) {
   }
   process.exit(0);
 }
-if (process.env.FAKE_CLAUDE_ARGS_LOG) {
-  fs.appendFileSync(process.env.FAKE_CLAUDE_ARGS_LOG, JSON.stringify({ argv, cwd: process.cwd(), env: { EMBARCH_DESK_INTERNAL: process.env.EMBARCH_DESK_INTERNAL ?? null } }) + "\n");
-}
+logArgs();
 
 const fixture = process.env.FAKE_CLAUDE_FIXTURE;
 const entries = fs

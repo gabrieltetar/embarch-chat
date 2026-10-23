@@ -43,6 +43,8 @@ export interface HostCtx {
   library: () => LibraryEntry[];
   /** A new chat on the same work item that starts with this chat's handoff (36). */
   freshChat: (sid: string) => void;
+  /** Makes a resumable thread this window's (32); false when it may not be resumed here. */
+  resume: (sid: string) => Promise<boolean>;
 }
 
 /** The chat's card in two lines (decision 18), from the desk's view. */
@@ -192,10 +194,10 @@ export class ChatHost implements vscode.Disposable {
     switch (m.t) {
       case "send": {
         if (!rec.ours) {
-          const adopted = this.ctx.chats.adopt(chat.sessionId);
-          if (!adopted) return;
-          // Marked as this panel's on the desk; same item, so nothing moves.
-          void this.ctx.desk.client.assign(chat.sessionId, rec.itemId ? { item_id: rec.itemId } : { untracked: true }).catch((e) => this.ctx.log(`assign on resume: ${(e as Error).message}`));
+          if (!(await this.ctx.resume(chat.sessionId))) {
+            this.snapshot();
+            return;
+          }
           this.snapshot();
         }
         this.ctx.assistant.sent(chat.sessionId, { handoff: m.handoff });

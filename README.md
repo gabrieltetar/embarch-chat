@@ -118,6 +118,16 @@ old one while both are installed, and says so in its log).
 
 ## Settings
 
+Every path or address below is **machine-scoped**: VS Code takes it from
+your user settings, or in a WSL window from the **Remote [WSL]** settings
+(`~/.vscode-server/data/Machine/settings.json`), never from a workspace's
+`.vscode/settings.json` — a cloned repo cannot point the chat at another
+`claude`, the desk's token at another server, or the launcher at another
+binary. In a WSL window a value set in the local user settings does not
+apply; set it in the Remote settings. The desk URL must be this machine's
+(`127.0.0.1`, `::1` or `localhost`): the extension calls nothing else.
+The extension does not run in an untrusted workspace.
+
 | Setting | Default | Meaning |
 |---|---|---|
 | `embarchChat.claudePath` | `"claude"` | The `claude` each chat runs. |
@@ -144,9 +154,13 @@ npm run test:webview # both webviews in headless Firefox over geckodriver
   permission prompt as the recorded session did. Record more with
   `node test/record.mjs <scratch-dir> [scenario]` (cheap, stripped Haiku
   sessions, neutral prompts) and scrub them with `test/sanitize.mjs`.
-- **The desk and host tests** run against a scratch `embarch-desk` built
-  from `../embarch-desk` — set `EMBARCH_DESK_BIN` to the binary; they skip
-  without it. They never touch the live desk on :4891.
+- **The desk, host and resume tests** run against a scratch `embarch-desk`
+  built from `../embarch-desk` — set `EMBARCH_DESK_BIN` to the binary; they
+  skip without it. They use ports 4980–4989 only (`test/scratch-desk.mjs`
+  says which test takes which), their own data, config and
+  `CLAUDE_CONFIG_DIR`, and never touch the live desk on :4891. A `start`
+  mailbox entry is seeded into the scratch desk's store, as Start work
+  would leave it: the desk refuses one posted to `/mailbox`.
 - `node test/live.smoke.mjs <scratch-dir> [claude]` runs one real, stripped
   Haiku chat through the wire layer (about three cents).
 - **The assistant tests** replay real recorded Haiku calls

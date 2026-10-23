@@ -119,9 +119,15 @@ export class DeskService extends EventEmitter {
   }
 
   private async pollOnce(): Promise<void> {
+    const wasDown = this.error !== null;
     try {
       this.view = await this.client.view();
       this.error = null;
+      // Back after an outage: the mailbox is asked now, not after its backoff.
+      if (wasDown || this.mailBackoffUntil) {
+        this.mailBackoffUntil = 0;
+        this.scheduleMail(0);
+      }
     } catch (e) {
       this.error = e instanceof DeskError && e.unreachable ? "The desk is not running — showing this window's chats only." : `Desk: ${(e as Error).message}`;
     }
@@ -162,7 +168,35 @@ export class DeskService extends EventEmitter {
     }
   }
 
+  /** The work item the desk has a session on, when its view or a lookup says; null when it has none or does not know. */
+  itemFor(sid: string): { id: string; title: string } | null {
+    const row = this.view?.sessions?.find((s) => s.session_id === sid);
+    if (row?.item_id) {
+      const card = this.card(row.item_id);
+      return { id: row.item_id, title: card ? (card.issue ? `${card.issue.key} ${card.issue.title}` : card.title) : (this.itemOf[sid]?.title ?? row.item_id) };
+    }
+    for (const c of this.view?.cards ?? []) {
+      if (c.live_sessions?.some((x) => x.session_id === sid)) return { id: c.id, title: c.issue ? `${c.issue.key} ${c.issue.title}` : c.title };
+    }
+    return this.itemOf[sid] ?? null;
+  }
+
+  /** Learns what the desk knows of a session's item (a past chat's, asked once). */
+  noteItem(sid: string, item: { id: string; title: string } | null): void {
+    this.itemOf[sid] = item;
+  }
+
   rebuild(): void {
+    // Session → item is the desk's (decision 12): a chat's record follows
+    // what the desk says, once it says it — a chat opened or started while
+    // the desk was down or had not been asked carries no item until then.
+    for (const [sid, rec] of this.chats.records) {
+      const it = this.itemFor(sid);
+      if (it && it.id !== rec.itemId) {
+        rec.itemId = it.id;
+        rec.itemTitle = it.title;
+      }
+    }
     // Claude names every session itself (an ai-title in the transcript); own
     // chats show it until the assistant names them (decision 12) — a name
     // given here is not taken back by a transcript read before it.
@@ -226,8 +260,8 @@ export class DeskService extends EventEmitter {
       try {
         entries = await this.client.mailbox(folder);
       } catch (e) {
-        // No desk, or a desk without the mailbox yet: ask again in a minute.
-        if (e instanceof DeskError && (e.unreachable || e.status === 404 || e.status === 405)) this.mailBackoffUntil = Date.now() + MAIL_BACKOFF_MS;
+        // No desk, a desk without the mailbox yet, or a URL refused: ask again in a minute.
+        if (e instanceof DeskError && (e.unreachable || e.refused || e.status === 404 || e.status === 405)) this.mailBackoffUntil = Date.now() + MAIL_BACKOFF_MS;
         else this.log(`mailbox: ${(e as Error).message}`);
         break;
       }

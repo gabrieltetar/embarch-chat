@@ -10,17 +10,16 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { ScratchDesk, haveDesk } from "./scratch-desk.mjs";
 
 const require = createRequire(import.meta.url);
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.dirname(here);
-const BIN = process.env.EMBARCH_DESK_BIN;
-const skip = !BIN || !fs.existsSync(BIN) ? "EMBARCH_DESK_BIN not set" : false;
+const skip = haveDesk ? false : "EMBARCH_DESK_BIN not set";
 
 const mock = require("./vscode-mock.cjs");
 const Module = require("node:module");
@@ -29,7 +28,7 @@ Module._load = function (request, ...rest) {
   return request === "vscode" ? mock.vscode : load.call(this, request, ...rest);
 };
 
-const PORT = 4930 + Math.floor(Math.random() * 15);
+const PORT = 4982;
 const FAKE = path.join(here, "fake-claude.mjs");
 let dir, desk, ext, client, folder, context;
 const core = require("../test-out/core.js");
@@ -49,7 +48,7 @@ let threadsView, chatView;
 before(async () => {
   if (skip) return;
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "embarch-chat-host-"));
-  for (const d of ["data", "config", "work"]) fs.mkdirSync(path.join(dir, d));
+  fs.mkdirSync(path.join(dir, "work"));
   folder = path.join(dir, "work");
   // A scratch Claude config: one transcript with one prompt of the "owner's".
   const projects = path.join(dir, "claude", "projects", "-work-x");
@@ -57,19 +56,15 @@ before(async () => {
   fs.writeFileSync(path.join(projects, "33333333-0000-4000-8000-000000000001.jsonl"), JSON.stringify({ type: "user", origin: { kind: "human" }, timestamp: new Date().toISOString(), message: { role: "user", content: "continue with the widget" } }) + "\n");
   process.env.CLAUDE_CONFIG_DIR = path.join(dir, "claude");
   process.env.FAKE_CLAUDE_ARGS_LOG = path.join(dir, "args.jsonl");
-  desk = spawn(BIN, ["serve"], {
-    env: { ...process.env, EMBARCH_DESK_DATA_DIR: path.join(dir, "data"), EMBARCH_DESK_CONFIG_DIR: path.join(dir, "config"), EMBARCH_DESK_PORT: String(PORT) },
-    stdio: "ignore",
-  });
-  client = new core.DeskClient({ baseUrl: `http://127.0.0.1:${PORT}`, tokenPath: path.join(dir, "config", "desk-token") });
-  await waitFor(() => client.call("GET", "/health").then(() => true, () => false), 10000, "the scratch desk");
+  desk = await new ScratchDesk(path.join(dir, "desk"), PORT, path.join(dir, "claude")).start();
+  client = desk.client;
 
   fs.chmodSync(FAKE, 0o755);
   process.env.FAKE_CLAUDE_FIXTURE = path.join(here, "fixtures", "wire", "basic.jsonl");
   Object.assign(mock.state.config, {
     "embarchChat.claudePath": FAKE,
-    "embarchChat.deskUrl": `http://127.0.0.1:${PORT}`,
-    "embarchChat.deskTokenPath": path.join(dir, "config", "desk-token"),
+    "embarchChat.deskUrl": desk.url,
+    "embarchChat.deskTokenPath": desk.tokenPath,
     "embarchUi.port": 1,
   });
   mock.state.folders = [folder];
@@ -85,10 +80,10 @@ before(async () => {
   chatView.webview.fromPage({ t: "ready" });
 });
 
-after(() => {
+after(async () => {
   if (ext) ext.deactivate();
   for (const d of context?.subscriptions ?? []) d.dispose?.();
-  desk?.kill();
+  await desk?.stop();
   if (dir) fs.rmSync(dir, { recursive: true, force: true });
   delete process.env.CLAUDE_CONFIG_DIR;
   delete process.env.FAKE_CLAUDE_ARGS_LOG;
@@ -104,7 +99,7 @@ test("activation registers the chat's and the launcher's commands, and the views
   }
   assert.ok(threadsView.webview.html.includes("list.js"));
   assert.ok(chatView.webview.html.includes("chat.js"));
-  assert.ok(!chatView.webview.html.includes(fs.readFileSync(path.join(dir, "config", "desk-token"), "utf8").trim()), "no token in the page");
+  assert.ok(!chatView.webview.html.includes(fs.readFileSync(desk.tokenPath, "utf8").trim()), "no token in the page");
   assert.equal(chatView.webview.posted.at(-1).t, "empty");
 });
 
@@ -135,7 +130,8 @@ test("the + picks a work item, assigns the session on the desk, and the chat run
 test("Start work's mailbox entry starts a chat on the item and sends the prompt", { skip }, async () => {
   const { id: item } = await client.call("POST", "/items", { title: "ABC-124 from the Desk", desk: "none" });
   const before = chatView.webview.posted.length;
-  const { id } = await client.call("POST", "/mailbox", { kind: "start", item_id: item, folder, prompt: "Run the bash command `echo hello-from-bash` and then reply with just: done" });
+  // Start work leaves the entry server-side; the test seeds the desk's store as it would.
+  const id = await desk.withStart({ item_id: item, folder, prompt: "Run the bash command `echo hello-from-bash` and then reply with just: done" });
   const snap = await waitFor(() => chatView.webview.posted.slice(before).find((m) => m.t === "snapshot" && m.header?.itemId === item), 10000, "the mailbox chat");
   await waitFor(() => chatView.webview.posted.slice(before).some((m) => m.t === "event" && m.e.type === "result"), 5000, "its first turn");
   assert.ok(snap.view.ours);

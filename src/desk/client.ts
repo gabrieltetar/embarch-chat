@@ -25,6 +25,28 @@ export class DeskError extends Error {
   get unreachable(): boolean {
     return this.status === 0;
   }
+  /** Not called at all: the URL is not this machine's: -1. */
+  get refused(): boolean {
+    return this.status === -1;
+  }
+}
+
+/**
+ * The desk's URL, when it is this machine's: plain http on a loopback
+ * address. The desk runs beside the window and its token is a key to the
+ * owner's Linear, Harvest and chats, so nothing else is ever called with it
+ * — whatever a setting says.
+ */
+export function loopbackUrl(raw: string): URL | null {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== "http:" || u.username || u.password) return null;
+  const host = u.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  return host === "localhost" || host === "::1" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host) ? u : null;
 }
 
 export interface MailboxEntry {
@@ -58,9 +80,18 @@ export class DeskClient {
     return this.token;
   }
 
+  /** Why this client calls nothing, or null when its URL is this machine's. */
+  get refusal(): string | null {
+    return loopbackUrl(this.opts.baseUrl) ? null : `the desk URL ${JSON.stringify(this.opts.baseUrl)} is not this machine (http on 127.0.0.1, ::1 or localhost); nothing is sent to it`;
+  }
+
   async call<T = unknown>(method: string, path: string, body?: unknown, retried = false): Promise<T> {
+    const base = loopbackUrl(this.opts.baseUrl);
+    if (!base || !path.startsWith("/")) throw new DeskError(this.refusal ?? `not a desk route: ${path}`, -1);
+    const url = new URL(path, base);
+    // Checked before the token is read: it never leaves for another host.
+    if (url.host !== base.host) throw new DeskError(`not a desk route: ${path}`, -1);
     const token = this.readToken();
-    const url = new URL(path, this.opts.baseUrl);
     const payload = body === undefined ? undefined : Buffer.from(JSON.stringify(body));
     const res = await new Promise<{ status: number; text: string }>((resolve, reject) => {
       const req = http.request(
@@ -134,6 +165,24 @@ export class DeskClient {
   /** Binds a session to its work item before `claude` starts (decision 10), marked as this panel's. */
   assign(sid: string, body: AssignBody): Promise<{ item_id?: string; title?: string; untracked?: boolean }> {
     return this.call("POST", `/sessions/${encodeURIComponent(sid)}/assign`, { ...body, client: "embarch-chat" });
+  }
+
+  /**
+   * Marks a session as this panel's without touching its work item — for a
+   * chat resumed here: an assign with an item or `untracked`
+   * moves it, and `untracked` clears its spans, the time of its open tiles.
+   * The desk applies `client` before it reads the item (desk b722b3b), so
+   * an assign naming no item marks the session and answers 400 "give an
+   * issue key or a title", changing nothing else; that answer is the mark
+   * landing, not an error.
+   */
+  async markClient(sid: string): Promise<void> {
+    try {
+      await this.call("POST", `/sessions/${encodeURIComponent(sid)}/assign`, { client: "embarch-chat" });
+    } catch (e) {
+      if (e instanceof DeskError && e.status === 400) return;
+      throw e;
+    }
   }
 
   setStatus(itemId: string, stateId: string): Promise<unknown> {

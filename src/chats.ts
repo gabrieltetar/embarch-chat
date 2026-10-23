@@ -12,6 +12,15 @@ import { chatStatus } from "./wire/reducer";
 import { findTranscript, readTranscript } from "./wire/transcript";
 import type { WireMessage } from "./wire/types";
 import type { OwnChat } from "./desk/threads";
+import type { AssignBody } from "./desk/client";
+
+/**
+ * What the desk still has to hear about a chat of this window's, kept while
+ * the desk is down: its assign at start (decision 10), or — for a chat
+ * resumed here, or one whose item is not known — only that this panel runs
+ * it ("mark"), which never moves its work item.
+ */
+export type DeskDue = AssignBody | "mark";
 
 export interface ChatRecord {
   chat: Chat;
@@ -22,6 +31,10 @@ export interface ChatRecord {
   resumable: boolean;
   itemId: string | null;
   itemTitle: string | null;
+  /** The owner picked Untracked for it (decision 10): the one case the desk is told `untracked`. */
+  untracked: boolean;
+  /** Not yet told to the desk, which was down. */
+  deskDue: DeskDue | null;
   createdMs: number;
   lastMs: number;
   transcript?: { file: string; mtimeMs: number; size: number };
@@ -60,10 +73,21 @@ export class ChatManager extends EventEmitter {
   }
 
   /** A new chat of this window's, already assigned on the desk (decision 10); its process starts with the first message. */
-  create(sessionId: string, cwd: string, itemId: string | null, itemTitle: string | null): ChatRecord {
+  create(sessionId: string, cwd: string, itemId: string | null, itemTitle: string | null, opts: { untracked?: boolean; deskDue?: DeskDue | null } = {}): ChatRecord {
     const s = this.settings();
     const chat = new Chat({ sessionId, cwd, claudePath: s.claudePath, existing: false, idleMs: s.idleMs, log: s.log });
-    const rec: ChatRecord = { chat, ours: true, viewer: false, resumable: false, itemId, itemTitle, createdMs: Date.now(), lastMs: Date.now() };
+    const rec: ChatRecord = {
+      chat,
+      ours: true,
+      viewer: false,
+      resumable: false,
+      itemId,
+      itemTitle,
+      untracked: !!opts.untracked,
+      deskDue: opts.deskDue ?? null,
+      createdMs: Date.now(),
+      lastMs: Date.now(),
+    };
     this.records.set(sessionId, rec);
     this.wire(sessionId, rec);
     this.emit("changed");
@@ -86,7 +110,7 @@ export class ChatManager extends EventEmitter {
     const file = findTranscript(sessionId, cwd ?? undefined);
     const s = this.settings();
     const chat = new Chat({ sessionId, cwd: cwd ?? "", claudePath: s.claudePath, existing: true, idleMs: s.idleMs, log: s.log });
-    const rec: ChatRecord = { chat, ours: false, viewer: true, resumable, itemId, itemTitle, createdMs: Date.now(), lastMs: Date.now() };
+    const rec: ChatRecord = { chat, ours: false, viewer: true, resumable, itemId, itemTitle, untracked: false, deskDue: null, createdMs: Date.now(), lastMs: Date.now() };
     this.records.set(sessionId, rec);
     this.wire(sessionId, rec);
     if (file) this.loadTranscript(rec, file);

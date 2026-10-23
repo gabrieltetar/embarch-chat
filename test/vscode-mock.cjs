@@ -73,8 +73,20 @@ class FakeView {
   }
 }
 
+// What package.json declares for each setting: its scope decides whether a
+// workspace or folder value applies. VS Code ignores a workspace or folder
+// value of a `machine`- or `application`-scoped setting (its documented
+// behaviour; the Settings editor says "This setting cannot be applied in
+// this workspace"), so a repo's .vscode/settings.json cannot set one.
+const manifest = require(path.join(__dirname, "..", "package.json"));
+const scopes = {};
+for (const sec of manifest.contributes.configuration) for (const [k, v] of Object.entries(sec.properties)) scopes[k] = v.scope ?? "window";
+
 const state = {
+  /** User (or remote machine) settings. */
   config: {},
+  /** A workspace's .vscode/settings.json. */
+  workspaceConfig: {},
   commands: new Map(),
   executed: [],
   providers: new Map(),
@@ -146,7 +158,14 @@ const vscode = {
     get workspaceFolders() {
       return state.folders.map((f) => ({ uri: Uri.file(f), name: path.basename(f) }));
     },
-    getConfiguration: (section) => ({ get: (k, d) => (`${section}.${k}` in state.config ? state.config[`${section}.${k}`] : d) }),
+    getConfiguration: (section) => ({
+      get: (k, d) => {
+        const key = `${section}.${k}`;
+        const machineOnly = scopes[key] === "machine" || scopes[key] === "application";
+        if (!machineOnly && key in state.workspaceConfig) return state.workspaceConfig[key];
+        return key in state.config ? state.config[key] : d;
+      },
+    }),
     onDidChangeConfiguration: () => disposable(),
     registerTextDocumentContentProvider: () => disposable(),
     findFiles: async () => [],
@@ -168,4 +187,4 @@ const vscode = {
   env: { openExternal: async (u) => (state.external.push(String(u)), true) },
 };
 
-module.exports = { vscode, state, FakeView, FakeWebview };
+module.exports = { vscode, state, scopes, FakeView, FakeWebview };

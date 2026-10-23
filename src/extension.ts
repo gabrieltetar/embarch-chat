@@ -11,7 +11,7 @@ import { HaikuAssistant } from "./assistant/assistant";
 import { PromptHistory } from "./assistant/history";
 import { LibraryEntry } from "./library/entries";
 import { readLibrary } from "./library/files";
-import { ChatManager, ChatRecord } from "./chats";
+import { ChatManager, ChatRecord, DeskDue } from "./chats";
 import { AssignBody, DeskClient, DeskError, MailboxEntry, expandHome } from "./desk/client";
 import { DeskService } from "./deskService";
 import { DIFF_SCHEME, DiffContent } from "./diff";
@@ -59,12 +59,18 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   }
 
-  let client = new DeskClient({ baseUrl: cfg().deskUrl, tokenPath: expandHome(cfg().deskTokenPath) });
+  // The desk is this machine's, and its URL and token path come from user or
+  // remote settings only (machine scope): a repo's .vscode/settings.json
+  // cannot point the window, or its token, anywhere else.
+  const makeClient = () => {
+    const c = new DeskClient({ baseUrl: cfg().deskUrl, tokenPath: expandHome(cfg().deskTokenPath) });
+    if (c.refusal) log(`desk: ${c.refusal}`);
+    return c;
+  };
+  let client = makeClient();
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration("embarchChat.deskUrl") || e.affectsConfiguration("embarchChat.deskTokenPath")) {
-        client = new DeskClient({ baseUrl: cfg().deskUrl, tokenPath: expandHome(cfg().deskTokenPath) });
-      }
+      if (e.affectsConfiguration("embarchChat.deskUrl") || e.affectsConfiguration("embarchChat.deskTokenPath")) client = makeClient();
     }),
   );
 
@@ -130,6 +136,7 @@ export function activate(context: vscode.ExtensionContext): void {
     history,
     library,
     freshChat: (sid) => void freshChat(sid),
+    resume: (sid) => resume(sid),
   };
 
   const chatView = new ChatViewProvider(context.extensionUri, ctx);
@@ -167,6 +174,8 @@ export function activate(context: vscode.ExtensionContext): void {
     threads.push();
     refreshCount();
     for (const [sid, rec] of manager.records) panels.retitle(sid, titleOf(rec));
+    // The desk is back: what it missed while it was down (decision 10).
+    if (!desk.error) for (const rec of manager.records.values()) if (rec.ours && rec.deskDue) void tellDesk(rec);
   });
 
   // ------------------------------------------------------------ opening
@@ -224,28 +233,78 @@ export function activate(context: vscode.ExtensionContext): void {
   // ------------------------------------------------------------ new chats
 
   /**
+   * Tells the desk what a chat of this window's is: its assign, or only
+   * that this panel runs it ("mark", which never moves its item — a resumed
+   * chat's item and spans stay as they are). Kept for later while the desk
+   * is down; a refusal is logged and dropped.
+   */
+  const telling = new Set<string>();
+  async function tellDesk(rec: ChatRecord): Promise<void> {
+    const sid = rec.chat.sessionId;
+    const due = rec.deskDue;
+    if (!due || telling.has(sid)) return;
+    telling.add(sid);
+    try {
+      if (due === "mark") {
+        const s = await client.session(sid).catch((e) => {
+          if (e instanceof DeskError && e.status === 404) return null;
+          throw e;
+        });
+        if (s?.work_item) {
+          rec.itemId = s.work_item.id;
+          rec.itemTitle = s.work_item.title;
+          desk.noteItem(sid, { id: s.work_item.id, title: s.work_item.title });
+        }
+        await client.markClient(sid);
+      } else {
+        const r = await client.assign(sid, due);
+        rec.itemId = r.item_id ?? null;
+        rec.itemTitle = r.title ?? rec.itemTitle;
+      }
+      rec.deskDue = null;
+      log(`desk: ${sid.slice(0, 8)} ${due === "mark" ? "marked as this panel's" : `on ${rec.itemId ?? "untracked"}`}`);
+      desk.rebuild();
+    } catch (e) {
+      if (!(e instanceof DeskError && e.unreachable)) {
+        rec.deskDue = null;
+        log(`desk: ${sid.slice(0, 8)}: ${(e as Error).message}`);
+      }
+    } finally {
+      telling.delete(sid);
+    }
+  }
+
+  /**
    * A chat is on its work item before it starts (decision 10): the session
    * id is chosen here, assigned on the desk, and `claude --session-id` starts
-   * with the first message.
+   * with the first message. `body` null: no item to give (a fresh chat from
+   * one whose item is not known) — the desk only hears this panel runs it,
+   * and asks for its item when it sees it.
    */
-  async function startChat(body: AssignBody, cwd: string, label: string | null): Promise<ChatRecord | null> {
+  async function startChat(body: AssignBody | null, cwd: string, label: string | null): Promise<ChatRecord | null> {
     const sid = crypto.randomUUID();
     let itemId: string | null = null;
     let itemTitle = label;
+    let due: DeskDue | null = null;
     try {
-      const r = await client.assign(sid, body);
-      itemId = r.item_id ?? null;
-      itemTitle = r.title ?? itemTitle;
+      if (body) {
+        const r = await client.assign(sid, body);
+        itemId = r.item_id ?? null;
+        itemTitle = r.title ?? itemTitle;
+      } else {
+        await client.markClient(sid);
+      }
     } catch (e) {
       if (e instanceof DeskError && e.unreachable) {
-        void vscode.window.showWarningMessage("The desk is not running: this chat starts untracked, and the desk asks for its work item when it sees it.");
+        due = body ?? "mark";
+        void vscode.window.showWarningMessage("The desk is not running: this chat starts without its work item, and the desk is told when it is back.");
       } else {
         void vscode.window.showErrorMessage(`Chat not started: ${(e as Error).message}`);
         return null;
       }
     }
-    log(`new chat ${sid} on ${itemId ?? "untracked"} in ${cwd}`);
-    const rec = manager.create(sid, cwd, itemId, itemTitle);
+    log(`new chat ${sid} on ${itemId ?? (body && "untracked" in body ? "untracked" : "no item yet")} in ${cwd}`);
+    const rec = manager.create(sid, cwd, itemId, itemTitle, { untracked: !!body && "untracked" in body, deskDue: due });
     desk.rebuild();
     await show(sid);
     return rec;
@@ -310,6 +369,22 @@ export function activate(context: vscode.ExtensionContext): void {
     if (pick) await pick.run();
   }
 
+  /**
+   * The owner wrote to a resumable thread (decision 32): it becomes this
+   * window's, and the desk hears only that this panel runs it now — never an
+   * assign, which could move it off its item or untrack it and clear its
+   * spans, whatever the window had resolved.
+   */
+  async function resume(sid: string): Promise<boolean> {
+    const rec = manager.get(sid);
+    if (!rec) return false;
+    if (rec.ours) return true;
+    if (!manager.adopt(sid)) return false;
+    rec.deskDue = "mark";
+    void tellDesk(rec);
+    return true;
+  }
+
   // ------------------------------------------------------------ chips and names
 
   /** On screen: the sidebar's chat while the sidebar shows, or a visible editor tab (decision 34). */
@@ -336,7 +411,9 @@ export function activate(context: vscode.ExtensionContext): void {
     const rec = manager.get(sid);
     if (!text || !rec) return;
     const cwd = windowCwd(rec.chat.opts.cwd) ?? rec.chat.opts.cwd;
-    const fresh = await startChat(rec.itemId ? { item_id: rec.itemId } : { untracked: true }, cwd, rec.itemTitle);
+    // The same item as the desk has it; untracked only when the owner chose that.
+    const item = desk.itemFor(sid)?.id ?? rec.itemId;
+    const fresh = await startChat(item ? { item_id: item } : rec.untracked ? { untracked: true } : null, cwd, rec.itemTitle);
     if (!fresh) return;
     haiku.handoffTaken(sid);
     haiku.sent(fresh.chat.sessionId);
