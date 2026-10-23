@@ -306,6 +306,11 @@ a:focus-visible {
 /* A turn begins at each of the owner's messages: 28 px between turns, a
    rule halfway, none above the first; 12 px between blocks in a turn
    (decision 51). */
+/* Each row is a column of its own, so a bubble's and a note's align-self land. */
+.timeline > div {
+  display: flex;
+  flex-direction: column;
+}
 .timeline > .turn {
   margin-top: 2px;
   padding-top: 14px;
