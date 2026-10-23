@@ -231,4 +231,7 @@ export interface DeskView {
   open_desk: ViewDesk | null;
   ignore?: string[];
   sessions_waiting?: number;
+  /** Every live session the desk tracks, on a card or not (the desk's addition for this panel). */
+  sessions?: Array<ViewSession & { item_id?: string | null; desk_id?: string | null; untracked?: boolean }>;
+  settings?: { chat_panel?: boolean };
 }

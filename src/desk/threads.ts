@@ -158,6 +158,31 @@ export function buildThreads(inp: ThreadInputs): ThreadGroup[] {
     }
   }
 
+  // Live sessions on no card here: untracked ones, and ones whose item the
+  // view did not carry. Kept to the window's desk by its id, else by repo.
+  for (const s of view?.sessions ?? []) {
+    if (placed.has(s.session_id) || ownBySid.has(s.session_id)) continue;
+    const mine = inp.desk && s.desk_id ? s.desk_id === inp.desk.id : inRepos(s.cwd);
+    if (!mine) continue;
+    if (ignore.some((i) => isUnder(s.cwd, i))) continue;
+    placed.add(s.session_id);
+    const it = s.item_id ? (inp.itemOf[s.session_id] ?? { id: s.item_id, title: s.item_id }) : null;
+    const key = it ? it.id : "untracked";
+    const g = groups.get(key) ?? group(key, it ? { id: it.id, title: it.title, prs: [], todaySeconds: 0 } : null);
+    const state = normState(s.state ?? s.status);
+    g.threads.push({
+      sessionId: s.session_id,
+      title: s.name ?? "session",
+      state,
+      waitingFor: s.waiting_for ?? null,
+      lastMs: s.last_ms ?? 0,
+      cwd: s.cwd ?? null,
+      ours: false,
+      live: state !== "ended",
+      client: s.client ?? null,
+    });
+  }
+
   // This window's own chats: live state from their streams.
   for (const o of inp.own) {
     placed.add(o.sessionId);
