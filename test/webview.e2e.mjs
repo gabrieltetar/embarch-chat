@@ -822,6 +822,99 @@ await check("just before send: a long draft typed fast waits for its cards; the 
   assert.equal((await posts()).find((p) => p.t === "send")?.text, draft + " too");
 });
 
+// Decision 55: the question recorded with a message sent while it waited (askqueued).
+const askLines = outLines("askqueued");
+const askAt = askLines.findIndex((o) => o.type === "control_request");
+/** Where the input is, the caret, who has focus, and how the cards show. */
+const where = () =>
+  exec(`const t=document.querySelector('.composer textarea'), r=document.querySelector('.composer').getBoundingClientRect();
+    return {top: r.top, bottom: r.bottom, caret: t.selectionStart, focus: document.activeElement === t, held: document.querySelectorAll('.card.held').length,
+      shown: document.querySelectorAll('.card:not(.held)').length, opts: document.querySelectorAll('.card .opt').length}`);
+const answered = async () => (await posts()).filter((p) => ["answer", "allow", "deny"].includes(p.t));
+/** A fresh chat whose question is about to come, and a draft being typed. */
+const typingWhenAsked = async (draft) => {
+  await fresh({}, false);
+  await send([sent("tea or coffee"), ...events(askLines.slice(0, askAt))]);
+  await type(draft);
+  const before = await where();
+  await send(events([askLines[askAt]]));
+  return before;
+};
+
+await check("a card that comes while the owner types waits as a quiet line: focus, caret and the input stay; Enter queues the draft, never answers; then the card comes forward", async () => {
+  const before = await typingWhenAsked("also end with");
+  let at = await where();
+  assert.deepEqual([at.held, at.shown, at.opts], [1, 0, 0], "held: one line, no options to pick");
+  assert.ok((await text(".card.held"))[0].includes("Claude asks: Do you prefer tea or coffee?"));
+  assert.equal(at.focus, true, "focus stays in the input");
+  assert.equal(at.caret, before.caret, "the caret does not move");
+  assert.equal(at.top, before.top, "the input does not move");
+  await shot("ask-held");
+  await type(" the word kiwi");
+  assert.equal(await value(), "also end with the word kiwi");
+  assert.equal((await where()).held, 1, "still typing: still held");
+  await type(ENTER);
+  assert.deepEqual(
+    (await posts()).filter((p) => p.t === "send").map((p) => p.text),
+    ["also end with the word kiwi"],
+    "the draft goes as a message, queued behind the question",
+  );
+  assert.deepEqual(await answered(), [], "nothing typed answered the card");
+  at = await where();
+  assert.deepEqual([at.held, at.shown, at.opts], [0, 1, 2], "sent: the card comes forward");
+  assert.equal(at.focus, true, "and does not take focus");
+  assert.equal(at.top, before.top);
+  assert.match(await exec("return document.querySelector('.composer .bar button.primary').title"), /after your answer/);
+  await shot("ask-active");
+  await type("more");
+  assert.equal((await where()).held, 0, "once shown, typing again does not hide it");
+});
+
+await check("a held card comes forward when the input is left, the draft cleared, or the typing pauses, and on Show — never taking focus", async () => {
+  await typingWhenAsked("half a");
+  assert.equal((await where()).held, 1);
+  await exec("document.querySelector('.composer textarea').blur()");
+  await settle();
+  assert.deepEqual([(await where()).held, (await where()).opts], [0, 2], "left");
+
+  await typingWhenAsked("half a");
+  assert.equal((await where()).held, 1);
+  await exec("const t=document.querySelector('.composer textarea'); t.value=''; t.dispatchEvent(new Event('input', {bubbles:true}))");
+  await settle();
+  let at = await where();
+  assert.deepEqual([at.held, at.opts, at.focus], [0, 2, true], "cleared");
+
+  const before = await typingWhenAsked("half a");
+  assert.equal((await where()).held, 1);
+  await sleep(1500 + 300);
+  await settle();
+  at = await where();
+  assert.deepEqual([at.held, at.opts, at.focus, at.caret], [0, 2, true, before.caret], "a pause of 1.5 s, as Claude Code's own panel");
+
+  await typingWhenAsked("half a");
+  await click(".card.held button", "Show");
+  await settle();
+  assert.equal((await where()).opts, 2, "Show");
+  assert.deepEqual(await answered(), []);
+});
+
+await check("in a short panel a card scrolls, and the input stays where it was", async () => {
+  await wd("POST", `${S}/window/rect`, { width: 460, height: 380 });
+  try {
+    await fresh({}, false);
+    await send([sent("tea or coffee"), ...events(askLines.slice(0, askAt))]);
+    const before = await where();
+    await send(events([askLines[askAt]]));
+    const at = await where();
+    assert.equal(at.opts, 2);
+    assert.deepEqual([at.top, at.bottom], [before.top, before.bottom], "the card did not push the input down");
+    assert.ok(at.bottom <= (await exec("return window.innerHeight")), "the input is on screen");
+  } finally {
+    await wd("POST", `${S}/window/rect`, { width: 460, height: 900 });
+    await settle();
+  }
+});
+
 await check("reply chips after a turn: a click sends it; the handoff's chip asks for a fresh chat", async () => {
   const sid = await fresh();
   const chips = [

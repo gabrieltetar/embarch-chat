@@ -1,11 +1,16 @@
 // What waits on the owner (decision 8): a permission prompt with allow and
 // deny; Claude's question as a form with options and previews; a plan with
 // approve and keep planning. On the wire all three are `can_use_tool`.
+//
+// A card never takes focus, and nothing typed in the input answers one. One
+// that comes while the owner types waits as a quiet line until the draft is
+// sent or cleared, the input is left, or the typing pauses (decision 55).
 
-import { useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import type { Pending } from "../../src/wire/reducer";
 import { Markdown } from "../shared/markdown";
 import { vscodeApi } from "../shared/vscode";
+import { ownerTyping } from "./composer";
 import { DiffView, ToolCtx, toolLabel, toolSummary } from "./tools";
 
 const post = (m: unknown) => vscodeApi.postMessage(m);
@@ -150,12 +155,61 @@ function PlanCard({ p, ctx }: { p: Pending; ctx: ToolCtx }) {
   );
 }
 
+/** A card that came while the owner typed (55): one line of what waits, nothing in it answers. */
+function HeldCard({ p, ctx, onShow }: { p: Pending; ctx: ToolCtx; onShow: () => void }) {
+  const qs = (Array.isArray(p.input.questions) ? p.input.questions : []) as Question[];
+  const what =
+    p.form === "question"
+      ? `Claude asks: ${qs[0]?.question ?? ""}${qs.length > 1 ? ` (+${qs.length - 1})` : ""}`
+      : p.form === "plan"
+        ? "Claude's plan is ready"
+        : `Allow ${toolLabel(p.toolName)}? ${toolSummary(p.toolName, p.input, ctx.cwd)}`;
+  return (
+    <div class="card held" role="status" title="Waits while you type: it opens once you send or clear the draft, leave the input, or pause">
+      <span class="held-what">{what}</span>
+      <span class="muted">after your draft</span>
+      <button onClick={onShow}>Show</button>
+    </div>
+  );
+}
+
 export function PendingCards({ pending, ctx, readOnly }: { pending: Pending[]; ctx: ToolCtx; readOnly: boolean }) {
+  // The owner's typing, read as each card first shows (55): it re-renders when that ends.
+  const [, bump] = useState(0);
+  useEffect(() => {
+    const on = () => bump((n) => n + 1);
+    window.addEventListener("embarch-typing", on);
+    return () => window.removeEventListener("embarch-typing", on);
+  }, []);
+  const seen = useRef(new Set<string>());
+  const held = useRef(new Set<string>());
+  const typing = ownerTyping();
+  const ids = new Set(pending.map((p) => p.requestId));
+  for (const id of [...seen.current]) if (!ids.has(id)) seen.current.delete(id);
+  for (const p of pending) {
+    if (seen.current.has(p.requestId)) continue;
+    seen.current.add(p.requestId);
+    if (typing) held.current.add(p.requestId);
+  }
+  // Held until the typing ends, and once shown a card stays shown.
+  for (const id of [...held.current]) if (!typing || !ids.has(id)) held.current.delete(id);
   if (!pending.length || readOnly) return null;
+  const show = (id: string) => {
+    held.current.delete(id);
+    bump((n) => n + 1);
+  };
   return (
     <div class="cards">
       {pending.map((p) =>
-        p.form === "question" ? <QuestionCard key={p.requestId} p={p} ctx={ctx} /> : p.form === "plan" ? <PlanCard key={p.requestId} p={p} ctx={ctx} /> : <PermissionCard key={p.requestId} p={p} ctx={ctx} />,
+        held.current.has(p.requestId) ? (
+          <HeldCard key={`held:${p.requestId}`} p={p} ctx={ctx} onShow={() => show(p.requestId)} />
+        ) : p.form === "question" ? (
+          <QuestionCard key={p.requestId} p={p} ctx={ctx} />
+        ) : p.form === "plan" ? (
+          <PlanCard key={p.requestId} p={p} ctx={ctx} />
+        ) : (
+          <PermissionCard key={p.requestId} p={p} ctx={ctx} />
+        ),
       )}
     </div>
   );

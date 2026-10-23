@@ -332,6 +332,7 @@ function App() {
           key={state.sessionId}
           sid={state.sessionId}
           busy={busy}
+          waiting={state.pending.length > 0}
           mode={state.mode}
           model={state.model}
           slashCommands={state.slashCommands}

@@ -35,6 +35,8 @@ const HOLD_MIN_WORDS = 6;
 interface Props {
   sid: string;
   busy: boolean;
+  /** A card waits on the owner: a message sent now goes in after its answer (55). */
+  waiting: boolean;
   mode: string;
   model: string | null;
   slashCommands: string[];
@@ -77,6 +79,21 @@ export function returnToDraft(sid: string, text: string): void {
   window.dispatchEvent(new CustomEvent("embarch-draft", { detail: sid }));
 }
 
+/**
+ * The owner is typing (decision 55), by Claude Code's own rule: the draft
+ * changed under the owner's hands in the last 1.5 s and is not blank, so
+ * sending or clearing it ends that at once; here leaving the input ends it
+ * too. A card that comes meanwhile waits, quiet, until it ends (cards.tsx).
+ */
+export const TYPING_MS = 1500;
+let typingNow = false;
+export const ownerTyping = () => typingNow;
+function setTyping(v: boolean): void {
+  if (v === typingNow) return;
+  typingNow = v;
+  window.dispatchEvent(new Event("embarch-typing"));
+}
+
 export function Composer(p: Props) {
   const { sid, busy, mode, model, slashCommands, placeholder, mentions, library, chips, onChip } = p;
   const [text, setTextState] = useState(() => (vscodeApi.getState() as Saved | undefined)?.drafts?.[sid] ?? "");
@@ -93,6 +110,7 @@ export function Composer(p: Props) {
   const bulbBtn = useRef<HTMLButtonElement>(null);
   const libBtn = useRef<HTMLButtonElement>(null);
   const mentionTimer = useRef<number>(0);
+  const typingTimer = useRef<number>(0);
   const textRef = useRef(text);
   const props = useRef(p);
   props.current = p;
@@ -112,6 +130,18 @@ export function Composer(p: Props) {
   const setText = (v: string) => {
     textRef.current = v;
     setTextState(v);
+  };
+
+  /** The owner changed the draft: typing for TYPING_MS more, or no longer once it is blank (55). */
+  const typed = (v: string) => {
+    clearTimeout(typingTimer.current);
+    if (!v.trim()) return setTyping(false);
+    setTyping(true);
+    typingTimer.current = window.setTimeout(() => setTyping(false), TYPING_MS);
+  };
+  const doneTyping = () => {
+    clearTimeout(typingTimer.current);
+    setTyping(false);
   };
 
   useEffect(() => {
@@ -149,6 +179,7 @@ export function Composer(p: Props) {
       clearTimeout(s.ghostTimer);
       clearTimeout(s.cardsTimer);
       clearTimeout(s.holdTimer);
+      doneTyping();
     },
     [],
   );
@@ -282,6 +313,7 @@ export function Composer(p: Props) {
     const ins = pop.kind === "at" ? `@${it.insert} ` : `/${it.insert} `;
     const next = text.slice(0, pop.start) + ins + text.slice(caret);
     setText(next);
+    typed(next);
     setPop(null);
     setGhost(null);
     focusAt(pop.start + ins.length);
@@ -298,6 +330,7 @@ export function Composer(p: Props) {
     cancelStale();
     s.undo.push({ before: textRef.current, after, ...undo });
     setText(after);
+    typed(after);
     setGhost(null);
     setPreview(null);
     focusAt(after.length);
@@ -329,6 +362,7 @@ export function Composer(p: Props) {
     setMenu(null);
     a.current.undo.push({ before: cur, after: head + rest });
     setText(head + rest);
+    typed(head + rest);
     setGhost(null);
     focusAt(head.length);
   };
@@ -342,6 +376,7 @@ export function Composer(p: Props) {
     if (top.handoff) s.handoff = false;
     if (top.cardId) setUsed((u) => u.filter((x) => x !== top.cardId));
     setText(top.before);
+    typed(top.before);
     setGhost(null);
     focusAt(top.before.length);
     return true;
@@ -361,6 +396,7 @@ export function Composer(p: Props) {
     s.handoff = false;
     s.undo = [];
     setText("");
+    doneTyping();
     setPop(null);
     setGhost(null);
     setPreview(null);
@@ -454,7 +490,14 @@ export function Composer(p: Props) {
   }));
 
   return (
-    <div class="composer">
+    <div
+      class="composer"
+      onFocusOut={(e) => {
+        // Leaving the input, not moving within it (the 💡, a chip), ends the typing (55).
+        const to = e.relatedTarget;
+        if (!(to instanceof Node && (e.currentTarget as HTMLElement).contains(to))) doneTyping();
+      }}
+    >
       {chips.length > 0 && !busy && (
         <div class="chips">
           {chips.map((c) => (
@@ -510,6 +553,7 @@ export function Composer(p: Props) {
               setHolding(false);
             }
             setText(v);
+            typed(v);
             setAtEnd(end);
             setPreview(null);
             if (!v.trim()) a.current.handoff = false;
@@ -568,7 +612,7 @@ export function Composer(p: Props) {
             Stop
           </button>
         )}
-        <button class="primary" disabled={!text.trim()} onClick={send} title={busy ? "Queued until Claude's turn ends" : "Send (Enter)"}>
+        <button class="primary" disabled={!text.trim()} onClick={send} title={p.waiting ? "Queued: Claude takes it after your answer to the card above" : busy ? "Queued until Claude's turn ends" : "Send (Enter)"}>
           {busy ? "Queue" : "Send"}
         </button>
       </div>
