@@ -655,6 +655,25 @@ test("a tab whose chat waits on the owner wears the pending mark", { skip }, asy
   }
 });
 
+test("the MCP pill's asks reach the chat's CLI: the servers as it has them now, and an action on one", { skip }, async () => {
+  // The recording has the window's own server beside a stdio one (decision 65).
+  mock.state.config["embarchChat.diagnosticsTool"] = true;
+  try {
+    const sid = await startUntracked("mcp");
+    const n = chatView.webview.posted.length;
+    // The fixture's turn, then the pill's own asks, as the page posts them.
+    chatView.webview.fromPage({ t: "send", text: "Reply with just: ok" });
+    await waitFor(() => chatView.webview.posted.slice(n).some((m) => m.t === "event" && m.e.type === "result"), 5000, "the turn");
+    chatView.webview.fromPage({ t: "mcpStatus" });
+    await waitFor(() => chatView.webview.posted.slice(n).some((m) => m.t === "event" && m.e.type === "_mcp"), 5000, "the servers");
+    chatView.webview.fromPage({ t: "mcp", name: "bench", action: "disable" });
+    await waitFor(() => chatView.webview.posted.slice(n).some((m) => m.t === "event" && m.e.type === "_mcp" && m.e.servers.some((x) => x.name === "bench" && x.status === "disabled")), 5000, "bench disabled");
+    assert.equal(lastSnapshot().state.sessionId, sid);
+  } finally {
+    delete mock.state.config["embarchChat.diagnosticsTool"];
+  }
+});
+
 // ------------------------------------------------------------ a window reload (decision 63)
 
 /** The window reloads: this extension host deactivates and a new one activates, with the same workspace state. */

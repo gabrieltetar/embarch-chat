@@ -1037,6 +1037,50 @@ test("one initialize carries the dialogs, autosave's hook and the panel's own MC
   chat.dispose();
 });
 
+test("MCP servers as Claude Code's /mcp lists them: from the init line, then mcp_status; disable, enable and Reconnect act on this process; the panel's own server has nothing to reconnect (its changelog L6014)", async () => {
+  const tool = { ...core.DIAGNOSTICS_TOOL, call: async () => "No problems." };
+  const server = core.mcpServer({ name: core.PANEL_MCP_SERVER, version: "0.1.0" }, [tool]);
+  const { chat, inputs } = makeChat("mcp", { hooks: () => ({ mcp: { [core.PANEL_MCP_SERVER]: server } }) });
+  assert.equal(chat.state.mcp, null, "not known before a process says");
+  chat.send("Reply with just: ok");
+  await turns(chat, 1);
+  assert.deepEqual(chat.state.mcp, [
+    { name: "bench", status: "connected", source: "dynamic" },
+    { name: "embarch-chat", status: "connected", source: "sdk" },
+  ]);
+  const st = () => chat.state.mcp.map((x) => `${x.name}:${x.status}`);
+  await chat.mcpStatus();
+  assert.deepEqual(chat.state.mcp.map((x) => [x.name, x.status, x.tools]), [
+    ["bench", "connected", 1],
+    ["embarch-chat", "connected", 1],
+  ]);
+  await chat.mcpAction("bench", "disable");
+  assert.deepEqual(st(), ["bench:disabled", "embarch-chat:connected"]);
+  await chat.mcpAction("bench", "enable");
+  assert.deepEqual(st(), ["bench:connected", "embarch-chat:connected"]);
+  await chat.mcpAction("bench", "reconnect");
+  assert.deepEqual(st(), ["bench:connected", "embarch-chat:connected"]);
+  assert.ok(!entries(chat.state, "note").length, "no line for what worked");
+  // The window's own server is the CLI's SDK server: the CLI refuses, and one line says so.
+  await chat.mcpAction("embarch-chat", "reconnect");
+  assert.deepEqual(entries(chat.state, "note").map((n) => [n.tone, n.text]), [["error", "MCP server embarch-chat not reconnected: SDK servers should be handled in print.ts"]]);
+  const asks = inputs().filter((o) => o.type === "control_request" && o.request.subtype.startsWith("mcp_")).map((o) => [o.request.subtype, o.request.serverName ?? null, o.request.enabled ?? null]);
+  assert.deepEqual(asks, [
+    ["mcp_status", null, null],
+    ["mcp_toggle", "bench", false],
+    ["mcp_status", null, null],
+    ["mcp_toggle", "bench", true],
+    ["mcp_status", null, null],
+    ["mcp_reconnect", "bench", null],
+    ["mcp_status", null, null],
+    ["mcp_reconnect", "embarch-chat", null],
+    ["mcp_status", null, null],
+  ]);
+  // No server's command line or path reaches the state the pages fold.
+  assert.ok(!JSON.stringify(chat.state.mcp).includes("command"));
+  chat.dispose();
+});
+
 test("the MCP server answers what it does not serve with an error, a notification with nothing, and a failing tool as a tool error", async () => {
   const server = core.mcpServer({ name: "x", version: "1" }, [{ name: "boom", description: "", inputSchema: { type: "object" }, call: async () => { throw new Error("no editor"); } }]);
   assert.equal(await server({ jsonrpc: "2.0", method: "notifications/initialized" }), null);

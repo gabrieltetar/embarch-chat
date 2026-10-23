@@ -605,6 +605,37 @@ const scenarios = {
     await r.result();
     await r.close();
   },
+  // Claude Code's MCP dialog (its changelog L6014) over the panel's wire: a
+  // stdio server beside the panel's own (decision 65), listed as the init
+  // line has them and as `mcp_status` does, disabled and enabled
+  // (`mcp_toggle`), reconnected (`mcp_reconnect`: a new process), and the
+  // panel's own refused — it has no process of the CLI's to start again.
+  async mcp() {
+    const r = new Rec("mcp", ["--tools", "", "--mcp-config", mcpConfig()]);
+    const tool = { ...core.DIAGNOSTICS_TOOL, call: async () => "No problems." };
+    const hooks = { mcp: { [core.PANEL_MCP_SERVER]: core.mcpServer({ name: core.PANEL_MCP_SERVER, version: "0.1.0" }, [tool]) } };
+    const answer = core.answererFor(hooks, console.log);
+    r.onControl = (o) => answer(o.request)?.then((resp) => r.respond(o, resp));
+    r.control("init-1", { subtype: "initialize", supportedDialogKinds: core.DIALOG_KINDS, ...core.initializeRequest(hooks) });
+    r.user("Reply with just: ok");
+    await r.result();
+    let n = 0;
+    const ask = async (request) => {
+      const id = `mcp-${++n}`;
+      r.control(id, request);
+      return r.until(isResp(id));
+    };
+    await ask({ subtype: "mcp_status" });
+    await ask({ subtype: "mcp_toggle", serverName: "bench", enabled: false });
+    await ask({ subtype: "mcp_status" });
+    await ask({ subtype: "mcp_toggle", serverName: "bench", enabled: true });
+    await ask({ subtype: "mcp_status" });
+    await ask({ subtype: "mcp_reconnect", serverName: "bench" });
+    await ask({ subtype: "mcp_status" });
+    await ask({ subtype: "mcp_reconnect", serverName: core.PANEL_MCP_SERVER });
+    await ask({ subtype: "mcp_status" });
+    await r.close();
+  },
   // Some of a proposed Edit's changes (decision 64): in ask mode the Edit's
   // permission is answered with an input that keeps the first of its two
   // changes and not the second, as the diff tab's Accept sends it.

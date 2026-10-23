@@ -67,6 +67,8 @@ interface Props {
   /** The editor's open file or selection (60). */
   editor: EditorChip | null;
   chips: Chip[];
+  /** The pills beside the mode select (footer.tsx). */
+  footer?: preact.ComponentChildren;
   onSend: (text: string, opts: SendOpts) => void;
   onChip: (chip: Chip) => void;
 }
@@ -868,6 +870,7 @@ export function Composer(p: Props) {
             </option>
           ))}
         </select>
+        {p.footer}
         <span class="assist-slot">
           <button
             ref={bulbBtn}

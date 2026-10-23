@@ -107,6 +107,20 @@ export interface Pending {
   comments?: PlanComment[];
 }
 
+/**
+ * One MCP server of the chat's CLI, as `/mcp` shows it (Claude Code's MCP
+ * dialog): from the init line, then from `mcp_status` when the owner looks.
+ */
+export interface McpServer {
+  name: string;
+  /** connected, failed, needs-auth, pending or disabled. */
+  status: string;
+  /** "sdk": served by this window over the chat's stdio (decision 65) — nothing to reconnect. */
+  source?: string;
+  error?: string;
+  tools?: number;
+}
+
 /** The prompt cache the next message would read (decision 69): written at `at` for `ttl` ms; a compaction since leaves it behind. */
 export interface CacheWindow {
   /** The reply that wrote or read it: its later lines keep the first one's time. */
@@ -172,6 +186,8 @@ export interface ChatState {
   cache: CacheWindow | null;
   /** Side questions (decision 57), oldest first: kept beside the timeline, never in it. */
   side: SideQuestion[];
+  /** The CLI's MCP servers, last known; null until a process says. */
+  mcp: McpServer[] | null;
   seq: number;
 }
 
@@ -205,6 +221,7 @@ export function initialState(sessionId: string, mode = "auto"): ChatState {
     lastLineAt: null,
     cache: null,
     side: [],
+    mcp: null,
     seq: 0,
   };
 }
@@ -276,6 +293,20 @@ function pendingOf(requestId: string, r: PermissionRequest | ElicitationRequest 
     suggestions: r.permission_suggestions,
     form: formOf(r.tool_name),
   };
+}
+
+/** The servers of an init line's `mcp_servers` or an `mcp_status` answer, trimmed to what the list shows (no commands or paths). */
+export function mcpServers(list: unknown): McpServer[] {
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((x): x is Record<string, unknown> => !!x && typeof x === "object" && typeof (x as { name?: unknown }).name === "string")
+    .map((x) => ({
+      name: String(x.name),
+      status: typeof x.status === "string" ? x.status : "pending",
+      ...(typeof x.source === "string" ? { source: x.source } : {}),
+      ...(typeof x.error === "string" && x.error ? { error: x.error } : {}),
+      ...(Array.isArray(x.tools) ? { tools: x.tools.length } : {}),
+    }));
 }
 
 /** A slash command's echo, `<command-name>/x</command-name><command-args>y</command-args>`, as the owner typed it. */
@@ -514,6 +545,7 @@ function foldSystem(s: ChatState, o: WireMessage): ChatState {
         version: (o.claude_code_version as string) ?? s.version,
         slashCommands: Array.isArray(o.slash_commands) ? (o.slash_commands as string[]) : s.slashCommands,
         capabilities: Array.isArray(o.capabilities) ? (o.capabilities as string[]) : (s.capabilities ?? []),
+        mcp: Array.isArray(o.mcp_servers) ? mcpServers(o.mcp_servers) : s.mcp,
       };
     case "status": {
       let n = s;
@@ -726,6 +758,8 @@ export function reduce(s: ChatState, o: WireMessage): ChatState {
       return confirm(s, String(o.id), { held: false, unsent: true });
     case "_context":
       return { ...s, context: o.usage as ContextUsage };
+    case "_mcp":
+      return { ...s, mcp: mcpServers(o.servers) };
     case "_model":
       return { ...s, model: String(o.model) };
     case "_mode":

@@ -2166,6 +2166,59 @@ await check("above the input at once — a held card, side questions, a queued m
   assert.equal(await exec("return document.querySelectorAll('.composer .attachments .thumb').length"), 1);
 });
 
+await check("the MCP pill: each server with Claude Code's mark and words, a ✗ when one failed, Reconnect and Disable on this chat's process; /mcp opens it (its changelog L6014)", async () => {
+  // The servers as the recording's mcp_status answered, and one whose rebuilt binary did not start.
+  const answer = outLines("mcp").find((o) => o.type === "control_response" && o.response.response?.mcpServers).response.response.mcpServers;
+  const servers = [...answer, { name: "embarch-api", status: "failed", error: "MCP error -32000: Connection closed", source: "dynamic" }];
+  await send([snapshot(), sent("ok"), ...events(outLines("mcp").filter((o) => o.type === "system" && o.subtype === "init"))]);
+  assert.deepEqual(await text(".composer .pill.mcp"), ["MCP"], "every server connected: no mark");
+  await send([{ t: "event", e: { type: "_mcp", servers } }]);
+  assert.deepEqual(await text(".composer .pill.mcp"), ["MCP ✗1"]);
+  await clearPosts();
+  await click(".composer .pill.mcp");
+  await settle();
+  assert.ok((await posts()).some((p) => p.t === "mcpStatus"), "opening asks the CLI afresh");
+  const rows = await exec("return [...document.querySelectorAll('.mcp-pop .mcp-row')].map((r) => [r.querySelector('.st').textContent, r.querySelector('.name').textContent, r.querySelector('.st-label').textContent, [...r.querySelectorAll('button')].map((b) => b.textContent)])");
+  assert.deepEqual(rows, [
+    ["✓", "bench", "Connected", ["Reconnect", "Disable"]],
+    ["✓", "embarch-chat", "this window's", []],
+    ["✗", "embarch-api", "Failed", ["Reconnect", "Disable"]],
+  ]);
+  assert.deepEqual(await text(".mcp-pop .mcp-err"), ["MCP error -32000: Connection closed"]);
+  await shot("mcp-pop");
+  await clearPosts();
+  await click(".mcp-pop .mcp-row.failed button", "Reconnect");
+  await settle();
+  assert.deepEqual((await posts()).filter((p) => p.t === "mcp"), [{ t: "mcp", name: "embarch-api", action: "reconnect" }]);
+  assert.deepEqual(await text(".mcp-pop .mcp-row.failed button"), ["Reconnecting…", "Disable"], "under way until the list comes back");
+  await send([{ t: "event", e: { type: "_mcp", servers: [...answer, { name: "embarch-api", status: "connected", source: "dynamic" }] } }]);
+  assert.deepEqual(await text(".composer .pill.mcp"), ["MCP"]);
+  await clearPosts();
+  await click(".mcp-pop .mcp-row button", "Disable");
+  await settle();
+  assert.deepEqual((await posts()).filter((p) => p.t === "mcp"), [{ t: "mcp", name: "bench", action: "disable" }]);
+  await send([{ t: "event", e: { type: "_mcp", servers: servers.map((x) => (x.name === "bench" ? { ...x, status: "disabled" } : x)) } }]);
+  assert.deepEqual(await exec("return [...document.querySelector('.mcp-pop .mcp-row').querySelectorAll('button')].map((b) => b.textContent)"), ["Enable"]);
+  // Escape closes it; the CLI's /mcp, typed, opens it again.
+  await exec("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))");
+  await settle();
+  assert.equal((await text(".mcp-pop")).length, 0);
+  await clearPosts();
+  // An earlier check's draft is this chat's too: from an empty input.
+  await exec("const t = document.querySelector('.composer textarea'); t.value = ''; t.dispatchEvent(new Event('input', { bubbles: true }))");
+  await type("/mcp " + ENTER);
+  assert.equal((await text(".mcp-pop")).length, 1);
+  assert.ok(!(await posts()).some((p) => p.t === "send"), "the page answers it; nothing goes to Claude");
+  assert.equal(await value(), "", "the draft clears");
+  // A closed process: the list as last known, nothing to act on.
+  await send([{ t: "event", e: { type: "_process", state: "closed" } }]);
+  assert.equal(await exec("return document.querySelectorAll('.mcp-pop button').length"), 0);
+  assert.ok((await text(".mcp-pop .pop-note"))[0].includes("next message starts every server afresh"));
+  // A chat read-only here has no pill.
+  await send([snapshot({}, { ...OURS, ours: false, readOnly: false, resumable: true })]);
+  assert.equal((await text(".composer .pill.mcp")).length, 0);
+});
+
 // ------------------------------------------------------------ the list
 
 await go("/list.html");

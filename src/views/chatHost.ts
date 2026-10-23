@@ -395,6 +395,11 @@ export class ChatHost implements vscode.Disposable {
         return;
       case "refreshContext":
         return chat.refreshContext();
+      case "mcpStatus":
+        return chat.mcpStatus();
+      case "mcp":
+        if (rec.ours) await chat.mcpAction(m.name, m.action);
+        return;
       case "openDiff": {
         const cwd = chat.opts.cwd || chat.state.cwd || "";
         let d = null;

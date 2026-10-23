@@ -3,7 +3,8 @@
 // repo: machine paths become /work, the init line keeps only what the
 // panel reads, a rate limit keeps its shape with neutral numbers, and the
 // answer to the panel's initialize (the account, its commands and models)
-// keeps only the session's state.
+// keeps only the session's state, and an `mcp_status` answer no server's
+// command line.
 //
 //   node test/sanitize.mjs <recording.jsonl> <fixture.jsonl> <scratch-dir>
 //   node test/sanitize.mjs --transcript <session.jsonl> <fixture.jsonl> <scratch-dir>
@@ -50,6 +51,8 @@ function neutralLimit(i) {
 /** The initialize request ids the panel sent: their answers name the account. */
 const inits = new Set();
 const KEEP_INITIALIZE = ["current_permission_mode", "session_state", "output_style", "hooks_applied"];
+/** `mcp_status` requests by id: their answers carry each server's command line. */
+const mcpAsks = new Set();
 
 const scrub = (s) => {
   for (const [from, to] of swaps) {
@@ -112,9 +115,13 @@ for (const line of fs.readFileSync(src, "utf8").split("\n")) {
   flush();
   if (o.type === "rate_limit_event") o.rate_limit_info = neutralLimit(o.rate_limit_info ?? {});
   if (e.d === "in" && o.type === "control_request" && o.request?.subtype === "initialize") inits.add(o.request_id);
+  if (e.d === "in" && o.type === "control_request" && o.request?.subtype === "mcp_status") mcpAsks.add(o.request_id);
   if (e.d === "out" && o.type === "control_response" && inits.has(o.response?.request_id)) {
     const r = o.response.response ?? {};
     o.response.response = Object.fromEntries(KEEP_INITIALIZE.filter((k) => k in r).map((k) => [k, r[k]]));
+  }
+  if (e.d === "out" && o.type === "control_response" && mcpAsks.has(o.response?.request_id) && Array.isArray(o.response.response?.mcpServers)) {
+    for (const srv of o.response.response.mcpServers) delete srv.config;
   }
   // /cost answers with the account's own usage and limits: a neutral answer instead.
   delete o.usage_report;

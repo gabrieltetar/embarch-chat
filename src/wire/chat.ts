@@ -779,6 +779,40 @@ export class Chat extends EventEmitter {
     }
   }
 
+  /**
+   * The CLI's MCP servers as its `/mcp` lists them (`mcp_status`): asked when
+   * the owner opens the MCP pill, and after each action on a server.
+   */
+  async mcpStatus(): Promise<void> {
+    if (!this.running) return;
+    try {
+      const r = await this.proc!.request("mcp_status", {}, 10000);
+      if (Array.isArray(r.mcpServers)) this.dispatch({ type: "_mcp", servers: r.mcpServers });
+    } catch (e) {
+      this.log(`mcp_status: ${(e as Error).message}`);
+    }
+  }
+
+  /**
+   * Claude Code's MCP dialog's actions (its changelog L6014), for this
+   * chat's process: Reconnect (`mcp_reconnect`) starts the server's process
+   * again, so a rebuilt binary is the one that answers from then on [measured:
+   * a new pid]; enable and disable are `mcp_toggle`. A refusal is a line in
+   * the chat; the list is asked again either way.
+   */
+  async mcpAction(name: string, action: "reconnect" | "enable" | "disable"): Promise<void> {
+    if (!this.running) return;
+    try {
+      if (action === "reconnect") await this.proc!.request("mcp_reconnect", { serverName: name }, 60000);
+      else await this.proc!.request("mcp_toggle", { serverName: name, enabled: action === "enable" }, 60000);
+      this.log(`mcp ${action} ${name}`);
+    } catch (e) {
+      const done = action === "reconnect" ? "reconnected" : `${action}d`;
+      this.dispatch({ type: "_note", text: `MCP server ${name} not ${done}: ${(e as Error).message}`, tone: "error" });
+    }
+    await this.mcpStatus();
+  }
+
   /** The session's name as the transcript or a rename has it (decision 12). */
   noteTitle(title: string): void {
     if (title && title !== this.state.title) this.dispatch({ type: "_title", title });

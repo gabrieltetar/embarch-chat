@@ -146,7 +146,11 @@ export type ChatToHost =
   | { t: "sendNow"; id: string }
   /** `/btw <question>`: a side question, answered beside the chat (57). */
   | { t: "btw"; question: string }
-  | { t: "sideClear" };
+  | { t: "sideClear" }
+  /** The MCP pill opened: the servers as the CLI has them now. */
+  | { t: "mcpStatus" }
+  /** Claude Code's MCP dialog's actions on one server. */
+  | { t: "mcp"; name: string; action: "reconnect" | "enable" | "disable" };
 
 export type HostToList = {
   t: "groups";
