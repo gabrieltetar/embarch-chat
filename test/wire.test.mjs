@@ -399,6 +399,40 @@ test("a message the CLI never took before it died goes back to the draft", async
   chat.dispose();
 });
 
+test("a crash in a new chat's first turn: the next message starts it again by the same id, whatever the CLI had written", async () => {
+  // What the dead CLI left in the transcript, and how the next process must start for the CLI to take the id.
+  for (const [left, how] of [
+    ["prompt", "resume"],
+    ["queue", "session-id"],
+    [null, "session-id"],
+  ]) {
+    const { chat, spawns, dir } = makeChat("basic");
+    const config = path.join(dir, "config");
+    Object.assign(chat.opts.env, { CLAUDE_CONFIG_DIR: config, FAKE_CLAUDE_STRICT: "1", FAKE_CLAUDE_SIGNAL: "SIGKILL" });
+    if (left) chat.opts.env.FAKE_CLAUDE_TRANSCRIPT = left;
+    const unsent = [];
+    chat.on("unsent", (t) => unsent.push(t));
+    const Q = "Run the bash command `echo hello-from-bash` and then reply with just: done";
+    let closed = once(chat, "closed");
+    chat.send(Q);
+    await closed;
+    assert.deepEqual(unsent, [Q], `${left}: back in the draft`);
+    delete chat.opts.env.FAKE_CLAUDE_SIGNAL;
+    const turn = turns(chat, 1);
+    closed = once(chat, "closed");
+    chat.send(Q);
+    const ended = await Promise.race([turn.then(() => "a turn"), closed.then(() => `an exit: ${chat.state.processError}`)]);
+    assert.equal(ended, "a turn", `${left}: the next message starts the chat`);
+    const a = spawns()[1].argv;
+    if (how === "resume") assert.ok(a.includes(`--resume=${chat.sessionId}`) && !a.includes("--session-id"), `${left}: ${a.join(" ")}`);
+    else assert.equal(a[a.indexOf("--session-id") + 1], chat.sessionId, `${left}: ${a.join(" ")}`);
+    const project = path.join(config, "projects", dir.replace(/[^a-zA-Z0-9]/g, "-"));
+    const aside = fs.existsSync(project) ? fs.readdirSync(project).filter((f) => f.startsWith(`${chat.sessionId}.jsonl.`)) : [];
+    assert.equal(aside.length, left === "queue" ? 1 : 0, `${left}: only a transcript with no message is set aside: ${aside}`);
+    chat.dispose();
+  }
+});
+
 test("a local slash command the CLI ran is sent, though nothing echoes it: a later crash gives back only what it never took", async () => {
   const { chat, spawns } = makeChat("slash");
   const unsent = [];

@@ -18,8 +18,9 @@ export function isSessionId(s: unknown): s is string {
   return typeof s === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
 }
 
-export function projectsRoot(): string {
-  return path.join(process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude"), "projects");
+/** Where Claude Code keeps transcripts — for the environment `claude` runs in. */
+export function projectsRoot(env: NodeJS.ProcessEnv = process.env): string {
+  return path.join(env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude"), "projects");
 }
 
 /** Claude Code's folder for a working directory: every non-alphanumeric character becomes '-'. */
@@ -47,6 +48,34 @@ export function findTranscript(sessionId: string, cwd?: string, root = projectsR
     /* no projects folder */
   }
   return null;
+}
+
+/** How much of a transcript `holdsMessage` reads: one past it holds a conversation. */
+const HOLDS_SCAN = 256 * 1024;
+
+/**
+ * Whether a transcript holds a message, so `claude --resume` takes it: the
+ * CLI writes its queue lines first and the message after, and refuses to
+ * resume a transcript with only the former ("No conversation found").
+ */
+export function holdsMessage(file: string): boolean {
+  let text: string;
+  try {
+    const st = fs.statSync(file);
+    if (st.size > HOLDS_SCAN) return true;
+    text = fs.readFileSync(file, "utf8");
+  } catch {
+    return false;
+  }
+  return text.split("\n").some((l) => {
+    if (!l.trim()) return false;
+    try {
+      const t = (JSON.parse(l) as { type?: unknown }).type;
+      return t === "user" || t === "assistant";
+    } catch {
+      return false;
+    }
+  });
 }
 
 export interface TranscriptMeta {

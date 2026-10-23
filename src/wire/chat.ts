@@ -5,7 +5,9 @@
 // next message resumes it.
 
 import { EventEmitter } from "events";
+import * as fs from "fs";
 import { ClaudeProcess, SpawnSpec, chatEnv } from "./process";
+import { findTranscript, holdsMessage, projectsRoot } from "./transcript";
 import { ChatState, Pending, chatStatus, initialState, reduce, reduceAll, textOf } from "./reducer";
 import type { ContextUsage, PermissionDecision, WireMessage } from "./types";
 
@@ -129,8 +131,38 @@ export class Chat extends EventEmitter {
   /** Messages written while the process was closing (an idle close under way): they go to the resumed one, once it has exited. */
   private queued: Array<string | unknown[]> = [];
 
+  /**
+   * Before a new chat's process starts again: one that died in its first
+   * turn, before the reply that says the session exists, may have left a
+   * transcript, and the CLI refuses `--session-id` for an id that has one
+   * ("already in use") — every later message would fail the same way. A
+   * transcript with the first message in it is resumed. One with only the
+   * CLI's queue lines cannot be resumed either ("No conversation found"):
+   * it holds no conversation, so it is set aside and the id starts afresh.
+   */
+  private settleSession(env: NodeJS.ProcessEnv): void {
+    // A brand-new id has no transcript until a process of this chat's ran.
+    if (this.hasSession || !this.proc) return;
+    const file = findTranscript(this.sessionId, this.opts.cwd || undefined, projectsRoot(env));
+    if (!file) return;
+    if (holdsMessage(file)) {
+      this.hasSession = true;
+      this.log("a transcript from a process that died in the first turn: resumed");
+      return;
+    }
+    const aside = `${file}.unstarted-${Date.now()}`;
+    try {
+      fs.renameSync(file, aside);
+      this.log(`a transcript with no message, from a process that died in the first turn: set aside as ${aside}`);
+    } catch (e) {
+      this.log(`could not set aside ${file}: ${(e as Error).message}`);
+    }
+  }
+
   private ensureProcess(): ClaudeProcess {
     if (this.proc && !this.proc.exited) return this.proc;
+    const env = this.opts.env ?? chatEnv();
+    this.settleSession(env);
     const spec: SpawnSpec = {
       claudePath: this.opts.claudePath,
       cwd: this.opts.cwd,
@@ -138,7 +170,7 @@ export class Chat extends EventEmitter {
       resume: this.hasSession,
       permissionMode: this.state.mode,
       model: this.model,
-      env: this.opts.env ?? chatEnv(),
+      env,
       extraArgs: this.opts.extraArgs,
     };
     const proc = new ClaudeProcess(spec);

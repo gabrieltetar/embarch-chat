@@ -17,13 +17,19 @@
 // Env: FAKE_CLAUDE_FIXTURE (the recording), FAKE_CLAUDE_ARGS_LOG (a file each
 // invocation appends its argv to as one JSON line, `--version` and `agents`
 // too), FAKE_CLAUDE_VERSION, FAKE_CLAUDE_AGENTS (what `agents --json` lists),
-// FAKE_CLAUDE_SIGNAL (dies by it on the first message);
+// FAKE_CLAUDE_SIGNAL (dies by it on the first message), FAKE_CLAUDE_TRANSCRIPT
+// ("queue" or "prompt": what the CLI writes to the session's transcript for
+// each message, under $CLAUDE_CONFIG_DIR/projects — its queue lines, and
+// with "prompt" the message too), FAKE_CLAUDE_STRICT (refuses an id as the
+// CLI does: `--session-id` once the transcript exists, `--resume` while it
+// holds no message);
 // for -p, FAKE_HAIKU_DIR (default test/fixtures/haiku), FAKE_HAIKU_<TASK>
 // (a recording for one task, e.g. FAKE_HAIKU_CARDS), FAKE_HAIKU_DELAY_MS
 // (between lines, default 5); FAKE_CLAUDE_INPUT_LOG (each line the client
 // sends, with how many lines had been written by then).
 
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -83,6 +89,45 @@ for (let i = 0; i < argv.length; i++) {
 }
 const recordedSid = entries.find((e) => e.d === "out" && e.o.session_id)?.o.session_id;
 
+// The session's transcript, where the CLI keeps it.
+const transcript = sid && path.join(process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude"), "projects", process.cwd().replace(/[^a-zA-Z0-9]/g, "-"), `${sid}.jsonl`);
+const holdsMessage = (file) =>
+  fs.existsSync(file) &&
+  fs
+    .readFileSync(file, "utf8")
+    .split("\n")
+    .some((l) => {
+      try {
+        return ["user", "assistant"].includes(JSON.parse(l).type);
+      } catch {
+        return false;
+      }
+    });
+if (process.env.FAKE_CLAUDE_STRICT && transcript) {
+  // As CLI 2.1.287 refuses them, before reading any input.
+  if (argv.includes("--session-id") && fs.existsSync(transcript)) {
+    process.stderr.write(`Error: Session ID ${sid} is already in use.\n`);
+    process.exit(1);
+  }
+  if (!argv.includes("--session-id") && !holdsMessage(transcript)) {
+    process.stderr.write(`No conversation found with session ID: ${sid}\n`);
+    process.exit(1);
+  }
+}
+function writeTranscript(o) {
+  const mode = process.env.FAKE_CLAUDE_TRANSCRIPT;
+  if (!mode || !transcript || o.type !== "user") return;
+  fs.mkdirSync(path.dirname(transcript), { recursive: true });
+  const at = new Date().toISOString();
+  const content = typeof o.message?.content === "string" ? o.message.content : "";
+  const lines = [
+    { type: "queue-operation", operation: "enqueue", timestamp: at, sessionId: sid, content },
+    { type: "queue-operation", operation: "dequeue", timestamp: at, sessionId: sid },
+    ...(mode === "prompt" ? [{ type: "user", message: { role: "user", content }, sessionId: sid, timestamp: at }] : []),
+  ];
+  fs.appendFileSync(transcript, lines.map((l) => JSON.stringify(l) + "\n").join(""));
+}
+
 const fail = (msg) => {
   process.stderr.write(`fake-claude: ${msg}\n`);
   process.exit(3);
@@ -119,6 +164,7 @@ process.stdin.on("data", (d) => {
     if (!line.trim()) continue;
     const o = JSON.parse(line);
     if (process.env.FAKE_CLAUDE_INPUT_LOG) fs.appendFileSync(process.env.FAKE_CLAUDE_INPUT_LOG, JSON.stringify({ written, o }) + "\n");
+    writeTranscript(o);
     // FAKE_CLAUDE_SIGNAL: dies by that signal on its first message (a crash, an OOM kill).
     if (process.env.FAKE_CLAUDE_SIGNAL && o.type === "user") process.kill(process.pid, process.env.FAKE_CLAUDE_SIGNAL);
     const want = nextIn();
