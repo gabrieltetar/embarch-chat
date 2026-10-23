@@ -376,6 +376,25 @@ await check("a streaming step joins the run at once; its description heads the r
   await shot("chat-run-live");
 });
 
+await check("turns: 12 px between blocks, 28 px and a rule between turns, none above the first", async () => {
+  await send([snapshot(), ...events(outLines("steps"))]);
+  const rows = await exec(
+    // The space from one block's box to the next one's content: the gap, and a turn's rule and padding.
+    "const ws=[...document.querySelectorAll('.timeline > div')]; return ws.map((w,i)=>{ const cs=getComputedStyle(w); return { user: !!w.querySelector(':scope > .user'), rule: cs.borderTopWidth, gap: i ? Math.round(w.getBoundingClientRect().top - ws[i-1].getBoundingClientRect().bottom + parseFloat(cs.borderTopWidth) + parseFloat(cs.paddingTop)) : null }; })",
+  );
+  assert.deepEqual(
+    rows.map((r) => [r.user, r.rule, r.gap]),
+    [
+      [true, "0px", null],
+      [false, "0px", 12],
+      [false, "0px", 12],
+      [true, "1px", 29],
+      [false, "0px", 12],
+      [false, "0px", 12],
+    ],
+  );
+});
+
 await check("@ asks the host for paths and inserts the pick; Enter sends", async () => {
   await send([snapshot()]);
   await clearPosts();

@@ -1,7 +1,8 @@
 // The chat webview: its card as a header (decision 18), the timeline, what
 // waits on the owner, the input. State arrives as one snapshot and then as
 // wire events, folded here by the same reducer the host runs; events are
-// folded as they come and rendered once per frame. Runs of quiet steps fold
+// folded as they come and rendered once per frame. The timeline is in turns,
+// one per message of the owner's (decision 51), and runs of quiet steps fold
 // into one row (decision 50).
 
 import "../shared/style.css";
@@ -321,9 +322,15 @@ function App() {
         {!state.timeline.length && !liveB.length && (
           <div class="empty-note">{view.ours ? "A new chat. The first message starts Claude, in this window's folder." : "Nothing in this chat's transcript yet."}</div>
         )}
-        {rows.map((r) => (
-          <div key={r.key}>{r.run ? <RunView steps={r.ids.map((id) => get(id)!)} entries={entries} ctx={ctx} render={renderEntry} /> : renderRow(get(r.ids[0])!)}</div>
-        ))}
+        {rows.map((r, i) => {
+          const e = get(r.ids[0])!;
+          // A turn begins at each of the owner's messages: a rule above it, none above the first (decision 51).
+          return (
+            <div key={r.key} class={i > 0 && !r.run && e.kind === "user" ? "turn" : undefined}>
+              {r.run ? <RunView steps={r.ids.map((id) => get(id)!)} entries={entries} ctx={ctx} render={renderEntry} /> : renderRow(e)}
+            </div>
+          );
+        })}
       </div>
       <PendingCards pending={state.pending} ctx={ctx} readOnly={view.readOnly} />
       <StatusLine state={state} warning={model.warning} />

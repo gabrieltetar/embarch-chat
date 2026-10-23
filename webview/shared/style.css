@@ -301,7 +301,24 @@ a:focus-visible {
   padding: var(--gap);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 12px;
+}
+/* A turn begins at each of the owner's messages: 28 px between turns, a
+   rule halfway, none above the first; 12 px between blocks in a turn
+   (decision 51). */
+.timeline > .turn {
+  margin-top: 2px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+/* A text block's own paragraph margins would add to the gap. */
+.timeline > div > .md > :first-child,
+.timeline > div > .live > .md > :first-child {
+  margin-top: 0;
+}
+.timeline > div > .md > :last-child,
+.timeline > div > .live > .md > :last-child {
+  margin-bottom: 0;
 }
 .empty-note {
   margin: auto;
