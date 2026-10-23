@@ -28,21 +28,31 @@ const THEME = `:root{--vscode-font-family:sans-serif;--vscode-font-size:13px;--v
 --vscode-button-background:#0e639c;--vscode-button-foreground:#fff;--vscode-button-secondaryBackground:#3a3d41;--vscode-button-secondaryForeground:#ddd;
 --vscode-descriptionForeground:#999;--vscode-textLink-foreground:#4daafc;--vscode-textCodeBlock-background:#2b2b2b;--vscode-panel-border:#333}`;
 
-function page(bundle) {
-  return `<!doctype html><html><head><meta charset="utf-8"><style>${THEME}</style>
-<link rel="stylesheet" href="/dist/webview/${bundle}.css"></head><body><div id="app"></div>
-<script>
-window.__posts = []; window.__state = undefined;
+// The page VS Code would get (src/views/page.ts): the same strict CSP —
+// scripts by nonce only — and the title escaped; the stand-in for the
+// webview's API rides in with the page's nonce. `?title=` sets the title.
+const PAGE_PORT = 4989;
+const WD_PORT = 4988;
+const origin = `http://127.0.0.1:${PAGE_PORT}`;
+function page(bundle, title) {
+  const nonce = Math.random().toString(36).slice(2);
+  const head = `
+<style>${THEME}</style>
+<script nonce="${nonce}">
+window.__posts = []; window.__state = undefined; window.__violations = [];
+document.addEventListener("securitypolicyviolation", (e) => window.__violations.push(e.violatedDirective + " " + e.blockedURI));
 window.acquireVsCodeApi = () => ({ postMessage: (m) => window.__posts.push(JSON.parse(JSON.stringify(m))), getState: () => window.__state, setState: (s) => (window.__state = s) });
-</script>
-<script src="/dist/webview/${bundle}.js"></script></body></html>`;
+</script>`;
+  const html = core.pageHtml({ nonce, cspSource: origin, js: `${origin}/dist/webview/${bundle}.js`, css: `${origin}/dist/webview/${bundle}.css`, title, head });
+  // The stand-in must run before the bundle: it goes in <head>, ahead of the body's script.
+  return html;
 }
 
 const server = http.createServer((req, res) => {
   const u = new URL(req.url, "http://x");
   if (u.pathname === "/chat.html" || u.pathname === "/list.html") {
     res.writeHead(200, { "content-type": "text/html" });
-    return res.end(page(u.pathname.slice(1, -5)));
+    return res.end(page(u.pathname.slice(1, -5), u.searchParams.get("title") ?? "Chat"));
   }
   const file = path.join(root, u.pathname);
   if (!file.startsWith(path.join(root, "dist")) || !fs.existsSync(file)) {
@@ -52,14 +62,26 @@ const server = http.createServer((req, res) => {
   res.writeHead(200, { "content-type": file.endsWith(".css") ? "text/css" : "text/javascript" });
   res.end(fs.readFileSync(file));
 });
-await new Promise((r) => server.listen(0, "127.0.0.1", r));
-const base = `http://127.0.0.1:${server.address().port}`;
+await new Promise((r) => server.listen(PAGE_PORT, "127.0.0.1", r));
+const base = origin;
 
 // ------------------------------------------------------------ webdriver
 
-const WD_PORT = 4460 + Math.floor(Math.random() * 30);
 const gecko = spawn("geckodriver", ["--port", String(WD_PORT)], { stdio: "ignore" });
 const wdBase = `http://127.0.0.1:${WD_PORT}`;
+let S = null;
+// Whatever happens, the browser and geckodriver go with this run.
+const teardown = async () => {
+  if (S) await wd("DELETE", S).catch(() => {});
+  S = null;
+  gecko.kill();
+  server.close();
+};
+process.on("uncaughtException", async (e) => {
+  console.log(`FAIL (crashed): ${e.stack ?? e}`);
+  await teardown();
+  process.exit(1);
+});
 async function wd(method, p, body) {
   const r = await fetch(wdBase + p, { method, headers: { "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
   const j = await r.json();
@@ -75,7 +97,7 @@ for (let i = 0; i < 50; i++) {
   }
 }
 const sess = await wd("POST", "/session", { capabilities: { alwaysMatch: { "moz:firefoxOptions": { args: ["-headless", "-width", "460", "-height", "900"] } } } });
-const S = `/session/${sess.sessionId}`;
+S = `/session/${sess.sessionId}`;
 const exec = (script, args = []) => wd("POST", `${S}/execute/sync`, { script, args });
 const settle = () =>
   wd("POST", `${S}/execute/async`, { script: "const done = arguments[0]; setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(() => done(true))), 60);", args: [] });
@@ -385,7 +407,8 @@ await check("bench results show as cards: pass or fail, board, first error, step
   assert.match(cards[0].err, /main\.c:12:5: error: 'led' undeclared/);
   assert.ok(cards[0].head.includes("build ✗ · flash –"));
   assert.equal(cards[1].mark, "PASS");
-  assert.match(cards[2].err, /ASSERTION FAIL/);
+  assert.equal(cards[2].mark, "FAIL", "a log that holds an assert is a failed run");
+  assert.match(cards[2].err, /ASSERTION FAIL/, "its line still shown");
   assert.equal(cards[3].mark, "FAIL");
   assert.match(cards[3].err, /probe not found/);
   await clearPosts();
@@ -605,6 +628,27 @@ await check("the compact card adds /compact focus on: …; Enter sends the draft
   assert.equal(sid.length, 36);
 });
 
+await check("a held message whose compaction was stopped shows as not sent, and its text comes back to the draft", async () => {
+  const sid = await fresh();
+  await exec("const t=document.querySelector('.composer textarea'); t.value=arguments[0]; t.dispatchEvent(new Event('input', {bubbles:true}))", ["the newer draft"]);
+  await send([
+    { t: "event", e: { type: "_sent", n: 1, text: "/compact focus on: the widget" } },
+    { t: "event", e: { type: "_sent", n: 2, text: "now add the blink test", held: true } },
+    { t: "event", e: { type: "_unsent", id: "s:2" } },
+    { t: "draft", sid, text: "now add the blink test" },
+  ]);
+  assert.ok((await text(".user.unsent"))[0]?.includes("not sent"));
+  assert.equal((await text(".user.pending .held")).length, 0, "no longer waiting");
+  assert.equal(await value(), "now add the blink test\n\nthe newer draft", "back first, the newer draft after it");
+});
+
+await check("text for a chat's draft that lands before its composer listens is not lost", async () => {
+  const sid = `22222222-0000-4000-8000-${String(++sidN).padStart(12, "0")}`;
+  // The snapshot and the draft in one go: the composer mounts after the draft arrived.
+  await send([snapshot({ sessionId: sid }), { t: "draft", sid, text: "Read the issue and start on it." }]);
+  assert.equal(await value(), "Read the issue and start on it.");
+});
+
 await check("just before send: a long draft typed fast waits for its cards; the 💡 opens; Enter again sends it as it is", async () => {
   await fresh();
   const draft = "please also update the readme with the new flash steps";
@@ -763,8 +807,20 @@ await check("the list says so when the desk is down", async () => {
   assert.ok((await text(".warn-line"))[0].includes("not running"));
 });
 
-await wd("DELETE", S);
-gecko.kill();
-server.close();
+await check("the pages run under the production CSP, with nothing refused", async () => {
+  assert.deepEqual(await exec("return window.__violations"), [], "the list");
+  await go("/chat.html");
+  await send([snapshot(), ...events(outLines("basic"))]);
+  assert.deepEqual(await exec("return window.__violations"), [], "the chat");
+});
+
+await check("a title that closes the <title> stays text: the page still runs", async () => {
+  await go(`/chat.html?title=${encodeURIComponent("ABC-123 Fix </title><plaintext> parsing")}`);
+  assert.equal(await exec("return document.title"), "ABC-123 Fix </title><plaintext> parsing");
+  await send([snapshot()]);
+  assert.ok((await text(".header"))[0].includes("Make the widget blink"));
+});
+
+await teardown();
 console.log(failed ? `${failed} FAILED` : "all webview checks passed");
 process.exit(failed ? 1 : 0);

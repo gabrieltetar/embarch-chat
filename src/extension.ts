@@ -5,6 +5,7 @@
 // (launcher/, decision 29).
 
 import * as crypto from "crypto";
+import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 import { HaikuAssistant } from "./assistant/assistant";
@@ -15,11 +16,12 @@ import { ChatManager, ChatRecord, DeskDue } from "./chats";
 import { AssignBody, DeskClient, DeskError, MailboxEntry, expandHome } from "./desk/client";
 import { DeskService } from "./deskService";
 import { DIFF_SCHEME, DiffContent } from "./diff";
-import { jump } from "./jump";
+import { agentPid, jump } from "./jump";
 import { activateLauncher, deactivateLauncher, serverUrl } from "./launcher/launcher";
 import { HostCtx, assistInput } from "./views/chatHost";
 import { CHAT_VIEW, ChatPanels, ChatViewProvider, THREADS_VIEW, ThreadsViewProvider } from "./views/views";
 import { claudeVersion, versionWarning } from "./wire/version";
+import { isSessionId } from "./wire/transcript";
 
 let chats: ChatManager | undefined;
 let deskService: DeskService | undefined;
@@ -37,6 +39,8 @@ function cfg() {
 }
 
 const MIN = 60_000;
+/** A transcript written this recently may belong to a running session, when `claude agents` cannot say. */
+const RECENT_MS = 5 * MIN;
 
 function folders(): string[] {
   return (vscode.workspace.workspaceFolders ?? []).filter((f) => f.uri.scheme === "file").map((f) => f.uri.fsPath);
@@ -159,8 +163,12 @@ export function activate(context: vscode.ExtensionContext): void {
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 99);
   status.command = "embarchChat.openWaiting";
   context.subscriptions.push(status);
+  /** On screen: the sidebar's chat while the sidebar shows, or a visible editor tab (decision 34). */
+  const onScreen = (sid: string) => (manager.current === sid && !!chatView.view?.visible) || panels.visible(sid);
+  /** The chats waiting on the owner off screen, oldest first: the count, and what a click opens (decision 35). */
+  const waitingOff = () => desk.waiting().filter((t) => !onScreen(t.sessionId));
   const refreshCount = () => {
-    const w = desk.waiting();
+    const w = waitingOff();
     const tip = w.map((t) => `• ${t.title}${t.waitingFor ? ` — ${t.waitingFor}` : ""}`).join("\n");
     threads.badge(w.length, `${w.length} waiting on you`);
     if (w.length) {
@@ -193,17 +201,62 @@ export function activate(context: vscode.ExtensionContext): void {
     chatView.show(sid);
     threads.push();
     await reveal();
+    refreshCount();
+  };
+  chatView.onShown = refreshCount;
+  panels.onShown = refreshCount;
+
+  /**
+   * Whether a thread may be taken over here (decisions 5, 31): nothing runs
+   * it now. The desk's "ended", or a transcript with no desk at all, is not
+   * enough — a terminal may run it while the desk is down or restarting —
+   * so `claude agents` is asked; when it cannot say, a transcript written in
+   * the last few minutes while the desk is down counts as running.
+   */
+  async function freeToResume(rec: ChatRecord): Promise<boolean> {
+    const sid = rec.chat.sessionId;
+    const pid = await agentPid(cfg().claudePath, sid);
+    if (pid !== undefined) {
+      if (pid !== null) log(`[${sid.slice(0, 8)}] runs elsewhere (pid ${pid}): read-only here`);
+      return pid === null;
+    }
+    const file = rec.transcript?.file;
+    const recent = !!file && Date.now() - (fs.statSync(file, { throwIfNoEntry: false })?.mtimeMs ?? 0) < RECENT_MS;
+    return !(desk.error && recent);
+  }
+
+  /** A viewer offered as resumable stays so only when nothing runs it (checked in the background). */
+  function checkResumable(sid: string): void {
+    const rec = manager.get(sid);
+    if (!rec?.viewer || !rec.resumable) return;
+    void freeToResume(rec).then((free) => {
+      if (!free && rec.viewer && rec.resumable) {
+        rec.resumable = false;
+        manager.emit("snapshot", sid);
+      }
+    });
+  }
+
+  const viewerOf = (sid: string) => {
+    const found = desk.thread(sid);
+    const t = found?.thread;
+    const item = found?.group.item ?? null;
+    return {
+      cwd: t?.cwd ?? null,
+      itemId: item?.id ?? null,
+      itemTitle: item ? (item.issueKey ? `${item.issueKey} ${item.title}` : item.title) : null,
+      resumable: !!t && !t.live && desk.isWindowFolder(t.cwd),
+    };
   };
 
   /** Opens a thread: this window's own, or any other read-only from its transcript (decision 31). */
   async function open(sid: string): Promise<void> {
+    if (!isSessionId(sid)) return;
     const rec = manager.get(sid);
     if (!rec) {
-      const found = desk.thread(sid);
-      const t = found?.thread;
-      const item = found?.group.item ?? null;
-      const resumable = !!t && !t.live && desk.isWindowFolder(t.cwd);
-      manager.openViewer(sid, t?.cwd ?? null, item?.id ?? null, item ? (item.issueKey ? `${item.issueKey} ${item.title}` : item.title) : null, resumable);
+      const v = viewerOf(sid);
+      manager.openViewer(sid, v.cwd, v.itemId, v.itemTitle, v.resumable);
+      checkResumable(sid);
     } else if (rec.viewer) manager.reloadViewer(sid);
     const prev = manager.current;
     await show(sid);
@@ -212,9 +265,11 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   function openInEditor(sid: string): void {
+    if (!isSessionId(sid)) return;
     if (!manager.get(sid)) {
-      const t = desk.thread(sid);
-      manager.openViewer(sid, t?.thread.cwd ?? null, t?.group.item?.id ?? null, t?.group.item?.title ?? null, !!t && !t.thread.live && desk.isWindowFolder(t.thread.cwd));
+      const v = viewerOf(sid);
+      manager.openViewer(sid, v.cwd, v.itemId, v.itemTitle, v.resumable);
+      checkResumable(sid);
     }
     panels.open(sid, titleOf(manager.get(sid)));
   }
@@ -281,11 +336,12 @@ export function activate(context: vscode.ExtensionContext): void {
    * one whose item is not known) — the desk only hears this panel runs it,
    * and asks for its item when it sees it.
    */
-  async function startChat(body: AssignBody | null, cwd: string, label: string | null): Promise<ChatRecord | null> {
+  async function startChat(body: AssignBody | null, cwd: string, label: string | null, opts: { onRefusal?: (why: string) => void } = {}): Promise<ChatRecord | null> {
     const sid = crypto.randomUUID();
     let itemId: string | null = null;
     let itemTitle = label;
     let due: DeskDue | null = null;
+    let refused: string | null = null;
     try {
       if (body) {
         const r = await client.assign(sid, body);
@@ -298,6 +354,11 @@ export function activate(context: vscode.ExtensionContext): void {
       if (e instanceof DeskError && e.unreachable) {
         due = body ?? "mark";
         void vscode.window.showWarningMessage("The desk is not running: this chat starts without its work item, and the desk is told when it is back.");
+      } else if (opts.onRefusal) {
+        // Started all the same, off its item; the caller keeps what it carried.
+        refused = (e as Error).message;
+        due = "mark";
+        itemTitle = null;
       } else {
         void vscode.window.showErrorMessage(`Chat not started: ${(e as Error).message}`);
         return null;
@@ -305,8 +366,10 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     log(`new chat ${sid} on ${itemId ?? (body && "untracked" in body ? "untracked" : "no item yet")} in ${cwd}`);
     const rec = manager.create(sid, cwd, itemId, itemTitle, { untracked: !!body && "untracked" in body, deskDue: due });
+    if (refused !== null) opts.onRefusal!(refused);
     desk.rebuild();
     await show(sid);
+    if (due === "mark") void tellDesk(rec);
     return rec;
   }
 
@@ -379,6 +442,13 @@ export function activate(context: vscode.ExtensionContext): void {
     const rec = manager.get(sid);
     if (!rec) return false;
     if (rec.ours) return true;
+    if (!rec.resumable) return false;
+    // Asked again at the moment it would start: two writers on one session is what this prevents.
+    if (!(await freeToResume(rec))) {
+      rec.resumable = false;
+      rec.chat.preload([{ type: "_note", text: "Something else runs this chat now — it stays read-only here; Jump goes to it.", tone: "error" }]);
+      return false;
+    }
     if (!manager.adopt(sid)) return false;
     rec.deskDue = "mark";
     void tellDesk(rec);
@@ -386,9 +456,6 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   // ------------------------------------------------------------ chips and names
-
-  /** On screen: the sidebar's chat while the sidebar shows, or a visible editor tab (decision 34). */
-  const onScreen = (sid: string) => (manager.current === sid && !!chatView.view?.visible) || panels.visible(sid);
 
   // After each turn: chips for the chat on screen (25), a name after a new chat's first turn (12).
   manager.on("turn", (sid: string, _result: unknown, n: number) => {
@@ -428,8 +495,20 @@ export function activate(context: vscode.ExtensionContext): void {
       if (m.kind === "start" && m.item_id) {
         const cwd = windowCwd(m.folder) ?? m.folder;
         const card = desk.card(m.item_id);
-        const rec = await startChat({ item_id: m.item_id }, cwd, card ? (card.issue ? `${card.issue.key} ${card.issue.title}` : card.title) : null);
-        if (rec && m.prompt) rec.chat.send(m.prompt);
+        // The entry is taken already: if the desk refuses the assign (the
+        // item archived since), the chat starts off its item and Start
+        // work's prompt waits in its draft rather than being lost.
+        let refused = false;
+        const rec = await startChat({ item_id: m.item_id }, cwd, card ? (card.issue ? `${card.issue.key} ${card.issue.title}` : card.title) : null, {
+          onRefusal: (why) => {
+            refused = true;
+            void vscode.window.showErrorMessage(`Start work's chat is not on its work item (${why}); its prompt waits in the draft.`);
+          },
+        });
+        if (rec && m.prompt) {
+          if (refused) manager.setDraft(rec.chat.sessionId, m.prompt);
+          else rec.chat.send(m.prompt);
+        }
       } else if (m.kind === "focus" && m.session_id) {
         await open(m.session_id);
       }
@@ -446,7 +525,7 @@ export function activate(context: vscode.ExtensionContext): void {
       if (manager.current) openInEditor(manager.current);
     }),
     vscode.commands.registerCommand("embarchChat.openWaiting", async () => {
-      const w = desk.waiting();
+      const w = waitingOff();
       if (w.length) await open(w[0].sessionId);
     }),
     vscode.commands.registerCommand("embarchChat.refresh", () => desk.refresh()),

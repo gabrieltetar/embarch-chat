@@ -138,7 +138,7 @@ test("Start work's mailbox entry starts a chat on the item and sends the prompt"
   assert.equal(await client.take(id), null, "taken once");
 });
 
-test("a chat waiting on the owner shows as a count, and the click opens it", { skip }, async () => {
+test("a chat waiting on the owner off screen shows as a count, and the click opens it", { skip }, async () => {
   process.env.FAKE_CLAUDE_FIXTURE = path.join(here, "fixtures", "wire", "deny.jsonl");
   mock.state.quickPick = async (items) => items.find((i) => i.label.includes("Untracked"));
   await mock.state.commands.get("embarchChat.newChat")();
@@ -148,15 +148,52 @@ test("a chat waiting on the owner shows as a count, and the click opens it", { s
   }, 5000, "the untracked chat");
   chatView.webview.fromPage({ t: "send", text: "touch it" });
   await waitFor(() => chatView.webview.posted.some((m) => m.t === "event" && m.e.type === "control_request"), 5000, "the permission prompt");
+  // On screen, it counts for nothing (decision 35): the owner is looking at it.
+  await new Promise((r) => setTimeout(r, 300));
+  assert.ok(!mock.state.statusItems.some((s) => s.visible && /waiting/.test(s.text)), "no count for the chat on screen");
+  assert.equal(threadsView.badge, undefined);
+  // The sidebar hides: now it is waiting off screen.
+  chatView.visible = false;
+  chatView.em.emit("vis");
   const item = await waitFor(() => mock.state.statusItems.find((s) => s.visible && /1 waiting/.test(s.text)), 5000, "the status bar count");
   assert.equal(item.command, "embarchChat.openWaiting");
   assert.equal(threadsView.badge?.value, 1);
-  // Opening another chat, then the oldest waiting one, comes back to it.
   await mock.state.commands.get("embarchChat.openWaiting")();
   assert.equal(lastSnapshot().state.sessionId, sid);
+  chatView.visible = true;
+  chatView.em.emit("vis");
+  await waitFor(() => !mock.state.statusItems.some((s) => s.visible && /waiting/.test(s.text)), 5000, "the count to go once it shows");
   const pending = lastSnapshot().state.pending[0];
   chatView.webview.fromPage({ t: "deny", requestId: pending.requestId, message: "no" });
-  await waitFor(() => !mock.state.statusItems.some((s) => s.visible && /waiting/.test(s.text)), 5000, "the count to clear");
+  await waitFor(() => chatView.webview.posted.some((m) => m.t === "event" && m.e.type === "_answered"), 3000, "the answer");
+});
+
+test("a title is text in the page, whatever it holds", { skip }, async () => {
+  const { id: item } = await client.call("POST", "/items", { title: "ABC-126 Fix </title><plaintext> parsing", desk: "none" });
+  await mock.state.commands.get("embarchChat.refresh")();
+  mock.state.quickPick = async (items) => items.find((i) => i.label.includes("ABC-126"));
+  await mock.state.commands.get("embarchChat.newChat")();
+  await waitFor(() => lastSnapshot()?.header?.itemId === item, 5000, "the chat on the item");
+  await mock.state.commands.get("embarchChat.openInEditor")();
+  const panel = mock.state.panels.at(-1);
+  assert.ok(!panel.webview.html.includes("<plaintext>"), "escaped");
+  assert.match(panel.webview.html, /<title>ABC-126 Fix &lt;\/title&gt;&lt;plaintext&gt; parsing<\/title>/);
+  panel.dispose();
+});
+
+test("a start the desk refuses still opens a chat, with Start work's prompt in its draft", { skip }, async () => {
+  const before = chatView.webview.posted.length;
+  const prompt = "Read the issue and start on it.";
+  await desk.withStart({ item_id: "w-no-such-item", folder, prompt });
+  const d = await waitFor(() => chatView.webview.posted.slice(before).find((m) => m.t === "draft"), 10000, "the draft");
+  assert.equal(d.text, prompt);
+  const snap = chatView.webview.posted.slice(before).reverse().find((m) => m.t === "snapshot");
+  assert.equal(snap.state.sessionId, d.sid);
+  assert.ok(snap.view.ours);
+  assert.ok(!chatView.webview.posted.slice(before).some((m) => m.t === "event" && m.e.type === "_sent"), "nothing sent");
+  assert.ok(mock.state.messages.some(([k, m]) => k === "error" && /prompt waits in the draft/.test(m)));
+  const s = await waitFor(() => desk.client.session(d.sid).catch(() => null), 5000, "the desk to know the chat");
+  assert.equal(s.client, "embarch-chat", "marked as this panel's");
 });
 
 test("an editor tab shows the same chat", { skip }, async () => {

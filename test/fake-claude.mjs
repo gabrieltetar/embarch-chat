@@ -16,7 +16,8 @@
 //
 // Env: FAKE_CLAUDE_FIXTURE (the recording), FAKE_CLAUDE_ARGS_LOG (a file each
 // invocation appends its argv to as one JSON line, `--version` and `agents`
-// too), FAKE_CLAUDE_VERSION, FAKE_CLAUDE_AGENTS (what `agents --json` lists);
+// too), FAKE_CLAUDE_VERSION, FAKE_CLAUDE_AGENTS (what `agents --json` lists),
+// FAKE_CLAUDE_SIGNAL (dies by it on the first message);
 // for -p, FAKE_HAIKU_DIR (default test/fixtures/haiku), FAKE_HAIKU_<TASK>
 // (a recording for one task, e.g. FAKE_HAIKU_CARDS), FAKE_HAIKU_DELAY_MS
 // (between lines, default 5); FAKE_CLAUDE_INPUT_LOG (each line the client
@@ -118,6 +119,8 @@ process.stdin.on("data", (d) => {
     if (!line.trim()) continue;
     const o = JSON.parse(line);
     if (process.env.FAKE_CLAUDE_INPUT_LOG) fs.appendFileSync(process.env.FAKE_CLAUDE_INPUT_LOG, JSON.stringify({ written, o }) + "\n");
+    // FAKE_CLAUDE_SIGNAL: dies by that signal on its first message (a crash, an OOM kill).
+    if (process.env.FAKE_CLAUDE_SIGNAL && o.type === "user") process.kill(process.pid, process.env.FAKE_CLAUDE_SIGNAL);
     const want = nextIn();
     if (o.type === "control_request" && !(want && want.type === "control_request" && want.request?.subtype === o.request?.subtype)) {
       cannedAnswer(o);

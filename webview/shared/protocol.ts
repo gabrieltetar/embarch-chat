@@ -53,7 +53,9 @@ export type HostToChat =
   /** Haiku's cards for draft request `seq` (28, 36, 37). */
   | { t: "cards"; seq: number; cards: Card[] }
   /** The reply chips for the chat on screen (25). */
-  | { t: "chips"; sid: string; chips: Chip[] };
+  | { t: "chips"; sid: string; chips: Chip[] }
+  /** Text back into a chat's draft: a held message not sent, a start the desk refused. */
+  | { t: "draft"; sid: string; text: string };
 
 export interface MentionItem {
   /** What goes after the @. */

@@ -136,8 +136,9 @@ export class DeskClient {
 
   // ---------------------------------------------------------------- reads
 
-  view(): Promise<DeskView> {
-    return this.call<DeskView>("GET", "/view");
+  /** The desk's view; with `desk`, that desk's cards instead of the open desk's (decision 9) — a 404 once that desk is deleted. */
+  view(desk?: string | null): Promise<DeskView> {
+    return this.call<DeskView>("GET", desk ? `/view?desk=${encodeURIComponent(desk)}` : "/view");
   }
 
   session(sid: string): Promise<{ session_id: string; cwd: string; untracked: boolean; work_item: { id: string; title: string } | null }> {
@@ -262,6 +263,12 @@ export interface ViewCard {
   live_sessions: ViewSession[];
   tiles: ViewTile[];
   desk_id?: string | null;
+  /**
+   * When the item's notes last changed (null: none yet). A client that shows
+   * notes re-reads `/items/{id}/notes` only when it moves; this panel shows
+   * none yet, so nothing reads it.
+   */
+  notes_ms?: number | null;
 }
 
 export interface ViewDesk {

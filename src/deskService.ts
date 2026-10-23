@@ -7,7 +7,7 @@
 import * as cp from "child_process";
 import { EventEmitter } from "events";
 import { DeskClient, DeskError, DeskView, MailboxEntry, ViewDesk } from "./desk/client";
-import { ThreadGroup, buildThreads, isUnder, resolveDesk, waitingThreads } from "./desk/threads";
+import { ThreadGroup, buildThreads, isUnder, ownDesk, resolveDesk, waitingThreads } from "./desk/threads";
 import { TranscriptIndex, TranscriptMeta } from "./wire/transcript";
 import type { ChatManager } from "./chats";
 
@@ -51,6 +51,10 @@ export class DeskService extends EventEmitter {
   private past: TranscriptMeta[] = [];
   private pastAt = 0;
   private itemOf: Record<string, { id: string; title: string } | null> = {};
+  /** The desk whose repo holds the window's folder, once known: its cards are asked for by name. */
+  private ownDeskId: string | null = null;
+  /** The desk the current view's cards belong to, when asked for one. */
+  private scopedTo: string | null = null;
   private timer: NodeJS.Timeout | undefined;
   private mailTimer: NodeJS.Timeout | undefined;
   private mailBackoffUntil = 0;
@@ -118,10 +122,45 @@ export class DeskService extends EventEmitter {
     return this.current;
   }
 
+  /**
+   * The view for this window (decision 9): its own desk's cards
+   * (`/view?desk=`) when its folder is in a desk's repo, else the open
+   * desk's. A desk deleted since answers 404: the plain view, and the
+   * window's desk is found again from it.
+   */
+  private async fetchView(): Promise<DeskView> {
+    if (this.ownDeskId) {
+      try {
+        const v = await this.client.view(this.ownDeskId);
+        this.scopedTo = this.ownDeskId;
+        return v;
+      } catch (e) {
+        if (!(e instanceof DeskError && e.status === 404)) throw e;
+        this.log(`desk ${this.ownDeskId} is gone: the open desk's view`);
+        this.ownDeskId = null;
+      }
+    }
+    this.scopedTo = null;
+    let v = await this.client.view();
+    const own = ownDesk([...this.folders(), ...this.mains], v.desks ?? []);
+    this.ownDeskId = own?.id ?? null;
+    if (own && own.id !== v.open_desk?.id) {
+      // Another desk than the open one: its cards now, not after a poll.
+      try {
+        v = await this.client.view(own.id);
+        this.scopedTo = own.id;
+      } catch (e) {
+        if (!(e instanceof DeskError && e.status === 404)) throw e;
+        this.ownDeskId = null;
+      }
+    }
+    return v;
+  }
+
   private async pollOnce(): Promise<void> {
     const wasDown = this.error !== null;
     try {
-      this.view = await this.client.view();
+      this.view = await this.fetchView();
       this.error = null;
       // Back after an outage: the mailbox is asked now, not after its backoff.
       if (wasDown || this.mailBackoffUntil) {
@@ -219,6 +258,7 @@ export class DeskService extends EventEmitter {
       past: this.past.map((p) => ({ sessionId: p.sessionId, title: p.title, firstPrompt: p.firstPrompt, cwd: p.cwd, lastMs: p.lastMs })),
       itemOf: this.itemOf,
       now: Date.now(),
+      scopedTo: this.scopedTo,
     });
     this.emit("changed");
   }

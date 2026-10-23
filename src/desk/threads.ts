@@ -73,6 +73,8 @@ export interface ThreadInputs {
   /** A past session's work item, from the desk's GET /sessions/{sid}; null = untracked. */
   itemOf: Record<string, { id: string; title: string } | null>;
   now: number;
+  /** The desk whose cards the view holds when it was asked for one (`/view?desk=`); else they are the open desk's. */
+  scopedTo?: string | null;
 }
 
 export function isUnder(child: string | null | undefined, parent: string): boolean {
@@ -81,12 +83,17 @@ export function isUnder(child: string | null | undefined, parent: string): boole
   return child === p || child.startsWith(p + "/");
 }
 
-/** The desk whose repo the window's folder is in, else the open desk (decision 9). */
-export function resolveDesk(folders: string[], desks: ViewDesk[], openDesk: ViewDesk | null): ViewDesk | null {
+/** The desk whose repo the window's folder is in, if any. */
+export function ownDesk(folders: string[], desks: ViewDesk[]): ViewDesk | null {
   for (const d of desks) {
     if (d.firmware_repos.some((r) => folders.some((f) => isUnder(f, r) || isUnder(r, f)))) return d;
   }
-  return openDesk;
+  return null;
+}
+
+/** The desk whose repo the window's folder is in, else the open desk (decision 9). */
+export function resolveDesk(folders: string[], desks: ViewDesk[], openDesk: ViewDesk | null): ViewDesk | null {
+  return ownDesk(folders, desks) ?? openDesk;
 }
 
 const RANK: Record<ThreadState, number> = { waiting: 0, busy: 1, idle: 2, ended: 3 };
@@ -119,6 +126,13 @@ export function buildThreads(inp: ThreadInputs): ThreadGroup[] {
   const ignore = view?.ignore ?? [];
   const inRepos = (cwd: string | null | undefined) => inp.repos.some((r) => isUnder(cwd, r));
   const ownBySid = new Map(inp.own.map((o) => [o.sessionId, o]));
+  const pastBySid = new Map(inp.past.map((p) => [p.sessionId, p]));
+  // A live session's name is its agent's; an ended one's falls back to its
+  // folder's name, so its transcript's title says more (decision 32).
+  const titleOf = (s: { session_id: string; name?: string }, live: boolean) => {
+    const p = live ? undefined : pastBySid.get(s.session_id);
+    return p?.title ?? p?.firstPrompt ?? s.name ?? "session";
+  };
 
   const group = (key: string, item: GroupItem | null): ThreadGroup => {
     let g = groups.get(key);
@@ -130,9 +144,11 @@ export function buildThreads(inp: ThreadInputs): ThreadGroup[] {
     return g;
   };
 
-  // The desk's cards. /view carries the open desk's; when the window's desk
-  // is another one, only cards working in its repos belong here.
-  const foreignDesk = !!(inp.desk && view?.open_desk && inp.desk.id !== view.open_desk.id);
+  // The desk's cards: the window's desk's when the view was asked for it;
+  // else the open desk's, and when the window's desk is another one, only
+  // cards working in its repos belong here.
+  const cardsOf = inp.scopedTo ?? view?.open_desk?.id ?? null;
+  const foreignDesk = !!(inp.desk && cardsOf && inp.desk.id !== cardsOf);
   for (const c of view?.cards ?? []) {
     if (foreignDesk && !(inRepos(c.repo_path) || c.live_sessions?.some((s) => inRepos(s.cwd)))) continue;
     const g = group(c.id, itemOfCard(c, today));
@@ -142,15 +158,16 @@ export function buildThreads(inp: ThreadInputs): ThreadGroup[] {
       const own = ownBySid.get(s.session_id);
       if (own) continue; // placed below, from its own stream
       placed.add(s.session_id);
+      const st = normState(s.state ?? s.status);
       g.threads.push({
         sessionId: s.session_id,
-        title: s.name ?? "session",
-        state: normState(s.state ?? s.status),
+        title: titleOf(s, st !== "ended"),
+        state: st,
         waitingFor: s.waiting_for ?? null,
         lastMs: s.last_ms ?? s.last_reply_ms ?? c.last_activity_ms ?? 0,
         cwd: s.cwd ?? null,
         ours: false,
-        live: normState(s.state ?? s.status) !== "ended",
+        live: st !== "ended",
         client: s.client ?? null,
         folderUri: s.folder_uri,
         sessionUri: s.session_uri,
@@ -172,7 +189,7 @@ export function buildThreads(inp: ThreadInputs): ThreadGroup[] {
     const state = normState(s.state ?? s.status);
     g.threads.push({
       sessionId: s.session_id,
-      title: s.name ?? "session",
+      title: titleOf(s, state !== "ended"),
       state,
       waitingFor: s.waiting_for ?? null,
       lastMs: s.last_ms ?? 0,

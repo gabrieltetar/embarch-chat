@@ -275,7 +275,7 @@ test("an existing session resumes, mode and model carried", async () => {
 });
 
 test("a missing claude is an error on the chat, not a crash", async () => {
-  const chat = new core.Chat({ sessionId: "x", cwd: os.tmpdir(), claudePath: "/nonexistent/claude", existing: false, idleMs: 1000 });
+  const chat = new core.Chat({ sessionId: "11111111-2222-4333-8444-555555555555", cwd: os.tmpdir(), claudePath: "/nonexistent/claude", existing: false, idleMs: 1000 });
   chat.send("hi");
   await once(chat, "closed");
   assert.equal(chat.state.process, "error");
@@ -305,8 +305,189 @@ test("a transcript folds into the same state, titled by Claude's ai-title", () =
 });
 
 test("the claude args for a resumed chat", () => {
-  const a = core.claudeArgs({ claudePath: "claude", cwd: "/w", sessionId: "S", resume: true, permissionMode: "auto" });
-  assert.ok(a.includes("--resume=S"));
+  const S = "11111111-2222-4333-8444-555555555555";
+  const a = core.claudeArgs({ claudePath: "claude", cwd: "/w", sessionId: S, resume: true, permissionMode: "auto" });
+  assert.ok(a.includes(`--resume=${S}`));
   assert.ok(!a.includes("--session-id"));
   assert.ok(!("CLAUDECODE" in core.chatEnv({ CLAUDECODE: "1", PATH: "/bin" })));
+});
+
+// ------------------------------------------------------------ what review round 1 found
+
+test("only a UUID is a session id: none other reaches a path or claude's command line", () => {
+  assert.ok(core.isSessionId("11111111-2222-4333-8444-555555555555"));
+  for (const bad of ["../../x", "S", "11111111-2222-4333-8444-55555555555/", "--model=opus", "", null]) assert.equal(core.isSessionId(bad), false, String(bad));
+  assert.throws(() => core.claudeArgs({ claudePath: "claude", cwd: "/w", sessionId: "../../x", resume: true, permissionMode: "auto" }), /not a session id/);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "embarch-chat-sid-"));
+  fs.mkdirSync(path.join(root, "p"));
+  fs.writeFileSync(path.join(root, "x.jsonl"), "{}\n");
+  assert.equal(core.findTranscript("../x", undefined, path.join(root, "p")), null, "no path out of the projects folder");
+  fs.writeFileSync(path.join(root, "p", "not-a-session.jsonl"), "{}\n");
+  assert.deepEqual(new core.TranscriptIndex(root).list(["/p"], 0), [], "a file not named by a session id is not a transcript");
+});
+
+test("a message sent while the idle close is under way goes to the resumed process", async () => {
+  const { chat, spawns, dir } = makeChat("resume");
+  const inputs = path.join(dir, "inputs.jsonl");
+  chat.opts.env.FAKE_CLAUDE_INPUT_LOG = inputs;
+  // The recording echoes its own prompt, so the second message is the same text.
+  const Q = "What word did I ask you to remember? One word.";
+  chat.send(Q);
+  await turns(chat, 1);
+  // The idle close ends stdin; the owner's message lands before the CLI has gone.
+  chat.closeProcess();
+  const next = turns(chat, 1);
+  chat.send(Q);
+  assert.equal(Object.values(chat.state.entries).filter((e) => e.kind === "user" && e.pending).length, 1, "shown at once, waiting");
+  await next;
+  const runs = spawns();
+  assert.equal(runs.length, 2, "resumed");
+  assert.ok(runs[1].argv.includes(`--resume=${chat.sessionId}`));
+  const sent = fs.readFileSync(inputs, "utf8").trim().split("\n").map((l) => JSON.parse(l).o).filter((o) => o.type === "user").map((o) => o.message.content);
+  assert.deepEqual(sent, [Q, Q], "nothing written into the closing process is lost");
+  assert.ok(!Object.values(chat.state.entries).some((e) => e.kind === "user" && e.pending), "and Claude took it");
+  chat.dispose();
+});
+
+test("a CLI killed by a signal is an error, not an idle close", async () => {
+  const { chat } = makeChat("basic");
+  chat.opts.env.FAKE_CLAUDE_SIGNAL = "SIGKILL";
+  chat.send("Run the bash command `echo hello-from-bash` and then reply with just: done");
+  await once(chat, "closed");
+  assert.equal(chat.state.process, "error");
+  assert.match(chat.state.processError, /SIGKILL/);
+  chat.dispose();
+});
+
+test("a background subagent's permission prompt outlives the main turn's end", () => {
+  let s = core.initialState("x");
+  const fold = (es) => es.forEach((e) => (s = core.reduce(s, e)));
+  fold([
+    { type: "assistant", message: { id: "m1", content: [{ type: "tool_use", id: "toolu_agent", name: "Agent", input: { description: "bg", run_in_background: true } }] } },
+    { type: "system", subtype: "task_started", tool_use_id: "toolu_agent", is_backgrounded: true },
+    { type: "system", subtype: "background_tasks_changed", tasks: [{ task_id: "a1", task_type: "local_agent", description: "bg" }] },
+    { type: "result", subtype: "success" },
+    // The background subagent asks after the main turn ended.
+    { type: "assistant", parent_tool_use_id: "toolu_agent", message: { id: "m2", content: [{ type: "tool_use", id: "toolu_sub", name: "Bash", input: { command: "make flash" } }] } },
+    { type: "control_request", request_id: "r1", request: { subtype: "can_use_tool", tool_name: "Bash", input: { command: "make flash" }, tool_use_id: "toolu_sub" } },
+    // The owner writes something else meanwhile; that turn asks too, and is stopped.
+    { type: "_sent", n: 1, text: "meanwhile, check the README" },
+    { type: "assistant", message: { id: "m3", content: [{ type: "tool_use", id: "toolu_main", name: "Bash", input: { command: "cat README.md" } }] } },
+    { type: "control_request", request_id: "r2", request: { subtype: "can_use_tool", tool_name: "Bash", input: { command: "cat README.md" }, tool_use_id: "toolu_main" } },
+    { type: "result", subtype: "error_during_execution", is_error: true },
+  ]);
+  assert.deepEqual(s.pending.map((p) => p.requestId), ["r1"], "the subagent still waits; the stopped turn's prompt is gone");
+  assert.equal(core.chatStatus(s), "waiting");
+  fold([{ type: "control_cancel_request", request_id: "r1" }]);
+  assert.deepEqual(s.pending, []);
+});
+
+test("a transcript folds in linear time, to the same state as line by line", () => {
+  const lines = [];
+  const pad = "x".repeat(200);
+  for (let i = 0; i < 4000; i++) {
+    lines.push({ type: "user", uuid: `u${i}`, message: { role: "user", content: `prompt ${i} ${pad}` } });
+    lines.push({ type: "assistant", message: { id: `m${i}a`, content: [{ type: "tool_use", id: `t${i}`, name: "Bash", input: { command: `echo ${i}` } }] } });
+    lines.push({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: `t${i}`, content: `out ${i}` }] } });
+    lines.push({ type: "assistant", message: { id: `m${i}b`, content: [{ type: "text", text: `reply ${i} ${pad}` }] } });
+  }
+  const t0 = Date.now();
+  const all = core.reduceAll(core.initialState("x"), lines);
+  const ms = Date.now() - t0;
+  assert.ok(ms < 2000, `16,000 lines in ${ms} ms (line by line copying everything took 41 s)`);
+  assert.equal(all.timeline.length, 12000);
+  // Same as one at a time, on a part small enough to fold that way.
+  let one = core.initialState("x");
+  for (const e of lines.slice(0, 800)) one = core.reduce(one, e);
+  assert.deepEqual(core.reduceAll(core.initialState("x"), lines.slice(0, 800)), one);
+  // And a state handed out before is not changed by a later fold.
+  const before = core.reduceAll(core.initialState("x"), lines.slice(0, 4));
+  const snap = JSON.stringify(before);
+  core.reduceAll(before, lines.slice(4, 40));
+  assert.equal(JSON.stringify(before), snap);
+});
+
+test("a live foreign thread follows its transcript by what was added, as events", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "embarch-chat-follow-"));
+  const prev = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = root;
+  try {
+    const sid = "22222222-3333-4444-8555-666666666666";
+    const pdir = path.join(root, "projects", "-w");
+    fs.mkdirSync(pdir, { recursive: true });
+    const file = path.join(pdir, `${sid}.jsonl`);
+    const line = (o) => JSON.stringify(o) + "\n";
+    fs.writeFileSync(file, line({ type: "user", cwd: "/w", message: { role: "user", content: "first" } }) + line({ type: "custom-title", customTitle: "Named here" }));
+    const m = new core.ChatManager(() => ({ claudePath: FAKE, idleMs: 60000, log: () => {} }));
+    const got = [];
+    m.on("event", (_sid, e) => got.push(e.type));
+    m.on("snapshot", () => got.push("snapshot"));
+    const rec = m.openViewer(sid, "/w", null, null, false);
+    assert.equal(rec.chat.state.title, "Named here");
+    got.length = 0;
+    // The session goes on: a reply, Claude's renewed ai-title (the custom name stays), half a line still being written.
+    fs.appendFileSync(file, line({ type: "assistant", message: { id: "a1", content: [{ type: "text", text: "second" }] } }) + line({ type: "ai-title", aiTitle: "Claude's own" }) + '{"type":"user","mess');
+    m.reloadViewer(sid);
+    assert.deepEqual(got, ["assistant"], "the new line as an event, not a snapshot");
+    assert.equal(rec.chat.state.title, "Named here");
+    fs.appendFileSync(file, 'age":{"role":"user","content":"third"}}\n');
+    m.reloadViewer(sid);
+    const texts = rec.chat.state.timeline.map((id) => rec.chat.state.entries[id].text);
+    assert.deepEqual(texts, ["first", "second", "third"], "the half line once it was whole");
+    // The index reads what was added too.
+    const idx = new core.TranscriptIndex(path.join(root, "projects"));
+    assert.equal(idx.list(["/w"], 0)[0].title, "Named here");
+    fs.appendFileSync(file, line({ type: "custom-title", customTitle: "Renamed" }));
+    assert.equal(idx.list(["/w"], 0)[0].title, "Renamed");
+    m.dispose();
+  } finally {
+    if (prev === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+    else process.env.CLAUDE_CONFIG_DIR = prev;
+  }
+});
+
+// A stopped or failed compaction, through a scripted CLI (test/fake-compact.mjs).
+function compactChat(env = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "embarch-chat-compact-"));
+  const logFile = path.join(dir, "in.jsonl");
+  const FC = path.join(here, "fake-compact.mjs");
+  fs.chmodSync(FC, 0o755);
+  const chat = new core.Chat({ sessionId: "33333333-2222-4333-8444-555555555555", cwd: dir, claudePath: FC, existing: false, idleMs: 600000, env: { ...process.env, FC_LOG: logFile, ...env } });
+  const sent = () => (fs.existsSync(logFile) ? fs.readFileSync(logFile, "utf8").trim().split("\n").map((l) => JSON.parse(l)).filter((o) => o.type === "user").map((o) => o.message.content) : []);
+  const unsent = [];
+  chat.on("unsent", (t) => unsent.push(t));
+  return { chat, sent, unsent };
+}
+const held = (chat) => chat.state.timeline.map((id) => chat.state.entries[id]).filter((e) => e.kind === "user" && (e.held || e.unsent));
+
+test("Stop during a held /compact: its rest is not sent, then or later, and goes back to the draft", async () => {
+  const { chat, sent, unsent } = compactChat();
+  chat.sendAfterCompact("/compact focus on: the widget", "now add the blink test");
+  await waitFor(() => chat.state.compacting);
+  const stopped = turns(chat, 1);
+  await chat.interrupt();
+  await stopped;
+  assert.deepEqual(unsent, ["now add the blink test"], "back to the draft");
+  assert.deepEqual(held(chat).map((e) => [e.text, !!e.pending, !!e.unsent]), [["now add the blink test", false, true]], "shown as not sent");
+  let t = turns(chat, 1);
+  chat.send("something else");
+  await t;
+  t = turns(chat, 1);
+  chat.send("auto"); // a later turn auto-compacts
+  await t;
+  assert.deepEqual(sent(), ["/compact focus on: the widget", "something else", "auto"], "the old rest never went out");
+  chat.dispose();
+});
+
+test("a held /compact that fails gives its rest back too", async () => {
+  const { chat, sent, unsent } = compactChat({ FC_FAIL: "1" });
+  const failed = turns(chat, 1);
+  chat.sendAfterCompact("/compact focus on: the widget", "now add the blink test");
+  await failed;
+  assert.deepEqual(unsent, ["now add the blink test"]);
+  const t = turns(chat, 1);
+  chat.send("auto");
+  await t;
+  assert.deepEqual(sent(), ["/compact focus on: the widget", "auto"]);
+  chat.dispose();
 });

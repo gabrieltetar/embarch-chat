@@ -66,6 +66,17 @@ function saveDraft(sid: string, text: string): void {
 
 const words = (s: string) => s.trim().split(/\s+/).filter(Boolean).length;
 
+/**
+ * Text the host gives back to a chat's draft (a held message not sent, a
+ * start the desk refused). Kept here until that chat's composer takes it:
+ * it may not be mounted, or not listening yet, when the message lands.
+ */
+const returned: Record<string, string> = {};
+export function returnToDraft(sid: string, text: string): void {
+  returned[sid] = returned[sid] ? `${returned[sid]}\n\n${text}` : text;
+  window.dispatchEvent(new CustomEvent("embarch-draft", { detail: sid }));
+}
+
 export function Composer(p: Props) {
   const { sid, busy, mode, model, slashCommands, placeholder, mentions, library, chips, onChip } = p;
   const [text, setTextState] = useState(() => (vscodeApi.getState() as Saved | undefined)?.drafts?.[sid] ?? "");
@@ -116,6 +127,21 @@ export function Composer(p: Props) {
   useEffect(() => {
     if (mentions && pop?.kind === "at" && mentions.q === pop.q) setPop({ ...pop, items: mentions.items, on: 0 });
   }, [mentions]);
+
+  // Text given back to this chat's draft goes first, the owner's newer draft after it.
+  useEffect(() => {
+    const take = () => {
+      const back = returned[sid];
+      if (!back) return;
+      delete returned[sid];
+      const cur = textRef.current;
+      setText(cur.trim() ? `${back}\n\n${cur}` : back);
+    };
+    const on = (e: Event) => (e as CustomEvent<string>).detail === sid && take();
+    take();
+    window.addEventListener("embarch-draft", on);
+    return () => window.removeEventListener("embarch-draft", on);
+  }, [sid]);
 
   useEffect(
     () => () => {

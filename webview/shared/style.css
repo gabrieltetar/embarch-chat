@@ -315,6 +315,10 @@ a:hover {
 .user.pending {
   opacity: 0.6;
 }
+.user.unsent {
+  opacity: 0.6;
+  border-style: dashed;
+}
 
 .note {
   align-self: center;

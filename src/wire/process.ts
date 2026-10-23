@@ -6,6 +6,7 @@
 import * as cp from "child_process";
 import { EventEmitter } from "events";
 import type { WireMessage } from "./types";
+import { isSessionId } from "./transcript";
 
 export interface SpawnSpec {
   claudePath: string;
@@ -22,6 +23,7 @@ export interface SpawnSpec {
 
 /** The official panel's flags (proposal, "What is possible"), plus streaming and prompt suggestions. */
 export function claudeArgs(spec: SpawnSpec): string[] {
+  if (!isSessionId(spec.sessionId)) throw new Error(`not a session id: ${JSON.stringify(spec.sessionId).slice(0, 60)}`);
   const args = [
     "--input-format",
     "stream-json",
@@ -79,7 +81,15 @@ export class ClaudeProcess extends EventEmitter {
   }
 
   start(): void {
-    const child = cp.spawn(this.spec.claudePath, claudeArgs(this.spec), {
+    let args: string[];
+    try {
+      args = claudeArgs(this.spec);
+    } catch (e) {
+      this.exited = true;
+      setImmediate(() => this.emit("error", e));
+      return;
+    }
+    const child = cp.spawn(this.spec.claudePath, args, {
       cwd: this.spec.cwd,
       env: this.spec.env ?? chatEnv(),
       stdio: ["pipe", "pipe", "pipe"],
@@ -150,8 +160,13 @@ export class ClaudeProcess extends EventEmitter {
     this.waiters.clear();
   }
 
+  /** Closing: stdin has ended, and nothing written now would be read. */
+  get closing(): boolean {
+    return !!this.child?.stdin?.writableEnded;
+  }
+
   write(o: unknown): boolean {
-    if (!this.child || this.exited || !this.child.stdin || this.child.stdin.destroyed) return false;
+    if (!this.child || this.exited || !this.child.stdin || this.child.stdin.destroyed || this.child.stdin.writableEnded) return false;
     this.child.stdin.write(JSON.stringify(o) + "\n");
     return true;
   }

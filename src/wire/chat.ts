@@ -6,7 +6,7 @@
 
 import { EventEmitter } from "events";
 import { ClaudeProcess, SpawnSpec, chatEnv } from "./process";
-import { ChatState, Pending, chatStatus, initialState, reduce, textOf } from "./reducer";
+import { ChatState, Pending, chatStatus, initialState, reduce, reduceAll, textOf } from "./reducer";
 import type { ContextUsage, PermissionDecision, WireMessage } from "./types";
 
 export interface ChatOptions {
@@ -42,7 +42,8 @@ function isCompactEnd(o: WireMessage): boolean {
  * `status` (the list-visible status changed), `closed` (the process went
  * away), `turn` (a turn ended: the result, and how many turns this chat has
  * had in this window), `suggestion` (the CLI's own guess at the next prompt,
- * decision 25).
+ * decision 25), `unsent` (text held for after a compaction that will not
+ * come, for the draft).
  */
 export class Chat extends EventEmitter {
   state: ChatState;
@@ -56,8 +57,11 @@ export class Chat extends EventEmitter {
   private lastStatus: string;
   /** The rest of a draft that waits for its /compact line's compaction to finish (decision 36). */
   private held: string | null = null;
+  /** The held rest's entry, shown as waiting for the compaction. */
+  private heldEntry: string | null = null;
   /** The held /compact has run (its boundary or its output came): the next result is its own. */
   private compactRan = false;
+  private disposed = false;
   /** Turns ended in this window, compactions aside: naming runs after the first (decision 12). */
   turns = 0;
   /** Named with rename_session here: Claude's own ai-title no longer applies. */
@@ -85,8 +89,17 @@ export class Chat extends EventEmitter {
 
   /** Folds history (from a transcript) without a process. */
   preload(events: WireMessage[]): void {
-    for (const e of events) this.state = reduce(this.state, e);
+    this.state = reduceAll(this.state, events);
     this.emit("event", { type: "_snapshot" });
+  }
+
+  /** Lines a transcript gained (a thread run elsewhere): folded, and passed on as they are — a large batch as one snapshot. */
+  follow(events: WireMessage[]): void {
+    if (events.length > 200) return this.preload(events);
+    for (const e of events) {
+      this.state = reduce(this.state, e);
+      this.emit("event", e);
+    }
   }
 
   private dispatch(o: WireMessage): void {
@@ -102,6 +115,9 @@ export class Chat extends EventEmitter {
   private log(line: string): void {
     this.opts.log?.(`[${this.sessionId.slice(0, 8)}] ${line}`);
   }
+
+  /** Messages written while the process was closing (an idle close under way): they go to the resumed one, once it has exited. */
+  private queued: Array<string | unknown[]> = [];
 
   private ensureProcess(): ClaudeProcess {
     if (this.proc && !this.proc.exited) return this.proc;
@@ -131,12 +147,16 @@ export class Chat extends EventEmitter {
       if (this.held !== null && isCompactEnd(o)) this.compactRan = true;
       if (o.type === "result") {
         this.touch();
+        // A turn that failed or was stopped before the held /compact ran:
+        // the compaction will not finish, so its rest never goes on its own.
+        if (this.held !== null && !this.compactRan && (o.is_error || o.subtype !== "success")) this.releaseHeld();
         if (this.held !== null && this.compactRan) {
           // The compaction finished: now the rest of the draft.
           const rest = this.held;
           this.held = null;
+          this.heldEntry = null;
           this.compactRan = false;
-          proc.sendUser(rest);
+          this.deliver(rest);
         } else {
           this.turns++;
           this.emit("turn", o, this.turns);
@@ -160,16 +180,28 @@ export class Chat extends EventEmitter {
         // Gone before the compaction ended: the rest goes to the resumed session.
         const rest = this.held;
         this.held = null;
-        setImmediate(() => this.ensureProcess().sendUser(rest));
+        this.heldEntry = null;
+        this.queued.push(rest);
       }
       this.log(`exit ${info.code ?? info.signal}${expected ? " (idle close)" : ""}`);
-      if (!expected && info.code) {
-        this.dispatch({ type: "_process", state: "error", error: info.stderr.split("\n").slice(-3).join("\n") || `claude exited with ${info.code}` });
+      // A signal (killed, out of memory, a crash) is no idle close either.
+      if (!expected && (info.code || info.signal)) {
+        this.dispatch({ type: "_process", state: "error", error: info.stderr.split("\n").slice(-3).join("\n") || `claude exited with ${info.code ?? info.signal}` });
       } else {
         this.dispatch({ type: "_process", state: "closed" });
       }
       this.clearIdle();
       this.emit("closed");
+      if (this.queued.length && !this.disposed) {
+        // Sent while it was closing: the next process, resumed, takes them.
+        const q = this.queued;
+        this.queued = [];
+        setImmediate(() => {
+          const next = this.ensureProcess();
+          for (const c of q) next.sendUser(c);
+          this.touch();
+        });
+      }
     });
     this.log(`spawn ${spec.resume ? "resume" : "new"} mode=${spec.permissionMode}${spec.model ? " model=" + spec.model : ""}`);
     proc.start();
@@ -179,13 +211,22 @@ export class Chat extends EventEmitter {
   // ------------------------------------------------------------- the owner
 
   send(text: string, images: Attachment[] = []): void {
-    const proc = this.ensureProcess();
     const content: unknown[] | string = images.length
       ? [...images.map((i) => ({ type: "image", source: { type: "base64", media_type: i.mediaType, data: i.data } })), { type: "text", text }]
       : text;
     this.dispatch({ type: "_sent", n: ++this.sent, text, images: images.length });
-    proc.sendUser(content);
+    this.deliver(content);
     this.touch();
+  }
+
+  /** To the running process; while one is closing, to the next, once it has gone (decision 41). */
+  private deliver(content: string | unknown[]): void {
+    if (this.proc && !this.proc.exited && (this.closing || this.proc.closing)) {
+      this.queued.push(content);
+      return;
+    }
+    const proc = this.ensureProcess();
+    if (!proc.sendUser(content) && !proc.exited) this.queued.push(content);
   }
 
   /**
@@ -197,7 +238,26 @@ export class Chat extends EventEmitter {
     this.send(compact);
     this.held = rest;
     this.compactRan = false;
-    this.dispatch({ type: "_sent", n: ++this.sent, text: rest, images: 0, held: true });
+    const n = ++this.sent;
+    this.heldEntry = `s:${n}`;
+    this.dispatch({ type: "_sent", n, text: rest, images: 0, held: true });
+  }
+
+  /**
+   * The held rest goes back to the owner: marked not sent, its text back in
+   * the draft (`unsent`) — a compaction that was stopped or failed must not
+   * let it go out later, in the middle of other work.
+   */
+  private releaseHeld(): void {
+    if (this.held === null) return;
+    const text = this.held;
+    const id = this.heldEntry;
+    this.held = null;
+    this.heldEntry = null;
+    this.compactRan = false;
+    if (id) this.dispatch({ type: "_unsent", id });
+    this.log("held message not sent: back in the draft");
+    this.emit("unsent", text);
   }
 
   answer(requestId: string, decision: PermissionDecision): void {
@@ -225,6 +285,8 @@ export class Chat extends EventEmitter {
   }
 
   async interrupt(): Promise<void> {
+    // Stop: nothing held for after the compaction goes out on its own later.
+    this.releaseHeld();
     if (!this.running) return;
     try {
       await this.proc!.request("interrupt");
@@ -347,6 +409,8 @@ export class Chat extends EventEmitter {
   }
 
   dispose(): void {
+    this.disposed = true;
+    this.queued = [];
     this.clearIdle();
     this.closing = true;
     this.proc?.kill();

@@ -6,7 +6,9 @@
 // `--no-session-persistence` leaves no transcript in the owner's history.
 
 import * as cp from "child_process";
+import * as fs from "fs";
 import * as os from "os";
+import * as path from "path";
 import { chatEnv } from "../wire/process";
 
 export interface HaikuCall {
@@ -52,6 +54,24 @@ export function haikuArgs(system: string): string[] {
   ];
 }
 
+let neutral: string | null = null;
+/**
+ * An empty folder of this process's own (mode 0700) for every call: no
+ * project's CLAUDE.md or settings come along, and nobody else can plant
+ * one — the shared temp folder is world-writable.
+ */
+export function neutralDir(): string {
+  if (neutral && fs.existsSync(neutral)) return neutral;
+  neutral = fs.mkdtempSync(path.join(os.tmpdir(), "embarch-chat-haiku-"));
+  return neutral;
+}
+
+/** Removes the folder when the window goes. */
+export function dropNeutralDir(): void {
+  if (neutral) fs.rmSync(neutral, { recursive: true, force: true });
+  neutral = null;
+}
+
 export function haikuEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   return { ...chatEnv(base), EMBARCH_DESK_INTERNAL: "1" };
 }
@@ -74,8 +94,7 @@ export function runHaiku(call: HaikuCall): Promise<HaikuResult> {
       call.signal?.removeEventListener("abort", onAbort);
       resolve({ text: final ?? text, costUsd: cost, firstTokenMs: first, ms: Date.now() - t0, aborted: false, ...r });
     };
-    // A neutral folder: no project's CLAUDE.md or settings come along.
-    const child = cp.spawn(call.claudePath, haikuArgs(call.system), { cwd: os.tmpdir(), env: call.env ?? haikuEnv(), stdio: ["pipe", "pipe", "pipe"] });
+    const child = cp.spawn(call.claudePath, haikuArgs(call.system), { cwd: neutralDir(), env: call.env ?? haikuEnv(), stdio: ["pipe", "pipe", "pipe"] });
     const onAbort = () => {
       child.kill();
       finish({ aborted: true });

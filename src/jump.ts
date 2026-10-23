@@ -11,15 +11,19 @@ import * as vscode from "vscode";
 import type { DeskClient } from "./desk/client";
 import type { Thread } from "./desk/threads";
 
-function agentPid(claudePath: string, sid: string): Promise<number | null> {
+/**
+ * The pid of the process running a session, from `claude agents --json`
+ * (0.2 s): null when nothing runs it, undefined when that could not be told.
+ */
+export function agentPid(claudePath: string, sid: string): Promise<number | null | undefined> {
   return new Promise((resolve) => {
     cp.execFile(claudePath, ["agents", "--json"], { timeout: 8000 }, (err, out) => {
-      if (err) return resolve(null);
+      if (err) return resolve(undefined);
       try {
         const a = (JSON.parse(out) as Array<{ sessionId?: string; pid?: number }>).find((x) => x.sessionId === sid);
-        resolve(a?.pid ?? null);
+        resolve(a ? (a.pid ?? 0) : null);
       } catch {
-        resolve(null);
+        resolve(undefined);
       }
     });
   });

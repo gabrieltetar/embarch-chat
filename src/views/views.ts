@@ -14,6 +14,8 @@ export const CHAT_VIEW = "embarchChat.chat";
 export class ChatViewProvider implements vscode.WebviewViewProvider {
   host: ChatHost | undefined;
   view: vscode.WebviewView | undefined;
+  /** Called when what is on screen may have changed (the count leaves out the chat in view, decision 35). */
+  onShown: () => void = () => {};
 
   constructor(
     private extensionUri: vscode.Uri,
@@ -26,10 +28,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.host?.dispose();
     this.host = new ChatHost(view.webview, this.ctx, this.ctx.chats.current, false);
     view.webview.html = webviewHtml(view.webview, this.extensionUri, "chat", "Chat");
+    view.onDidChangeVisibility(() => this.onShown());
     view.onDidDispose(() => {
       this.host?.dispose();
       this.host = undefined;
       this.view = undefined;
+      this.onShown();
     });
   }
 
@@ -41,6 +45,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 /** Chats opened as editor tabs, one per session. */
 export class ChatPanels implements vscode.Disposable {
   private panels = new Map<string, { panel: vscode.WebviewPanel; host: ChatHost }>();
+  /** Called when a tab shows or hides. */
+  onShown: () => void = () => {};
 
   constructor(
     private extensionUri: vscode.Uri,
@@ -62,10 +68,12 @@ export class ChatPanels implements vscode.Disposable {
     const host = new ChatHost(panel.webview, this.ctx, sid, true);
     panel.webview.html = webviewHtml(panel.webview, this.extensionUri, "chat", title);
     this.panels.set(sid, { panel, host });
+    panel.onDidChangeViewState?.(() => this.onShown());
     panel.onDidDispose(() => {
       host.dispose();
       this.panels.delete(sid);
       this.ctx.chats.release(sid);
+      this.onShown();
     });
   }
 
@@ -110,6 +118,7 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view;
     this.ready = false;
+    view.badge = this.lastBadge;
     view.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, "dist")] };
     view.webview.html = webviewHtml(view.webview, this.extensionUri, "list", "Threads");
     view.webview.onDidReceiveMessage((m: ListToHost) => {
@@ -145,8 +154,16 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
     if (this.view && this.ready) void this.view.webview.postMessage(this.ctx.data());
   }
 
-  /** The waiting count on the activity-bar icon (decision 35). */
+  private lastBadge: vscode.ViewBadge | undefined;
+
+  /**
+   * The waiting count on the activity-bar icon (decision 35). VS Code
+   * resolves a view only once it is first shown, so until then the count
+   * shows in the status bar alone; the icon gets it as soon as the list
+   * has been opened once.
+   */
   badge(n: number, tooltip: string): void {
-    if (this.view) this.view.badge = n ? { value: n, tooltip } : undefined;
+    this.lastBadge = n ? { value: n, tooltip } : undefined;
+    if (this.view) this.view.badge = this.lastBadge;
   }
 }

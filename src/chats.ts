@@ -9,7 +9,7 @@ import { EventEmitter } from "events";
 import * as fs from "fs";
 import { Chat } from "./wire/chat";
 import { chatStatus } from "./wire/reducer";
-import { findTranscript, readTranscript } from "./wire/transcript";
+import { findTranscript, isSessionId, readLines, readTranscript, transcriptEvents } from "./wire/transcript";
 import type { WireMessage } from "./wire/types";
 import type { OwnChat } from "./desk/threads";
 import type { AssignBody } from "./desk/client";
@@ -35,9 +35,12 @@ export interface ChatRecord {
   untracked: boolean;
   /** Not yet told to the desk, which was down. */
   deskDue: DeskDue | null;
+  /** Text waiting to go into the draft of the page that shows it next. */
+  draft?: string | null;
   createdMs: number;
   lastMs: number;
-  transcript?: { file: string; mtimeMs: number; size: number };
+  /** A viewer's transcript: read up to `end`; `named` when it holds a custom title. */
+  transcript?: { file: string; mtimeMs: number; size: number; end: number; named: boolean };
 }
 
 export interface ChatSettings {
@@ -50,7 +53,8 @@ export interface ChatSettings {
  * Events: `changed` (a chat's list-visible state moved), `event` (sid, wire
  * event — for webviews showing it), `snapshot` (sid — a webview must reload
  * the whole state), `turn` (sid, result, turns so far) and `suggestion`
- * (sid, the CLI's guess at the next prompt) for the assistant.
+ * (sid, the CLI's guess at the next prompt) for the assistant, `draft` (sid:
+ * text waits for its draft, `rec.draft`).
  */
 export class ChatManager extends EventEmitter {
   readonly records = new Map<string, ChatRecord>();
@@ -70,6 +74,19 @@ export class ChatManager extends EventEmitter {
     rec.chat.on("closed", () => this.emit("changed"));
     rec.chat.on("turn", (o: WireMessage, n: number) => this.emit("turn", sid, o, n));
     rec.chat.on("suggestion", (text: string) => this.emit("suggestion", sid, text));
+    rec.chat.on("unsent", (text: string) => this.setDraft(sid, text));
+  }
+
+  /**
+   * Text for the owner's draft of a chat — a held message that was not sent,
+   * a start the desk refused — handed to the page showing it (`draft`), or to
+   * the next one that does.
+   */
+  setDraft(sid: string, text: string): void {
+    const rec = this.records.get(sid);
+    if (!rec || !text.trim()) return;
+    rec.draft = rec.draft ? `${rec.draft}\n\n${text}` : text;
+    this.emit("draft", sid);
   }
 
   /** A new chat of this window's, already assigned on the desk (decision 10); its process starts with the first message. */
@@ -99,6 +116,7 @@ export class ChatManager extends EventEmitter {
    * when nothing runs it and it worked in this window's folder.
    */
   openViewer(sessionId: string, cwd: string | null, itemId: string | null, itemTitle: string | null, resumable: boolean): ChatRecord | null {
+    if (!isSessionId(sessionId)) return null;
     const existing = this.records.get(sessionId);
     if (existing) {
       if (existing.viewer) {
@@ -119,15 +137,18 @@ export class ChatManager extends EventEmitter {
   }
 
   private loadTranscript(rec: ChatRecord, file: string): void {
-    const { events, meta } = readTranscript(file);
-    const st = fs.statSync(file);
-    rec.transcript = { file, mtimeMs: st.mtimeMs, size: st.size };
+    const { events, meta, end, mtimeMs } = readTranscript(file);
+    rec.transcript = { file, mtimeMs, size: meta.size, end, named: meta.named };
     if (meta.cwd && !rec.chat.opts.cwd) (rec.chat.opts as { cwd: string }).cwd = meta.cwd;
-    rec.chat.state = { ...rec.chat.state, timeline: [], entries: {}, seen: {}, finalized: {}, cwd: meta.cwd ?? rec.chat.state.cwd };
+    rec.chat.state = { ...rec.chat.state, timeline: [], entries: {}, seen: {}, finalized: {}, unconfirmed: [], cwd: meta.cwd ?? rec.chat.state.cwd };
     rec.chat.preload(events);
   }
 
-  /** A live foreign thread: re-read its transcript when it grew. */
+  /**
+   * A live foreign thread: what its transcript gained since it was read,
+   * folded and passed on as events — not the whole file again (a busy
+   * session's runs to tens of MB, and this runs every few seconds).
+   */
   reloadViewer(sessionId: string): void {
     const rec = this.records.get(sessionId);
     if (!rec || !rec.viewer) return;
@@ -135,7 +156,15 @@ export class ChatManager extends EventEmitter {
     if (!file) return;
     try {
       const st = fs.statSync(file);
-      if (rec.transcript && st.mtimeMs === rec.transcript.mtimeMs && st.size === rec.transcript.size) return;
+      const t = rec.transcript;
+      if (t && st.mtimeMs === t.mtimeMs && st.size === t.size) return;
+      if (t && t.file === file && st.size >= t.end) {
+        const r = readLines(file, t.end);
+        const { events, meta } = transcriptEvents(r.text, t.named);
+        rec.transcript = { file, mtimeMs: r.mtimeMs, size: r.size, end: r.end, named: meta.named };
+        if (events.length) rec.chat.follow(events);
+        return;
+      }
       this.loadTranscript(rec, file);
     } catch {
       /* gone */

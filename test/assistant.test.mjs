@@ -192,8 +192,13 @@ test("each Haiku call is one stripped, unsaved, streamed claude -p with thinking
   assert.ok(!c.argv.some((x) => x.includes("now flash it on the")), "not on the command line");
   assert.ok(c.prompt.includes("<draft>now flash it on the</draft>"), "on stdin");
   assert.equal(c.env.EMBARCH_DESK_INTERNAL, "1", "the desk keeps out");
-  assert.equal(fs.realpathSync(c.cwd), fs.realpathSync(os.tmpdir()), "a neutral folder");
+  // A neutral folder of its own: empty, the owner's only, not the shared temp folder.
+  assert.notEqual(fs.realpathSync(c.cwd), fs.realpathSync(os.tmpdir()));
+  assert.equal(fs.realpathSync(path.dirname(c.cwd)), fs.realpathSync(os.tmpdir()));
+  assert.equal(fs.statSync(c.cwd).mode & 0o777, 0o700);
+  assert.deepEqual(fs.readdirSync(c.cwd), []);
   a.dispose();
+  assert.ok(!fs.existsSync(c.cwd), "removed with the window");
 });
 
 test("the next keystroke cancels a stale call", async () => {
@@ -242,6 +247,35 @@ test("after a turn on screen: chips with the CLI's own guess among them, and a n
   a.sent("s1");
   assert.deepEqual(a.chipsFor("s1"), [], "spent by the next message");
   assert.deepEqual(emitted.at(-1), []);
+  a.dispose();
+});
+
+test("the owner's reply right after the first turn does not cost the chat its name (12)", async () => {
+  const { a, lines } = assistant({ FAKE_HAIKU_DELAY_MS: "40" });
+  const named = [];
+  const p = a.turnEnded("s3", () => INPUT, { onScreen: true, firstTurn: true, rename: async (n) => named.push(n) });
+  await new Promise((r) => setTimeout(r, 150));
+  // The CLI's own chip is up at once; the owner clicks it.
+  a.suggestion("s3", "go ahead");
+  a.sent("s3");
+  await p;
+  assert.deepEqual(named, [core.parseTurn(core.parseObject(answer("turn"))).name], lines.join("\n"));
+  assert.deepEqual(a.chipsFor("s3"), [], "its chips were spent by the reply");
+  a.dispose();
+});
+
+test("a name that did not come back is asked again after the next turn", async () => {
+  const env = { FAKE_HAIKU_TURN: "/nonexistent/recording.jsonl" };
+  const dir = scratch();
+  const a = new core.HaikuAssistant(() => ({ claudePath: FAKE, enabled: true, log: () => {}, env: { ...core.haikuEnv(), FAKE_CLAUDE_ARGS_LOG: path.join(dir, "args.jsonl"), ...env } }));
+  const named = [];
+  await a.turnEnded("s4", () => INPUT, { onScreen: false, firstTurn: true, rename: async (n) => named.push(n) });
+  assert.deepEqual(named, [], "the call failed");
+  delete env.FAKE_HAIKU_TURN;
+  await a.turnEnded("s4", () => INPUT, { onScreen: false, firstTurn: false, rename: async (n) => named.push(n) });
+  assert.equal(named.length, 1, "named on the next turn");
+  await a.turnEnded("s4", () => INPUT, { onScreen: false, firstTurn: false, rename: async (n) => named.push(n) });
+  assert.equal(named.length, 1, "once");
   a.dispose();
 });
 

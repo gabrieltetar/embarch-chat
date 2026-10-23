@@ -87,6 +87,26 @@ test("Jump to another window's chat leaves a focus entry", live, async () => {
   assert.equal(e.session_id, "0b0e1a1e-0000-4000-8000-000000000001");
 });
 
+test("a window on another desk than the open one asks for its own desk's cards; a deleted desk is a 404", live, async () => {
+  const repo = (n) => {
+    fs.mkdirSync(path.join(dir, n), { recursive: true });
+    return path.join(dir, n);
+  };
+  const a = await client.call("POST", "/desks", { name: "Desk A", firmware_repos: [repo("fw-a")] });
+  const b = await client.call("POST", "/desks", { name: "Desk B", firmware_repos: [repo("fw-b")] });
+  const idOf = (r) => r.id ?? r.desk?.id;
+  await client.call("POST", "/open", { desk: idOf(a) });
+  const { id: onA } = await client.call("POST", "/items", { title: "ABC-201 on desk A", desk: idOf(a) });
+  const { id: onB } = await client.call("POST", "/items", { title: "ABC-202 on desk B", desk: idOf(b) });
+  const open = await client.view();
+  assert.ok(open.cards.some((c) => c.id === onA) && !open.cards.some((c) => c.id === onB), "the plain view is the open desk's");
+  const vb = await client.view(idOf(b));
+  assert.ok(vb.cards.some((c) => c.id === onB) && !vb.cards.some((c) => c.id === onA), "?desk= is that desk's");
+  assert.ok("notes_ms" in vb.cards.find((c) => c.id === onB), "a card carries notes_ms");
+  await client.call("DELETE", `/desks/${idOf(b)}`);
+  await assert.rejects(client.view(idOf(b)), (err) => err.status === 404);
+});
+
 test("a wrong token is refused after one re-read", live, async () => {
   const bad = new core.DeskClient({ baseUrl: `http://127.0.0.1:${PORT}`, tokenPath: path.join(dir, "no-token") });
   await assert.rejects(bad.view(), (err) => err.status === 401);
@@ -220,4 +240,34 @@ test("without a desk the window's own chats still list", () => {
   assert.equal(groups.length, 1);
   assert.equal(groups[0].item, null);
   assert.equal(groups[0].threads[0].title, "New chat");
+});
+
+test("an ended chat a card keeps shows its transcript's title, not its folder's name", () => {
+  const sid = "03ac71e1-6c27-4537-8d5d-a88242b53312";
+  const row = { session_id: sid, name: "fw", status: "ended", state: "ended", waiting_for: null, last_ms: 1, client: "embarch-chat", cwd: "/work/fw" };
+  const live = { session_id: "s-live", name: "terminal name", state: "busy", last_ms: 2, cwd: "/work/fw" };
+  const v = view([card("w1", "ABC-1", [row, live])]);
+  const groups = core.buildThreads({
+    view: v,
+    desk: DESK,
+    repos: ["/work/fw"],
+    own: [],
+    past: [
+      { sessionId: sid, title: "Blink the widget LED", firstPrompt: "start", cwd: "/work/fw", lastMs: 1 },
+      { sessionId: "s-live", title: "an older title", firstPrompt: null, cwd: "/work/fw", lastMs: 1 },
+    ],
+    itemOf: {},
+    now: 5,
+  });
+  const titles = Object.fromEntries(groups[0].threads.map((t) => [t.sessionId, t.title]));
+  assert.equal(titles[sid], "Blink the widget LED");
+  assert.equal(titles["s-live"], "terminal name", "a live session keeps its agent's name");
+});
+
+test("cards asked for by the window's desk all belong to it", () => {
+  const v = view([card("w1", "ABC-1", [], { repo_path: "/elsewhere" }), card("w2", "ABC-2", [], { repo_path: "/work/fw" })], [], OTHER);
+  const scoped = core.buildThreads({ view: v, desk: DESK, repos: ["/work/fw"], own: [], past: [], itemOf: {}, now: 5, scopedTo: DESK.id });
+  assert.deepEqual(scoped.map((g) => g.key), ["w1", "w2"]);
+  const open = core.buildThreads({ view: v, desk: DESK, repos: ["/work/fw"], own: [], past: [], itemOf: {}, now: 5 });
+  assert.deepEqual(open.map((g) => g.key), ["w2"], "the open desk's view still keeps to the window's repos");
 });

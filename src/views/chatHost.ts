@@ -91,6 +91,9 @@ export class ChatHost implements vscode.Disposable {
   private onDesk = () => {
     if (this.ready && this.sid) this.post({ t: "header", header: this.header() });
   };
+  private onDraft = (sid: string) => {
+    if (sid === this.sid && this.ready) this.pushDraft();
+  };
   private onChips = (sid: string, chips: Chip[]) => {
     if (sid === this.sid && this.ready) this.post({ t: "chips", sid, chips });
   };
@@ -108,6 +111,7 @@ export class ChatHost implements vscode.Disposable {
     ctx.chats.on("event", this.onEvent);
     ctx.chats.on("snapshot", this.onSnapshot);
     ctx.chats.on("changed", this.onSnapshotIfView);
+    ctx.chats.on("draft", this.onDraft);
     ctx.desk.on("changed", this.onDesk);
     ctx.assistant.on("chips", this.onChips);
     ctx.history.on("changed", this.onPrompts);
@@ -161,8 +165,17 @@ export class ChatHost implements vscode.Disposable {
     this.post({ t: "chips", sid: rec.chat.sessionId, chips: this.ctx.assistant.chipsFor(rec.chat.sessionId) });
     this.post({ t: "library", entries: this.ctx.library(), assistant: this.ctx.assistantOn() });
     this.pushPrompts();
+    this.pushDraft();
     // A turn that ended while the chat was off screen gets its chips now (34).
     if (rec.ours) void this.ctx.assistant.shown(rec.chat.sessionId, () => assistInput(this.ctx, rec, ""));
+  }
+
+  /** Text for the draft, once, to the page showing the chat. */
+  private pushDraft(): void {
+    const rec = this.sid ? this.ctx.chats.get(this.sid) : undefined;
+    if (!rec?.draft) return;
+    this.post({ t: "draft", sid: rec.chat.sessionId, text: rec.draft });
+    rec.draft = null;
   }
 
   /** The owner's past prompts, when they changed since this page last got them. */
@@ -339,6 +352,7 @@ export class ChatHost implements vscode.Disposable {
     this.ctx.chats.off("event", this.onEvent);
     this.ctx.chats.off("snapshot", this.onSnapshot);
     this.ctx.chats.off("changed", this.onSnapshotIfView);
+    this.ctx.chats.off("draft", this.onDraft);
     this.ctx.desk.off("changed", this.onDesk);
     this.ctx.assistant.off("chips", this.onChips);
     this.ctx.history.off("changed", this.onPrompts);

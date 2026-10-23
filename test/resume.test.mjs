@@ -40,7 +40,25 @@ const waitFor = async (pred, ms = 10000, what = "condition") => {
 
 let dir, desk, ext, context, folder, threadsView, chatView, item;
 const S = crypto.randomUUID();
+const S2 = crypto.randomUUID();
+const S3 = crypto.randomUUID();
 let tileBefore = 0;
+
+function writeTranscript(claude, sid, title) {
+  const pdir = path.join(claude, "projects", folder.replace(/[^a-zA-Z0-9]/g, "-"));
+  fs.mkdirSync(pdir, { recursive: true });
+  const ts = new Date(Date.now() - 20 * 60_000).toISOString();
+  const lines = [
+    { type: "user", cwd: folder, sessionId: sid, timestamp: ts, uuid: crypto.randomUUID(), message: { role: "user", content: "start" } },
+    { type: "assistant", cwd: folder, sessionId: sid, timestamp: ts, uuid: crypto.randomUUID(), message: { id: "msg_1", role: "assistant", content: [{ type: "text", text: "ok" }] } },
+    { type: "ai-title", aiTitle: title, sessionId: sid },
+  ];
+  const file = path.join(pdir, `${sid}.jsonl`);
+  fs.writeFileSync(file, lines.map((o) => JSON.stringify(o)).join("\n") + "\n");
+  // Written twenty minutes ago, as a past chat's would be.
+  const t = new Date(Date.now() - 20 * 60_000);
+  fs.utimesSync(file, t, t);
+}
 
 const tileSeconds = async () => {
   const v = await desk.client.view();
@@ -52,8 +70,8 @@ const lastGroups = () => [...threadsView.webview.posted].reverse().find((m) => m
 before(async () => {
   if (skip) return;
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "embarch-chat-resume-"));
-  folder = path.join(dir, "work");
-  fs.mkdirSync(folder);
+  fs.mkdirSync(path.join(dir, "work"));
+  folder = fs.realpathSync(path.join(dir, "work"));
   const claude = path.join(dir, "claude");
   desk = await new ScratchDesk(path.join(dir, "desk"), 4984, claude).start();
   ({ id: item } = await desk.client.call("POST", "/items", { title: "ABC-123 seeded item", desk: "none" }));
@@ -66,16 +84,8 @@ before(async () => {
   await hook("Stop");
   await hook("SessionEnd");
   tileBefore = await tileSeconds();
-  // Its transcript, as Claude Code writes it.
-  const pdir = path.join(claude, "projects", folder.replace(/[^a-zA-Z0-9]/g, "-"));
-  fs.mkdirSync(pdir, { recursive: true });
-  const ts = new Date(Date.now() - 20 * 60_000).toISOString();
-  const lines = [
-    { type: "user", cwd: folder, sessionId: S, timestamp: ts, uuid: crypto.randomUUID(), message: { role: "user", content: "start" } },
-    { type: "assistant", cwd: folder, sessionId: S, timestamp: ts, uuid: crypto.randomUUID(), message: { id: "msg_1", role: "assistant", content: [{ type: "text", text: "ok" }] } },
-    { type: "ai-title", aiTitle: "Terminal work on the widget", sessionId: S },
-  ];
-  fs.writeFileSync(path.join(pdir, `${S}.jsonl`), lines.map((o) => JSON.stringify(o)).join("\n") + "\n");
+  // Transcripts, as Claude Code writes them: S, and two more past chats in this folder.
+  for (const [sid, title] of [[S, "Terminal work on the widget"], [S2, "Another terminal's chat"], [S3, "A third chat"]]) writeTranscript(claude, sid, title);
 
   process.env.CLAUDE_CONFIG_DIR = claude;
   process.env.FAKE_CLAUDE_ARGS_LOG = path.join(dir, "args.jsonl");
@@ -109,6 +119,7 @@ after(async () => {
   if (dir) fs.rmSync(dir, { recursive: true, force: true });
   delete process.env.CLAUDE_CONFIG_DIR;
   delete process.env.FAKE_CLAUDE_ARGS_LOG;
+  delete process.env.FAKE_CLAUDE_AGENTS;
   Module._load = load;
 });
 
@@ -148,4 +159,69 @@ test("a past chat opened while the desk is down, written to once it is back, kee
     return m?.header?.itemId === item && m.header;
   }, 5000, "the header on its item");
   assert.equal(h.untracked, false);
+});
+
+const spawnedFor = (sid) =>
+  fs
+    .readFileSync(process.env.FAKE_CLAUDE_ARGS_LOG, "utf8")
+    .trim()
+    .split("\n")
+    .some((l) => JSON.parse(l).argv.includes(`--resume=${sid}`));
+
+test("a past chat something else runs is not taken over: not offered, and not resumed when written to", { skip }, async () => {
+  // Offered, then something starts running it before the owner writes.
+  process.env.FAKE_CLAUDE_AGENTS = "[]";
+  threadsView.webview.fromPage({ t: "open", sid: S2 });
+  await waitFor(() => lastSnapshot()?.state.sessionId === S2 && lastSnapshot().view.resumable, 3000, "S2 offered");
+  await sleep(300);
+  assert.equal(lastSnapshot().view.resumable, true, "nothing runs it");
+  process.env.FAKE_CLAUDE_AGENTS = JSON.stringify([{ sessionId: S2, pid: 4242, kind: "interactive" }]);
+  const n = chatView.webview.posted.length;
+  chatView.webview.fromPage({ t: "send", text: "take it over" });
+  const after = await waitFor(() => chatView.webview.posted.slice(n).find((m) => m.t === "snapshot" && m.state.sessionId === S2), 5000, "the refusal");
+  assert.equal(after.view.resumable, false);
+  assert.equal(after.view.readOnly, true);
+  assert.ok(Object.values(after.state.entries).some((e) => e.kind === "note" && /Something else runs this chat/.test(e.text)));
+  assert.ok(!chatView.webview.posted.slice(n).some((m) => m.t === "event" && m.e.type === "_sent"), "nothing sent");
+  assert.ok(!spawnedFor(S2), "no second claude on it");
+
+  // Running when opened: not offered at all.
+  process.env.FAKE_CLAUDE_AGENTS = JSON.stringify([{ sessionId: S3, pid: 4343, kind: "interactive" }]);
+  threadsView.webview.fromPage({ t: "open", sid: S3 });
+  const s3 = await waitFor(() => {
+    const m = lastSnapshot();
+    return m?.state.sessionId === S3 && m.view.readOnly && m;
+  }, 5000, "S3 read-only");
+  assert.equal(s3.view.resumable, false);
+  process.env.FAKE_CLAUDE_AGENTS = "[]";
+});
+
+test("the list shows the window's own desk's cards when the open desk is another; a deleted desk falls back to the open one", { skip }, async () => {
+  const other = path.join(dir, "fw-other");
+  fs.mkdirSync(other);
+  const post = (p, b) => desk.client.call("POST", p, b);
+  const idOf = (r) => r.id ?? r.desk?.id;
+  const a = idOf(await post("/desks", { name: "Desk A", firmware_repos: [other] }));
+  const b = idOf(await post("/desks", { name: "Desk B", firmware_repos: [folder] }));
+  await post("/open", { desk: a });
+  const { id: onA } = await post("/items", { title: "ABC-211 on the open desk", desk: a });
+  const { id: onB } = await post("/items", { title: "ABC-210 on this window's desk", desk: b });
+  await mock.state.commands.get("embarchChat.refresh")();
+  const g = await waitFor(() => {
+    const m = lastGroups();
+    return m?.groups.some((x) => x.key === onB) && m;
+  }, 5000, "the window's desk's card");
+  assert.equal(g.desk, "Desk B");
+  assert.ok(!g.groups.some((x) => x.key === onA), "not the open desk's");
+  assert.match(g.groups.find((x) => x.key === onB).item.title, /^ABC-210/, "its card's title");
+  // Desk B is deleted: ?desk= answers 404, and the window takes the open desk's view.
+  await desk.client.call("DELETE", `/desks/${b}`);
+  await mock.state.commands.get("embarchChat.refresh")();
+  const g2 = await waitFor(() => {
+    const m = lastGroups();
+    return m?.desk === "Desk A" && m;
+  }, 5000, "the open desk's view");
+  assert.equal(g2.error, null);
+  assert.ok(g2.groups.some((x) => x.key === onA));
+  assert.ok(!g2.groups.some((x) => x.key === onB));
 });

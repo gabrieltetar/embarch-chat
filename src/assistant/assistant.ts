@@ -8,7 +8,7 @@
 import { EventEmitter } from "events";
 import type { ChatState } from "../wire/reducer";
 import { Card, Chip, extractHandoff } from "./edits";
-import { HaikuResult, runHaiku } from "./haiku";
+import { HaikuResult, dropNeutralDir, runHaiku } from "./haiku";
 import { AssistInput, SYSTEM, cardsPrompt, cleanCompletion, ghostPrompt, parseCards, parseObject, parseTurn, partialCompletion, turnPrompt } from "./prompts";
 
 export interface AssistantSettings {
@@ -20,7 +20,8 @@ export interface AssistantSettings {
   env?: NodeJS.ProcessEnv;
 }
 
-type Kind = "ghost" | "cards" | "turn";
+/** `name`: a turn call that also names the chat — the owner's next message or keystroke does not cancel it. */
+type Kind = "ghost" | "cards" | "turn" | "name";
 
 interface PerChat {
   cli: string | null;
@@ -30,6 +31,10 @@ interface PerChat {
   handoff: string | null;
   due: boolean;
   named: boolean;
+  /** A name was asked for and has not come back yet. */
+  nameDue: boolean;
+  /** Bumped by every message the owner sends: chips asked before it are spent. */
+  epoch: number;
 }
 
 /** Claude's last reply: the top-level text after the owner's last message. */
@@ -57,7 +62,7 @@ export class HaikuAssistant extends EventEmitter {
   private chat(sid: string): PerChat {
     let c = this.chats.get(sid);
     if (!c) {
-      c = { cli: null, haiku: [], handoffAsked: false, handoff: null, due: false, named: false };
+      c = { cli: null, haiku: [], handoffAsked: false, handoff: null, due: false, named: false, nameDue: false, epoch: 0 };
       this.chats.set(sid, c);
     }
     return c;
@@ -156,6 +161,7 @@ export class HaikuAssistant extends EventEmitter {
     c.haiku = [];
     c.handoff = null;
     c.due = false;
+    c.epoch++;
     c.handoffAsked = !!opts.handoff;
     this.emitChips(sid);
   }
@@ -173,6 +179,8 @@ export class HaikuAssistant extends EventEmitter {
    */
   async turnEnded(sid: string, input: () => AssistInput, opts: { onScreen: boolean; firstTurn: boolean; rename: (name: string) => Promise<void> }): Promise<void> {
     const c = this.chat(sid);
+    // A first-turn name that never came: asked again now.
+    if (c.named === false && c.nameDue) opts = { ...opts, firstTurn: true };
     if (c.handoffAsked) {
       c.handoffAsked = false;
       const h = extractHandoff(input().lastReply);
@@ -182,7 +190,10 @@ export class HaikuAssistant extends EventEmitter {
     if (!opts.onScreen) c.due = true;
     this.emitChips(sid);
     if (!want.chips && !want.name) return;
-    if (want.name) c.named = true;
+    if (want.name) {
+      c.named = true;
+      c.nameDue = true;
+    }
     await this.runTurn(sid, input(), want, opts.rename);
   }
 
@@ -194,19 +205,32 @@ export class HaikuAssistant extends EventEmitter {
     await this.runTurn(sid, input(), { chips: true, name: false });
   }
 
+  /**
+   * One call for the chips and, after the first turn, the name (decision
+   * 12). A call that names is its own kind: the reply the owner sends a
+   * moment later (a click on the CLI's own chip) spends its chips but not
+   * the name; a name that did not come back is asked again after the next
+   * turn.
+   */
   private async runTurn(sid: string, input: AssistInput, want: { chips: boolean; name: boolean }, rename?: (name: string) => Promise<void>): Promise<void> {
-    const r = await this.call(sid, "turn", turnPrompt(input, want));
-    if (!r) return;
-    const { chips, name } = parseTurn(parseObject(r.text));
-    if (want.name && name && rename) await rename(name);
-    if (want.chips) {
-      this.chat(sid).haiku = chips;
+    const c = this.chat(sid);
+    const epoch = c.epoch;
+    const r = await this.call(sid, want.name ? "name" : "turn", turnPrompt(input, want));
+    const { chips, name } = r ? parseTurn(parseObject(r.text)) : { chips: [], name: null };
+    if (want.name) {
+      if (name && rename) {
+        await rename(name);
+        c.nameDue = false;
+      } else c.named = false;
+    }
+    if (r && want.chips && c.epoch === epoch) {
+      c.haiku = chips;
       this.emitChips(sid);
     }
   }
 
   forget(sid: string): void {
-    this.cancel(sid, ["ghost", "cards", "turn"]);
+    this.cancel(sid, ["ghost", "cards", "turn", "name"]);
     this.chats.delete(sid);
   }
 
@@ -214,5 +238,6 @@ export class HaikuAssistant extends EventEmitter {
     for (const ac of this.calls.values()) ac.abort();
     this.calls.clear();
     this.removeAllListeners();
+    dropNeutralDir();
   }
 }

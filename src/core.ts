@@ -14,3 +14,6 @@ export * from "./assistant/history";
 export * from "./assistant/assistant";
 export * from "./library/entries";
 export * from "./library/files";
+export * from "./chats";
+export * from "./views/page";
+export * from "../webview/chat/benchcard";

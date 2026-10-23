@@ -17,8 +17,11 @@ whose decision numbers the code cites.
 - **The thread list** sits behind its own activity-bar icon: the window's
   desk's threads grouped by work item, waiting-on-you first, Untracked last —
   this window's chats, sessions in a terminal or Claude Code's panel, and past
-  chats from Claude Code's own transcripts. A count of chats waiting on you
-  shows on the icon and in the status bar; a click opens the oldest.
+  chats from Claude Code's own transcripts. A window on another desk than
+  the open one asks the desk for its own desk's cards. A count of chats
+  waiting on you off screen shows in the status bar, and on the icon once
+  the list has been opened (VS Code builds a view only when first shown);
+  a click opens the oldest.
 - **A chat** opens in the secondary sidebar, where Claude Code's panel is, or
   as an editor tab. Its header is the work item's card in two lines: issue
   key and title, a status dropdown, PRs with their state, today's time, a
@@ -37,15 +40,20 @@ whose decision numbers the code cites.
   session id, assigns it on the desk as this panel's, then starts `claude`.
 - **A chat's process closes 5 minutes after its last input or reply**,
   unless a background task runs or it waits on you; the next message resumes
-  it. Chats die with their window.
+  it — one written while it is closing goes to the resumed process. Chats
+  die with their window.
 - **Start work and Open chat on the Desk land here** through the desk's
   mailbox: the window whose folder matches takes the entry, once.
 - **A thread this window does not run is read-only**, from its transcript,
-  with Jump to the window or terminal running it.
+  with Jump to the window or terminal running it. A past one in this
+  window's folder resumes here with the next message — only when `claude
+  agents` lists nothing running it — and keeps its work item and its time
+  on the desk.
 - **Bench results show as cards**: an `embarch-api` build, flash, bootload,
   study or `serial_log` result becomes pass or fail, the board, the first
   error, steps passed and a link into embarch-ui — read from the tool result
-  already in the stream.
+  already in the stream. A `serial_log` whose log holds an assert, a panic,
+  a hard fault or a fatal error is a FAIL, the line shown.
 - **Atlas citations become links** in a repo with an `embarch/atlas`:
   `<doc_id> p<N>` opens that page's text, `<board>:<ref>` the line naming it
   in the board's nets or parts.
@@ -61,7 +69,8 @@ whose decision numbers the code cites.
   edit to the draft**: hovering previews it in place (added words grey,
   removed ones struck through), a click applies it, Ctrl+Z restores. The
   compact card adds `/compact focus on: …` as a first line, and Enter sends
-  that, waits for the compaction, then sends the rest; the handoff card
+  that, waits for the compaction, then sends the rest (Stop, or a failed
+  compaction, puts the rest back in the draft instead); the handoff card
   turns the draft into a request for a handoff; the background card asks
   for a background subagent. The next keystroke cancels a stale call.
 - **Reply chips after each turn**: two to four, Claude Code's own guess

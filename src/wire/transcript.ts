@@ -8,6 +8,15 @@ import * as os from "os";
 import * as path from "path";
 import type { WireMessage } from "./types";
 
+/**
+ * A session id as Claude Code makes them: a UUID. Ids reach this window from
+ * the desk and from transcript names, and one goes into a path and onto
+ * `claude`'s command line, so anything else is refused.
+ */
+export function isSessionId(s: unknown): s is string {
+  return typeof s === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+}
+
 export function projectsRoot(): string {
   return path.join(process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude"), "projects");
 }
@@ -23,6 +32,7 @@ export function transcriptPath(cwd: string, sessionId: string, root = projectsRo
 
 /** Where a session's transcript is, searching every project folder when its cwd is unknown. */
 export function findTranscript(sessionId: string, cwd?: string, root = projectsRoot()): string | null {
+  if (!isSessionId(sessionId)) return null;
   if (cwd) {
     const p = transcriptPath(cwd, sessionId, root);
     if (fs.existsSync(p)) return p;
@@ -48,11 +58,18 @@ export interface TranscriptMeta {
   size: number;
 }
 
-/** Lines of a transcript turned into wire messages the reducer folds. */
-export function transcriptEvents(text: string): { events: WireMessage[]; meta: Omit<TranscriptMeta, "sessionId" | "file" | "size" | "lastMs"> & { lastTs: number } } {
+/**
+ * Lines of a transcript turned into wire messages the reducer folds. `named`:
+ * an earlier part of the same transcript held a custom title, so Claude's
+ * own ai-titles after it no longer apply (for reading only what was added).
+ */
+export function transcriptEvents(
+  text: string,
+  named = false,
+): { events: WireMessage[]; meta: Omit<TranscriptMeta, "sessionId" | "file" | "size" | "lastMs"> & { lastTs: number; named: boolean } } {
   const events: WireMessage[] = [];
   let title: string | null = null;
-  let custom: string | null = null;
+  let custom = named;
   let cwd: string | null = null;
   let firstPrompt: string | null = null;
   let lastTs = 0;
@@ -75,7 +92,8 @@ export function transcriptEvents(text: string): { events: WireMessage[]; meta: O
       continue;
     }
     if (o.type === "custom-title" && typeof o.customTitle === "string") {
-      title = custom = o.customTitle;
+      title = o.customTitle;
+      custom = true;
       events.push({ type: "_title", title });
       continue;
     }
@@ -91,22 +109,51 @@ export function transcriptEvents(text: string): { events: WireMessage[]; meta: O
     }
     events.push(o as WireMessage);
   }
-  return { events, meta: { cwd, title, firstPrompt, lastTs } };
+  return { events, meta: { cwd, title, firstPrompt, lastTs, named: custom } };
 }
 
-export function readTranscript(file: string): { events: WireMessage[]; meta: TranscriptMeta } {
-  const text = fs.readFileSync(file, "utf8");
-  const st = fs.statSync(file);
-  const { events, meta } = transcriptEvents(text);
+/**
+ * The complete lines of a transcript from byte `from` on: the text, and the
+ * offset after its last newline — a line Claude is still writing is left for
+ * the next read.
+ */
+export function readLines(file: string, from = 0): { text: string; end: number; size: number; mtimeMs: number } {
+  const fd = fs.openSync(file, "r");
+  try {
+    const st = fs.fstatSync(fd);
+    const len = Math.max(0, st.size - from);
+    const buf = Buffer.alloc(len);
+    let got = 0;
+    while (got < len) {
+      const n = fs.readSync(fd, buf, got, len - got, from + got);
+      if (!n) break;
+      got += n;
+    }
+    const cut = buf.subarray(0, got).lastIndexOf(10) + 1;
+    return { text: buf.subarray(0, cut).toString("utf8"), end: from + cut, size: st.size, mtimeMs: st.mtimeMs };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+export function readTranscript(file: string): { events: WireMessage[]; meta: TranscriptMeta & { named: boolean }; end: number; mtimeMs: number } {
+  const r = readLines(file);
+  const { events, meta } = transcriptEvents(r.text);
   return {
     events,
-    meta: { sessionId: path.basename(file, ".jsonl"), file, cwd: meta.cwd, title: meta.title, firstPrompt: meta.firstPrompt, lastMs: meta.lastTs || st.mtimeMs, size: st.size },
+    meta: { sessionId: path.basename(file, ".jsonl"), file, cwd: meta.cwd, title: meta.title, firstPrompt: meta.firstPrompt, lastMs: meta.lastTs || r.mtimeMs, size: r.size, named: meta.named },
+    end: r.end,
+    mtimeMs: r.mtimeMs,
   };
 }
 
-/** Title, cwd and age of transcripts, re-read only when a file changes. */
+/**
+ * Title, cwd and age of transcripts. A file read once is read again only
+ * from where it ended — a live session's transcript grows every turn, and
+ * the largest run to tens of MB.
+ */
 export class TranscriptIndex {
-  private cache = new Map<string, { mtimeMs: number; size: number; meta: TranscriptMeta }>();
+  private cache = new Map<string, { mtimeMs: number; size: number; end: number; named: boolean; meta: TranscriptMeta }>();
 
   constructor(private root = projectsRoot()) {}
 
@@ -122,7 +169,7 @@ export class TranscriptIndex {
         continue;
       }
       for (const n of names) {
-        if (!n.endsWith(".jsonl")) continue;
+        if (!n.endsWith(".jsonl") || !isSessionId(n.slice(0, -6))) continue;
         const file = path.join(dir, n);
         let st: fs.Stats;
         try {
@@ -137,10 +184,26 @@ export class TranscriptIndex {
           continue;
         }
         try {
-          const { meta } = readTranscript(file);
-          meta.lastMs = st.mtimeMs;
-          this.cache.set(file, { mtimeMs: st.mtimeMs, size: st.size, meta });
-          out.push(meta);
+          if (hit && st.size > hit.size) {
+            // Grown: only what was added.
+            const r = readLines(file, hit.end);
+            const { meta: add } = transcriptEvents(r.text, hit.named);
+            const meta: TranscriptMeta = {
+              ...hit.meta,
+              cwd: add.cwd ?? hit.meta.cwd,
+              title: add.title ?? hit.meta.title,
+              firstPrompt: hit.meta.firstPrompt ?? add.firstPrompt,
+              lastMs: st.mtimeMs,
+              size: r.size,
+            };
+            this.cache.set(file, { mtimeMs: st.mtimeMs, size: st.size, end: r.end, named: add.named, meta });
+            out.push(meta);
+            continue;
+          }
+          const { meta, end } = readTranscript(file);
+          const m: TranscriptMeta = { sessionId: meta.sessionId, file, cwd: meta.cwd, title: meta.title, firstPrompt: meta.firstPrompt, lastMs: st.mtimeMs, size: meta.size };
+          this.cache.set(file, { mtimeMs: st.mtimeMs, size: st.size, end, named: meta.named, meta: m });
+          out.push(m);
         } catch {
           /* unreadable; skip */
         }

@@ -20,6 +20,8 @@ export interface UserEntry {
   pending?: boolean;
   /** Held until the compaction before it finishes (decision 36). */
   held?: boolean;
+  /** Held, then not sent: the compaction was stopped or failed; its text went back to the draft. */
+  unsent?: boolean;
 }
 export interface TextEntry {
   kind: "text";
@@ -95,6 +97,8 @@ export interface ChatState {
   /** Block signatures already folded, so a repeated assistant message adds nothing. */
   seen: Record<string, true>;
   background: Array<{ id: string; type: string; description: string }>;
+  /** This panel's messages the CLI has not echoed yet, oldest first (the `pending` user entries). */
+  unconfirmed: string[];
   context: ContextUsage | null;
   lastTurn: { ok: boolean; subtype: string; error?: string } | null;
   seq: number;
@@ -120,6 +124,7 @@ export function initialState(sessionId: string, mode = "auto"): ChatState {
     finalized: {},
     seen: {},
     background: [],
+    unconfirmed: [],
     context: null,
     lastTurn: null,
     seq: 0,
@@ -169,9 +174,26 @@ function commandText(text: string): string | null {
 
 // ----------------------------------------------------------------- helpers
 
+/**
+ * Folding a whole transcript (`reduceAll`) writes into containers it owns
+ * instead of copying them per line: copying `entries` and `timeline` on
+ * every line made a long chat cost O(n²) to open. Entries themselves are
+ * still replaced, never changed, so a state handed out earlier stays as it
+ * was.
+ */
+let owned: { entries: Record<string, Entry>; timeline: string[]; seen: Record<string, true>; finalized: Record<string, number> } | null = null;
+
+const ownsEntries = (s: ChatState) => owned !== null && owned.entries === s.entries;
+
 function put(s: ChatState, e: Entry, parent: string | null): ChatState {
+  const host = parent ? s.entries[parent] : undefined;
+  if (ownsEntries(s)) {
+    s.entries[e.id] = e;
+    if (host && host.kind === "tool") s.entries[parent!] = { ...host, children: [...host.children, e.id] };
+    else s.timeline.push(e.id);
+    return s;
+  }
   const entries = { ...s.entries, [e.id]: e };
-  const host = parent ? entries[parent] : undefined;
   if (host && host.kind === "tool") {
     entries[parent!] = { ...host, children: [...host.children, e.id] };
     return { ...s, entries };
@@ -183,7 +205,34 @@ function patch<K extends Entry["kind"]>(s: ChatState, id: string, kind: K, f: (e
   const e = s.entries[id];
   if (!e || e.kind !== kind) return s;
   const typed = e as Extract<Entry, { kind: K }>;
+  if (ownsEntries(s)) {
+    s.entries[id] = { ...typed, ...f(typed) };
+    return s;
+  }
   return { ...s, entries: { ...s.entries, [id]: { ...typed, ...f(typed) } } };
+}
+
+/** Folds many lines at once — a transcript — in O(n); the result is the same as folding them one by one with `reduce`. */
+export function reduceAll(s: ChatState, events: WireMessage[]): ChatState {
+  const prev = owned;
+  let st: ChatState = { ...s, entries: { ...s.entries }, timeline: s.timeline.slice(), seen: { ...s.seen }, finalized: { ...s.finalized } };
+  owned = { entries: st.entries, timeline: st.timeline, seen: st.seen, finalized: st.finalized };
+  try {
+    for (const e of events) {
+      st = reduce(st, e);
+      // A branch that copied a container hands the copy over.
+      owned = { entries: st.entries, timeline: st.timeline, seen: st.seen, finalized: st.finalized };
+    }
+  } finally {
+    owned = prev;
+  }
+  return st;
+}
+
+/** A message of this panel's the CLI took: no longer pending. */
+function confirm(s: ChatState, id: string, extra: Partial<UserEntry> = {}): ChatState {
+  s = patch(s, id, "user", () => ({ pending: false, ...extra }));
+  return { ...s, unconfirmed: (s.unconfirmed ?? []).filter((x) => x !== id) };
 }
 
 function note(s: ChatState, text: string, tone: NoteEntry["tone"]): ChatState {
@@ -194,6 +243,17 @@ function resultText(c: unknown): string {
   if (typeof c === "string") return c;
   if (Array.isArray(c)) return c.map((b) => (b && typeof b === "object" && "text" in b ? String((b as { text: unknown }).text) : "")).join("\n");
   return "";
+}
+
+/** A tool call made inside a background task (a background subagent's step), at any depth. */
+function inBackground(s: ChatState, toolId: string | undefined): boolean {
+  for (let id = toolId, hops = 0; id && hops < 32; hops++) {
+    const e = s.entries[id];
+    if (!e || e.kind !== "tool") return false;
+    if (e.background && id !== toolId) return true;
+    id = e.parent ?? undefined;
+  }
+  return false;
 }
 
 // ----------------------------------------------------------------- folding
@@ -208,7 +268,12 @@ function foldAssistant(s: ChatState, o: WireMessage): ChatState {
       b.type === "tool_use" ? `${msgId}#u:${(b as { id: string }).id}` : `${msgId}#${b.type}:${hash(String((b as { text?: string; thinking?: string }).text ?? (b as { thinking?: string }).thinking ?? ""))}`;
     if (s.seen[sig]) continue;
     const n = s.finalized[msgId] ?? 0;
-    s = { ...s, seen: { ...s.seen, [sig]: true }, finalized: { ...s.finalized, [msgId]: n + 1 } };
+    if (owned !== null && owned.seen === s.seen && owned.finalized === s.finalized) {
+      s.seen[sig] = true;
+      s.finalized[msgId] = n + 1;
+    } else {
+      s = { ...s, seen: { ...s.seen, [sig]: true }, finalized: { ...s.finalized, [msgId]: n + 1 } };
+    }
     if (b.type === "text") {
       const text = (b as { text: string }).text;
       if (text.trim()) s = put(s, { kind: "text", id: `${msgId}:${n}`, text, parent }, parent);
@@ -250,11 +315,11 @@ function foldUser(s: ChatState, o: WireMessage): ChatState {
   const stdout = /^<local-command-stdout>([\s\S]*)<\/local-command-stdout>$/.exec(raw.trim());
   if (stdout) {
     // A local command (/compact, /cost, ...) echoes its output, not itself.
-    const cmd = s.timeline.find((id) => {
+    const cmd = (s.unconfirmed ?? []).find((id) => {
       const e = s.entries[id];
-      return e.kind === "user" && e.pending && e.text.startsWith("/");
+      return e?.kind === "user" && e.pending && e.text.startsWith("/");
     });
-    if (cmd) s = patch(s, cmd, "user", () => ({ pending: false }));
+    if (cmd) s = confirm(s, cmd);
     return stdout[1].trim() ? note(s, stdout[1].trim(), "info") : s;
   }
   if (/^<local-command-stderr>/.test(raw.trim())) return note(s, raw.replace(/<\/?local-command-stderr>/g, "").trim(), "error");
@@ -262,11 +327,11 @@ function foldUser(s: ChatState, o: WireMessage): ChatState {
   const images = imagesOf(content);
   if (!text.trim() && !images) return s;
   // The CLI echoing what this panel sent (`--replay-user-messages`).
-  const mine = s.timeline.find((id) => {
+  const mine = (s.unconfirmed ?? []).find((id) => {
     const e = s.entries[id];
-    return e.kind === "user" && e.pending && e.text.trim() === text.trim();
+    return e?.kind === "user" && e.pending && e.text.trim() === text.trim();
   });
-  if (mine) return patch(s, mine, "user", () => ({ pending: false }));
+  if (mine) return confirm(s, mine);
   return put(s, { kind: "user", id: (o.uuid as string) ?? `u:${s.seq}`, text, images }, null);
 }
 
@@ -390,7 +455,10 @@ export function reduce(s: ChatState, o: WireMessage): ChatState {
     case "result": {
       const ok = !o.is_error && o.subtype === "success";
       const interrupted = s.timeline.length > 0 && s.entries[s.timeline[s.timeline.length - 1]]?.kind === "note" && (s.entries[s.timeline[s.timeline.length - 1]] as NoteEntry).tone === "interrupt";
-      let n: ChatState = { ...s, busy: false, compacting: false, streaming: null, pending: [], lastTurn: { ok, subtype: String(o.subtype ?? "") } };
+      // The turn's own prompts end with it; a background task's go on asking
+      // after the main turn ends, and wait until answered or cancelled.
+      const pending = s.pending.some((p) => inBackground(s, p.toolUseId)) ? s.pending.filter((p) => inBackground(s, p.toolUseId)) : [];
+      let n: ChatState = { ...s, busy: false, compacting: false, streaming: null, pending, lastTurn: { ok, subtype: String(o.subtype ?? "") } };
       if (!ok && !interrupted) {
         const errs = Array.isArray(o.errors) ? (o.errors as string[]).join("; ") : "";
         const text = errs || (typeof o.result === "string" && o.result) || `The turn ended with ${o.subtype}`;
@@ -400,7 +468,11 @@ export function reduce(s: ChatState, o: WireMessage): ChatState {
     }
     // ---- the host's own events
     case "_sent":
-      return put({ ...s, busy: true }, { kind: "user", id: `s:${o.n}`, text: String(o.text ?? ""), images: Number(o.images ?? 0), pending: true, ...(o.held ? { held: true } : {}) }, null);
+      return put(
+        { ...s, busy: true, unconfirmed: [...(s.unconfirmed ?? []), `s:${o.n}`] },
+        { kind: "user", id: `s:${o.n}`, text: String(o.text ?? ""), images: Number(o.images ?? 0), pending: true, ...(o.held ? { held: true } : {}) },
+        null,
+      );
     case "_process":
       return {
         ...s,
@@ -414,6 +486,8 @@ export function reduce(s: ChatState, o: WireMessage): ChatState {
       if (p?.toolUseId) n = patch(n, p.toolUseId, "tool", () => ({ status: o.behavior === "deny" ? "denied" : "running" }));
       return n;
     }
+    case "_unsent":
+      return confirm(s, String(o.id), { held: false, unsent: true });
     case "_context":
       return { ...s, context: o.usage as ContextUsage };
     case "_model":

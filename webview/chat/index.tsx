@@ -13,7 +13,7 @@ import type { Chip, PastPrompt } from "../../src/assistant/edits";
 import type { LibraryEntry } from "../../src/library/entries";
 import { duration, vscodeApi } from "../shared/vscode";
 import { PendingCards } from "./cards";
-import { Composer } from "./composer";
+import { Composer, returnToDraft } from "./composer";
 import { ToolCtx, ToolView, toolLabel, toolRenderers } from "./tools";
 import { benchRenderer } from "./bench";
 import { setAtlas } from "./atlas";
@@ -188,6 +188,9 @@ function App() {
         case "chips":
           setChips({ sid: m.sid, chips: m.chips });
           return;
+        case "draft":
+          returnToDraft(m.sid, m.text);
+          return;
       }
     };
     window.addEventListener("message", on);
@@ -234,10 +237,14 @@ function App() {
     switch (e.kind) {
       case "user":
         return (
-          <div class={`user ${e.pending ? "pending" : ""}`} title={e.pending ? (e.held ? "Sent once the compaction before it finishes" : "Sent; Claude has not taken it yet") : undefined}>
+          <div
+            class={`user ${e.pending ? "pending" : ""} ${e.unsent ? "unsent" : ""}`}
+            title={e.pending ? (e.held ? "Sent once the compaction before it finishes" : "Sent; Claude has not taken it yet") : e.unsent ? "The compaction before it did not finish" : undefined}
+          >
             {e.images ? <span class="muted">[{e.images} image{e.images > 1 ? "s" : ""}] </span> : null}
             {e.text}
             {e.pending && e.held && <div class="held muted">after the compaction</div>}
+            {e.unsent && <div class="held muted">not sent — it is back in the draft</div>}
           </div>
         );
       case "text":
