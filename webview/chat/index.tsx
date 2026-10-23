@@ -439,7 +439,7 @@ function App() {
           onSend={(text, opts) => {
             if (localCommand(text, live.current)) return;
             stick.current = true;
-            post({ t: "send", text, ...(opts.handoff ? { handoff: true } : {}) });
+            post({ t: "send", text, ...opts });
           }}
           onChip={(c) => {
             stick.current = true;

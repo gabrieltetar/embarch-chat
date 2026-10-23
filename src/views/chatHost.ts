@@ -23,6 +23,8 @@ import type { AssistInput } from "../assistant/prompts";
 import type { LibraryEntry } from "../library/entries";
 import { invocation } from "../library/entries";
 import { historyMessage } from "./history";
+import type { Attachment } from "../wire/message";
+import { IMAGE_TYPES } from "../wire/message";
 import type { ChatToHost, Header, HostToChat } from "../../webview/shared/protocol";
 
 export interface HostCtx {
@@ -88,6 +90,9 @@ export function assistInput(ctx: HostCtx, rec: ChatRecord, draft: string): Assis
     context: st.context ? { percentage: st.context.percentage, totalTokens: st.context.totalTokens, maxTokens: st.context.maxTokens } : null,
   };
 }
+
+/** A pasted image as the page sent it: one of the API's types, base64. */
+const isImage = (i: Attachment) => !!i && IMAGE_TYPES.includes(i.mediaType) && typeof i.data === "string" && /^[A-Za-z0-9+/=]+$/.test(i.data);
 
 export class ChatHost implements vscode.Disposable {
   private subs: vscode.Disposable[] = [];
@@ -232,10 +237,12 @@ export class ChatHost implements vscode.Disposable {
           this.snapshot();
         }
         this.ctx.assistant.sent(chat.sessionId, { handoff: m.handoff });
+        const images = (m.images ?? []).filter(isImage);
+        const extra = { pastes: (m.pastes ?? []).filter((p) => typeof p === "string") };
         // The compact card's first line goes first, the rest after its compaction (decision 36).
         const split = splitCompact(m.text);
-        if (split && rec.ours) chat.sendAfterCompact(split.compact, split.rest);
-        else chat.send(m.text);
+        if (split && rec.ours) chat.sendAfterCompact(split.compact, split.rest, images, extra);
+        else chat.send(m.text, images, extra);
         return;
       }
       case "assist": {

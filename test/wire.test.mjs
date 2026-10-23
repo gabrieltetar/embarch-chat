@@ -1110,3 +1110,71 @@ test("after a reload, a chat cut off mid-turn starts its process with the CLI's 
   const env = core.chatEnv({ PATH: "/bin", CLAUDE_CODE_RESUME_INTERRUPTED_TURN: "1", claude_code_resume_prompt: "x" });
   assert.deepEqual(env, { PATH: "/bin" });
 });
+
+// ------------------------------------------------------------ what goes into a message (56)
+
+const userLines = (file) =>
+  fs
+    .readFileSync(file, "utf8")
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l).o)
+    .filter((o) => o.type === "user");
+const ATTACH_PASTE = Array.from({ length: 12 }, (_, i) => `step ${i + 1}: ok`).join("\n");
+const ATTACH_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAEElEQVR42mP438MARwzEcQCSIhixoJoR1AAAAABJRU5ErkJggg==";
+
+test("a long paste goes out marked in inline_pastes; the CLI's wrapped echo confirms the message, shown as typed (decision 56)", async () => {
+  const { chat, dir } = makeChat("attach");
+  const inputs = path.join(dir, "inputs.jsonl");
+  chat.opts.env.FAKE_CLAUDE_INPUT_LOG = inputs;
+  const text = `How many steps are in this log? Reply with just the number.\n${ATTACH_PASTE}`;
+  chat.send(text, [], { pastes: [ATTACH_PASTE, "a paste the owner deleted again, long enough\n\n\n"] });
+  await turns(chat, 1);
+  const [line] = userLines(inputs);
+  assert.equal(line.message.content, text, "the text as typed");
+  assert.deepEqual(line.inline_pastes, [ATTACH_PASTE], "only a paste the message still holds is marked");
+  const users = entries(chat.state, "user");
+  assert.equal(users.length, 1, "the echo is not a second message");
+  assert.equal(users[0].pending, false, "confirmed by the CLI's echo, which wraps the paste in <pasted_content>");
+  assert.equal(users[0].text, text);
+  assert.equal(top(chat.state).at(-1).text, "12");
+  // An image with no text: one image block, nothing else.
+  chat.send("", [{ mediaType: "image/png", data: ATTACH_PNG }]);
+  await turns(chat, 1);
+  const img = userLines(inputs)[1];
+  assert.deepEqual(img.message.content, [{ type: "image", source: { type: "base64", media_type: "image/png", data: ATTACH_PNG } }]);
+  assert.equal(img.inline_pastes, undefined);
+  const u2 = entries(chat.state, "user")[1];
+  assert.deepEqual([u2.text, u2.images, u2.pending], ["", 1, false], "an image alone sends, and its echo confirms it");
+  chat.dispose();
+});
+
+test("a transcript's marked paste reads back as the owner's text", () => {
+  const raw = `Count these.\n\n<pasted_content id="4809">\na\nb\nc\n</pasted_content id="4809">\n`;
+  assert.deepEqual(core.readMessage(raw), { text: "Count these.\na\nb\nc", context: [] });
+  const s = core.reduce(core.initialState("x"), { type: "user", uuid: "u1", message: { role: "user", content: raw } });
+  assert.equal(s.entries.u1.text, "Count these.\na\nb\nc");
+});
+
+test("pastes: Claude Code's 800 characters or 2 line breaks, invisible characters stripped, binary text refused", () => {
+  assert.equal(core.isLongPaste("x".repeat(800)), false);
+  assert.equal(core.isLongPaste("x".repeat(801)), true);
+  assert.equal(core.isLongPaste("a\nb\nc"), false);
+  assert.equal(core.isLongPaste("a\nb\nc\nd"), true);
+  assert.equal(core.pasteToMark("a\nb\nc\nd"), null, "under 20 characters is not marked");
+  assert.equal(core.pasteToMark("  line one\r\nline two\r\nline three\r\nfour  "), "line one\nline two\nline three\nfour");
+  assert.deepEqual(core.rememberPaste(["a", "b"], "a"), ["b", "a"]);
+  const p = "x\n".repeat(5);
+  assert.deepEqual(core.pastesIn(`look ${p}`, [p, "gone\n\n\n\n"]), [p]);
+  assert.deepEqual(core.pastesIn("/review x", ["/review"]), [], "a short paste heading a slash command is not marked");
+  // Zero widths, bidi overrides, tags and a BOM go; an emoji's joiner, its selector and a flag's tags stay.
+  const s = core.stripInvisible("a​b‮c﻿d\u{e0041}e\r\nf");
+  assert.deepEqual(s, { text: "abcde\nf", removed: 4 });
+  const keep = "👨‍👩‍👧 ❤️ 🏴\u{e0067}\u{e0062}\u{e0077}\u{e006c}\u{e0073}\u{e007f} क्‍ष";
+  assert.deepEqual(core.stripInvisible(keep), { text: keep, removed: 0 });
+  assert.deepEqual(core.stripInvisible("plain ascii\tand\nlines"), { text: "plain ascii\tand\nlines", removed: 0 });
+  assert.equal(core.strippedNotice(1, "pasted"), "Removed 1 invisible character from the pasted text");
+  assert.equal(core.looksBinary("\x89PNG\r\n\x1a\n\0\0\0\rIHDR"), true);
+  assert.equal(core.looksBinary("�".repeat(10) + "x".repeat(100)), true);
+  assert.equal(core.looksBinary("an ordinary paste with a � in it, long enough to count"), false);
+});

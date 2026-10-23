@@ -1702,6 +1702,93 @@ await check("the header's ✎ asks the host to rename the chat; a thread run els
   assert.equal((await text(".header .rename")).length, 0);
 });
 
+// ------------------------------------------------------------ what goes into a message (56–60)
+
+const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAEElEQVR42mP438MARwzEcQCSIhixoJoR1AAAAABJRU5ErkJggg==";
+/**
+ * A paste into the input: image files and/or text; true when the page took
+ * it over. Firefox drops the data of a ClipboardEvent made by a script, so
+ * the event carries a stand-in for VS Code's (Chromium's) clipboardData.
+ */
+const pasteIn = (spec) =>
+  exec(
+    `const ta = document.querySelector('.composer textarea'); ta.focus();
+     const items = (arguments[0].files || []).map((f) => {
+       const bin = atob(f.data); const u = new Uint8Array(bin.length);
+       for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+       const file = new File([u], f.name, { type: f.type });
+       return { kind: 'file', type: f.type, getAsFile: () => file };
+     });
+     const text = arguments[0].text;
+     if (text !== undefined) items.push({ kind: 'string', type: 'text/plain', getAsFile: () => null });
+     const ev = new ClipboardEvent('paste', { bubbles: true, cancelable: true });
+     Object.defineProperty(ev, 'clipboardData', { value: { items, getData: (t) => (t === 'text/plain' && text !== undefined ? text : '') } });
+     ta.dispatchEvent(ev);
+     return ev.defaultPrevented;`,
+    [spec],
+  );
+const sends = async () => (await posts()).filter((p) => p.t === "send");
+
+await check("a pasted screenshot shows as a thumbnail under the input, × takes it off, and an image alone sends (56)", async () => {
+  await fresh({}, false);
+  assert.equal(await pasteIn({ files: [{ name: "shot.png", type: "image/png", data: PNG }] }), true);
+  await sleep(100);
+  await settle();
+  assert.equal((await exec("return document.querySelectorAll('.composer .attachments .thumb img').length")), 1);
+  assert.equal(await value(), "", "no bytes in the draft");
+  await shot("paste-image");
+  await click(".composer .attachments .thumb .remove");
+  await settle();
+  assert.equal((await exec("return document.querySelectorAll('.composer .attachments .thumb').length")), 0);
+  await pasteIn({ files: [{ name: "shot.png", type: "image/png", data: PNG }] });
+  await sleep(100);
+  await settle();
+  assert.equal(await exec("return document.querySelector('.composer .bar button.primary').disabled"), false, "Send with no text");
+  await type(ENTER);
+  const [m] = await sends();
+  assert.deepEqual([m.text, m.images], ["", [{ mediaType: "image/png", data: PNG }]]);
+  assert.equal((await exec("return document.querySelectorAll('.composer .attachments .thumb').length")), 0, "sent: gone from the input");
+});
+
+await check("WSL2's clipboard handing a screenshot over as raw bytes pastes nothing (Claude Code's fix), and says so", async () => {
+  await fresh({}, false);
+  await type("keep this");
+  const bytes = "\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\x07\x80" + "\ufffd".repeat(40);
+  assert.equal(await pasteIn({ text: bytes }), true);
+  await settle();
+  assert.equal(await value(), "keep this");
+  assert.match((await text(".paste-notice"))[0], /did not come through/);
+});
+
+await check("a long paste is marked for the CLI; what shows nothing is stripped from it, with a notice (56)", async () => {
+  await fresh({}, false);
+  await type("count the lines: ");
+  const log = Array.from({ length: 6 }, (_, i) => `line ${i + 1} \u200bok`).join("\n");
+  assert.equal(await pasteIn({ text: log }), true, "the page inserts the cleaned text itself");
+  await settle();
+  const clean = log.replaceAll("\u200b", "");
+  assert.equal(await value(), `count the lines: ${clean}`);
+  assert.equal((await text(".paste-notice"))[0], "Removed 6 invisible characters from the pasted text");
+  await shot("paste-stripped");
+  // A short paste is left to the browser and not marked.
+  assert.equal(await pasteIn({ text: " thanks" }), false);
+  await type(ENTER);
+  const [m] = await sends();
+  assert.deepEqual(m.pastes, [clean]);
+  assert.equal(m.text, `count the lines: ${clean}`);
+});
+
+await check("a draft holding invisible characters is cleaned before it goes: the first Enter shows it, the second sends", async () => {
+  await fresh({}, false);
+  await type("flash\u202e it");
+  await type(ENTER);
+  assert.equal((await sends()).length, 0, "held for a look");
+  assert.equal(await value(), "flash it");
+  assert.equal((await text(".paste-notice"))[0], "Removed 1 invisible character · review and press Enter to send");
+  await type(ENTER);
+  assert.deepEqual((await sends()).map((p) => p.text), ["flash it"]);
+});
+
 // ------------------------------------------------------------ the list
 
 await go("/list.html");

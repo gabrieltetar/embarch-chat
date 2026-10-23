@@ -127,6 +127,8 @@ class Rec {
 }
 
 const isResp = (id) => (o) => o.type === "control_response" && o.response?.request_id === id;
+/** A 4×4 solid orange PNG: a neutral image for the attach scenario. */
+const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAEElEQVR42mP438MARwzEcQCSIhixoJoR1AAAAABJRU5ErkJggg==";
 const firstText = (o) => o.type === "stream_event" && o.event?.delta?.type === "text_delta";
 const taskStarted = (type) => (o) => o.type === "system" && o.subtype === "task_started" && o.task_type === type;
 const taskEnded = (o) => o.type === "system" && o.subtype === "task_notification";
@@ -611,6 +613,42 @@ const scenarios = {
     f.user("Which words did I ask you to remember? Reply with the words only.");
     await f.result();
     await f.close();
+  },
+  // What goes into a message (decisions 56, 58, 60): a long paste marked
+  // with `inline_pastes` as Claude Code's panel marks it, an image with no
+  // text, and the context blocks the panel puts before the text — the
+  // editor's selection and a terminal's output — each as its own text block.
+  async attach() {
+    const r = new Rec("attach", ["--tools", ""]);
+    const paste = Array.from({ length: 12 }, (_, i) => `step ${i + 1}: ok`).join("\n");
+    const text = `How many steps are in this log? Reply with just the number.\n${paste}`;
+    r.send({ type: "user", message: { role: "user", content: text }, inline_pastes: [paste] });
+    await r.result();
+    r.user([{ type: "image", source: { type: "base64", media_type: "image/png", data: PNG } }]);
+    await r.result();
+    r.user([
+      { type: "text", text: "<ide_selection>The user selected the lines 2 to 3 from /work/rec/attach/note.txt:\nalpha\nbeta\n\nThis may or may not be related to the current task.</ide_selection>" },
+      { type: "text", text: '<terminal name="bash">\n$ make\nbuild finished: 3 warnings\n</terminal>' },
+      { type: "text", text: "How many lines did I select, and how many warnings did the build print? Reply as: lines, warnings" },
+    ]);
+    await r.result();
+    await r.close();
+  },
+  // A side question while a turn runs (decision 57): Claude Code's /btw is a
+  // `side_question` control request; its answer comes back as the response.
+  async btw() {
+    const r = new Rec("btw", ["--tools", "Bash"]);
+    r.user("Run the bash command `sleep 8; echo built` in the foreground (not in the background), wait for it, then reply with just: done");
+    // Asked while the Bash call still runs (Claude Code's L884 case).
+    await r.until((o) => o.type === "assistant" && o.message?.content?.some((b) => b.type === "tool_use"));
+    r.control("sq-1", { subtype: "side_question", question: "Which command are you running? Reply in one short line." });
+    await r.until(isResp("sq-1"));
+    await r.result();
+    r.control("sq-2", { subtype: "side_question", question: "And what did it print? One word.", history: [{ question: "Which command are you running? Reply in one short line.", response: "sleep 8; echo built" }] });
+    await r.until(isResp("sq-2"));
+    r.user("Reply with just: ok");
+    await r.result();
+    await r.close();
   },
   async persist() {
     const r = new Rec("persist", ["--tools", ""], { persist: true });

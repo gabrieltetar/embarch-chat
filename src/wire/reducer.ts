@@ -9,6 +9,8 @@
 
 import type { ContentBlock, ContextUsage, DialogRequest, ElicitationRequest, PermissionRequest, RateLimitInfo, WireMessage } from "./types";
 import { answerable, unansweredNote } from "./dialogs";
+import type { ContextItem } from "./message";
+import { readMessage, sameText } from "./message";
 
 export type ProcessState = "none" | "starting" | "running" | "closed" | "error";
 
@@ -32,6 +34,8 @@ export interface UserEntry {
    * or a fork names (decision 73). A message from elsewhere has the CLI's.
    */
   uuid?: string;
+  /** What went with it (decisions 58, 60): the editor's selection or file, a terminal's output. */
+  context?: ContextItem[];
 }
 export interface TextEntry {
   kind: "text";
@@ -440,11 +444,14 @@ function foldUser(s: ChatState, o: WireMessage): ChatState {
     return stdout[1].trim() ? note(s, stdout[1].trim(), "info") : s;
   }
   if (/^<local-command-stderr>/.test(raw.trim())) return note(s, raw.replace(/<\/?local-command-stderr>/g, "").trim(), "error");
-  const text = commandText(raw) ?? raw;
+  // The context blocks before the owner's words, and a marked paste unwrapped (decisions 56, 58, 60).
+  const own = readMessage(raw);
+  const text = commandText(own.text) ?? own.text;
   const images = imagesOf(content);
-  if (!text.trim() && !images) return s;
+  if (!text.trim() && !images && !own.context.length) return s;
   // The CLI echoing what this panel sent (`--replay-user-messages`), under
-  // the uuid it was sent with; by its text, a message sent without one.
+  // the uuid it was sent with; by its text, a message sent without one —
+  // whitespace-blind, as a marked paste's echo moves its line breaks (56).
   const uuid = typeof o.uuid === "string" ? o.uuid : undefined;
   const mine =
     (uuid &&
@@ -454,10 +461,10 @@ function foldUser(s: ChatState, o: WireMessage): ChatState {
       })) ||
     (s.unconfirmed ?? []).find((id) => {
       const e = s.entries[id];
-      return e?.kind === "user" && e.pending && e.text.trim() === text.trim();
+      return e?.kind === "user" && e.pending && sameText(e.text, text);
     });
   if (mine) return confirm(s, mine, uuid ? { uuid } : {});
-  return put(s, { kind: "user", id: uuid ?? `u:${s.seq}`, text, images, at: stamp(o), ...(uuid ? { uuid } : {}) }, null);
+  return put(s, { kind: "user", id: uuid ?? `u:${s.seq}`, text, images, at: stamp(o), ...(uuid ? { uuid } : {}), ...(own.context.length ? { context: own.context } : {}) }, null);
 }
 
 function foldSystem(s: ChatState, o: WireMessage): ChatState {
@@ -641,6 +648,7 @@ export function reduce(s: ChatState, o: WireMessage): ChatState {
         ...(o.held ? { held: true } : {}),
         ...(at !== undefined ? { at } : {}),
         ...(typeof o.uuid === "string" ? { uuid: o.uuid } : {}),
+        ...(Array.isArray(o.context) && o.context.length ? { context: o.context as ContextItem[] } : {}),
       };
       const n: ChatState = { ...s, busy: true, unconfirmed: [...(s.unconfirmed ?? []), e.id], ...(at !== undefined ? { lastLineAt: at } : {}) };
       // Sent while Claude works, or waits on a card: it waits at the bottom

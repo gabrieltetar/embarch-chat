@@ -10,6 +10,7 @@ import type { PrRef } from "../../src/desk/client";
 import type { ThreadGroup } from "../../src/desk/threads";
 import type { Card, Chip, PastPrompt } from "../../src/assistant/edits";
 import type { LibraryEntry } from "../../src/library/entries";
+import type { Attachment } from "../../src/wire/message";
 
 /** The chat's card in two lines (decision 18). */
 export interface Header {
@@ -78,7 +79,8 @@ export interface MentionItem {
 
 export type ChatToHost =
   | { t: "ready" }
-  | { t: "send"; text: string; handoff?: boolean }
+  /** A message: pasted images go with it, and the long pastes it holds, for the CLI to mark (56). */
+  | { t: "send"; text: string; handoff?: boolean; images?: Attachment[]; pastes?: string[] }
   | { t: "allow"; requestId: string; always?: boolean }
   | { t: "deny"; requestId: string; message?: string }
   | { t: "answer"; requestId: string; answers: Record<string, string> }

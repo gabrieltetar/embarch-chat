@@ -1575,3 +1575,41 @@ a.cite {
 a.cite:hover {
   text-decoration: none;
 }
+
+/* ------------------------------------------------------------ what goes into a message (56–60) */
+
+.paste-notice {
+  font-size: 0.88em;
+  margin-top: 3px;
+}
+/* Under the input: pasted images, the editor's file or selection, terminals. */
+.attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+  align-items: center;
+}
+.thumb {
+  position: relative;
+  display: inline-block;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  height: 48px;
+}
+.thumb img {
+  display: block;
+  height: 100%;
+  max-width: 96px;
+  object-fit: cover;
+}
+.thumb .remove {
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 0 4px;
+  line-height: 1.2;
+  background: var(--vscode-editor-background);
+  opacity: 0.85;
+}

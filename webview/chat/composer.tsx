@@ -12,12 +12,19 @@
 // on a click, Ctrl+Z restores (37). The next keystroke cancels a stale call.
 // After each turn, reply chips above the input (25). The 📚 beside the 💡
 // holds the library, one submenu per category (38).
+//
+// What goes in with the words, as Claude Code's own panel does it (56): a
+// pasted screenshot is a thumbnail under the input until sent — an image
+// alone sends; a long paste is remembered so the CLI can mark it; what shows
+// nothing is stripped from a paste, and from the draft before it goes.
 
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Card, Chip, PastPrompt } from "../../src/assistant/edits";
 import { CATEGORIES, applyEdit, ghostRest, prefixMatch, wordDiff } from "../../src/assistant/edits";
 import type { LibraryEntry } from "../../src/library/entries";
 import { byCategory, invocation } from "../../src/library/entries";
+import type { Attachment } from "../../src/wire/message";
+import { IMAGE_TYPES, looksBinary, pasteToMark, pastesIn, rememberPaste, stripInvisible, strippedNotice } from "../../src/wire/message";
 import type { HostToChat, MentionItem } from "../shared/protocol";
 import { MODELS, MODES } from "../shared/protocol";
 import { vscodeApi } from "../shared/vscode";
@@ -47,11 +54,29 @@ interface Props {
   /** The Haiku assistant runs (a setting). */
   assistant: boolean;
   chips: Chip[];
-  onSend: (text: string, opts: { handoff?: boolean }) => void;
+  onSend: (text: string, opts: SendOpts) => void;
   onChip: (chip: Chip) => void;
 }
 
+export interface SendOpts {
+  handoff?: boolean;
+  images?: Attachment[];
+  /** The long pastes the text still holds, for the CLI to mark (56). */
+  pastes?: string[];
+}
+
 type Pop = { kind: "at" | "slash"; start: number; q: string; items: MentionItem[]; on: number };
+type Image = Attachment & { id: number };
+
+/** A pasted image file as base64. */
+const readImage = (f: File) =>
+  new Promise<Attachment>((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve({ mediaType: f.type, data: String(r.result).replace(/^data:[^,]*,/, "") });
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(f);
+  });
+let imageIds = 0;
 type Ghost = { base: string; completion: string; src: "local" | "haiku" };
 type Undo = { before: string; after: string; cardId?: string; handoff?: boolean };
 
@@ -105,6 +130,12 @@ export function Composer(p: Props) {
   const [menu, setMenu] = useState<null | "bulb" | "library">(null);
   const [preview, setPreview] = useState<Card | null>(null);
   const [holding, setHolding] = useState(false);
+  const [images, setImages] = useState<Image[]>([]);
+  // For a send the cards' answer makes, from a listener set up once.
+  const imagesNow = useRef(images);
+  imagesNow.current = images;
+  /** One line about the last paste or send: what was stripped, a clipboard that held no usable image. */
+  const [notice, setNotice] = useState<string | null>(null);
   const ta = useRef<HTMLTextAreaElement>(null);
   const overlay = useRef<HTMLDivElement>(null);
   const bulbBtn = useRef<HTMLButtonElement>(null);
@@ -125,6 +156,8 @@ export function Composer(p: Props) {
     hold: null as null | string,
     handoff: false,
     undo: [] as Undo[],
+    /** Long pastes of this draft, newest last (56). */
+    pastes: [] as string[],
   });
 
   const setText = (v: string) => {
@@ -392,9 +425,16 @@ export function Composer(p: Props) {
     cancelStale();
     s.hold = null;
     setHolding(false);
-    props.current.onSend(t, s.handoff ? { handoff: true } : {});
+    const opts: SendOpts = s.handoff ? { handoff: true } : {};
+    if (imagesNow.current.length) opts.images = imagesNow.current.map(({ mediaType, data }) => ({ mediaType, data }));
+    const marked = pastesIn(t, s.pastes);
+    if (marked.length) opts.pastes = marked;
+    props.current.onSend(t, opts);
     s.handoff = false;
     s.undo = [];
+    s.pastes = [];
+    setImages([]);
+    setNotice(null);
     setText("");
     doneTyping();
     setPop(null);
@@ -409,9 +449,17 @@ export function Composer(p: Props) {
     // The DOM, not the last render: keys typed and Enter in one frame would
     // otherwise send the text from before them.
     const t = (ta.current?.value ?? text).trim();
-    if (!t) return;
+    if (!t && !images.length) return;
+    // What shows nothing comes out first, and the owner looks again (Claude Code's rule).
+    const clean = stripInvisible(t);
+    if (clean.removed) {
+      setText(clean.text);
+      setNotice(strippedNotice(clean.removed, "review"));
+      focusAt(clean.text.length);
+      return;
+    }
     const s = a.current;
-    if (s.hold !== null) return doSend(t);
+    if (s.hold !== null || !t) return doSend(t);
     // Just before send, the cards judge the whole prompt (26) — unless they already have.
     if (props.current.assistant && words(t) >= HOLD_MIN_WORDS && !t.startsWith("/") && cards.judged.trim() !== t) {
       s.hold = t;
@@ -425,6 +473,60 @@ export function Composer(p: Props) {
       return;
     }
     doSend(t);
+  };
+
+  // ------------------------------------------------------------ pasting
+
+  const addImages = async (files: File[]) => {
+    const read = await Promise.all(files.map((f) => readImage(f).catch(() => null)));
+    const ok = read.filter((x): x is Attachment => x !== null).map((x) => ({ ...x, id: ++imageIds }));
+    if (ok.length) setImages((cur) => [...cur, ...ok]);
+  };
+
+  /** Text in at the caret as if typed, so undo and the input handler see it. */
+  const insertText = (t: string) => {
+    const el = ta.current;
+    if (!el) return;
+    el.focus();
+    if (document.execCommand("insertText", false, t)) return;
+    el.setRangeText(t, el.selectionStart, el.selectionEnd, "end");
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+
+  const onPaste = (e: ClipboardEvent) => {
+    const dt = e.clipboardData;
+    if (!dt) return;
+    const files: File[] = [];
+    let sawImage = false;
+    for (const it of Array.from(dt.items)) {
+      if (!it.type.startsWith("image/")) continue;
+      sawImage = true;
+      const f = it.getAsFile();
+      if (f && IMAGE_TYPES.includes(f.type)) files.push(f);
+    }
+    if (files.length) {
+      e.preventDefault();
+      void addImages(files);
+      return;
+    }
+    const plain = dt.getData("text/plain");
+    // WSL2/WSLg's clipboard bridge can hand a screenshot over as raw bytes in
+    // text/plain: never into the draft (Claude Code's fix, its changelog 2.1.2xx).
+    if ((sawImage && !plain) || (plain && looksBinary(plain))) {
+      e.preventDefault();
+      setNotice("The clipboard held an image that did not come through as one: nothing pasted");
+      return;
+    }
+    if (!plain) return;
+    const norm = plain.replace(/\r\n?/g, "\n");
+    const clean = norm.length > 50000 ? { text: norm, removed: 0 } : stripInvisible(norm);
+    const mark = pasteToMark(clean.text);
+    if (mark) a.current.pastes = rememberPaste(a.current.pastes, mark);
+    if (clean.removed) {
+      e.preventDefault();
+      insertText(clean.text);
+      setNotice(strippedNotice(clean.removed, "pasted"));
+    }
   };
 
   const onKey = (e: KeyboardEvent) => {
@@ -556,11 +658,13 @@ export function Composer(p: Props) {
             typed(v);
             setAtEnd(end);
             setPreview(null);
+            setNotice(null);
             if (!v.trim()) a.current.handoff = false;
             detect(v, el.selectionStart);
             changed(v, end, ghost);
           }}
           onKeyDown={onKey}
+          onPaste={onPaste}
           onKeyUp={(e) => {
             const el = e.currentTarget as HTMLTextAreaElement;
             setAtEnd(el.selectionStart === el.value.length);
@@ -575,6 +679,19 @@ export function Composer(p: Props) {
           onBlur={() => setTimeout(() => setPop(null), 150)}
         />
       </div>
+      {notice && <div class="paste-notice muted">{notice}</div>}
+      {images.length > 0 && (
+        <div class="attachments">
+          {images.map((im) => (
+            <span key={im.id} class="thumb" title={`${im.mediaType} — goes with the message`}>
+              <img src={`data:${im.mediaType};base64,${im.data}`} alt="pasted image" />
+              <button class="icon remove" title="Remove" onClick={() => setImages((cur) => cur.filter((x) => x.id !== im.id))}>
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
       <div class="bar">
         <select title="Permission mode" value={mode} onChange={(e) => post({ t: "mode", mode: (e.target as HTMLSelectElement).value })}>
           {MODES.map((m) => (
@@ -612,7 +729,7 @@ export function Composer(p: Props) {
             Stop
           </button>
         )}
-        <button class="primary" disabled={!text.trim()} onClick={send} title={p.waiting ? "Queued: Claude takes it after your answer to the card above" : busy ? "Queued: it waits above the input until Claude reads it, at its next step" : "Send (Enter)"}>
+        <button class="primary" disabled={!text.trim() && !images.length} onClick={send} title={p.waiting ? "Queued: Claude takes it after your answer to the card above" : busy ? "Queued: it waits above the input until Claude reads it, at its next step" : "Send (Enter)"}>
           {busy ? "Queue" : "Send"}
         </button>
       </div>

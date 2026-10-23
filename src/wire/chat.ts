@@ -13,6 +13,7 @@ import { findTranscript, holdsMessage, projectsRoot } from "./transcript";
 import { appendTitle } from "./history";
 import { ChatState, Pending, chatStatus, initialState, reduce, reduceAll, textOf } from "./reducer";
 import { anyMovable, soonMovable } from "./tasks";
+import { Attachment, ContextItem, Outgoing, outgoing } from "./message";
 import type { ContextUsage, PermissionDecision, WireMessage } from "./types";
 import { DIALOG_CANCELLED, answerable, unansweredNote } from "./dialogs";
 
@@ -45,10 +46,12 @@ export interface RewindResult {
   skippedLinks?: number;
 }
 
-export interface Attachment {
-  /** base64 image data; pasted images ride the wire as image blocks. */
-  mediaType: string;
-  data: string;
+/** What goes with a message besides its text and images (decisions 56, 58, 60). */
+export interface SendExtra {
+  /** The editor's selection or open file, a terminal's output: blocks before the text. */
+  context?: ContextItem[];
+  /** Long pastes the owner made, marked by the CLI where the message still holds them. */
+  pastes?: string[];
 }
 
 /** Claude Code's own words for a step rerun after a reload, and for one that will not be (decision 63). */
@@ -87,8 +90,8 @@ export class Chat extends EventEmitter {
   private idleTimer: NodeJS.Timeout | undefined;
   private closing = false;
   private lastStatus: string;
-  /** The rest of a draft that waits for its /compact line's compaction to finish (decision 36). */
-  private held: string | null = null;
+  /** The rest of a draft that waits for its /compact line's compaction to finish (decision 36), and its text for the draft. */
+  private held: (Outgoing & { text: string }) | null = null;
   /** The held rest's entry, shown as waiting for the compaction. */
   private heldEntry: string | null = null;
   /** The held /compact has run (its boundary or its output came): the next result is its own. */
@@ -176,7 +179,7 @@ export class Chat extends EventEmitter {
   }
 
   /** Messages written while the process was closing (an idle close under way): they go to the resumed one, once it has exited. */
-  private queued: Array<{ content: string | unknown[]; uuid?: string }> = [];
+  private queued: Array<Outgoing & { uuid?: string }> = [];
 
   /**
    * Before a new chat's process starts again: one that died in its first
@@ -320,7 +323,7 @@ export class Chat extends EventEmitter {
         this.queued = [];
         setImmediate(() => {
           const next = this.ensureProcess();
-          for (const c of q) next.sendUser(c.content, c.uuid);
+          for (const c of q) next.sendUser(c.content, c.uuid, c.pastes);
           this.touch();
         });
       }
@@ -332,25 +335,24 @@ export class Chat extends EventEmitter {
 
   // ------------------------------------------------------------- the owner
 
-  send(text: string, images: Attachment[] = []): void {
-    const content: unknown[] | string = images.length
-      ? [...images.map((i) => ({ type: "image", source: { type: "base64", media_type: i.mediaType, data: i.data } })), { type: "text", text }]
-      : text;
+  send(text: string, images: Attachment[] = [], extra: SendExtra = {}): void {
+    const context = extra.context ?? [];
     // Its own uuid: the CLI's queue knows it by it, to take it back or send it now (port item 72).
     const uuid = randomUUID();
-    this.dispatch({ type: "_sent", n: ++this.sent, text, images: images.length, at: Date.now(), uuid });
-    this.deliver(content, uuid);
+    this.dispatch({ type: "_sent", n: ++this.sent, text, images: images.length, at: Date.now(), uuid, ...(context.length ? { context } : {}) });
+    this.deliver(outgoing(text, images, context, extra.pastes), uuid);
     this.touch();
   }
 
   /** To the running process; while one is closing, to the next, once it has gone (decision 41). */
-  private deliver(content: string | unknown[], uuid?: string): void {
+  private deliver(out: Outgoing, uuid?: string): void {
+    const line = { content: out.content, pastes: out.pastes, uuid };
     if (this.proc && !this.proc.exited && (this.closing || this.proc.closing)) {
-      this.queued.push({ content, uuid });
+      this.queued.push(line);
       return;
     }
     const proc = this.ensureProcess();
-    if (!proc.sendUser(content, uuid) && !proc.exited) this.queued.push({ content, uuid });
+    if (!proc.sendUser(line.content, uuid, line.pastes) && !proc.exited) this.queued.push(line);
   }
 
   private uuidOf(entryId: string | null): string | undefined {
@@ -363,13 +365,14 @@ export class Chat extends EventEmitter {
    * goes first, and the rest once that compaction has finished — shown at
    * once as a message waiting for it.
    */
-  sendAfterCompact(compact: string, rest: string): void {
+  sendAfterCompact(compact: string, rest: string, images: Attachment[] = [], extra: SendExtra = {}): void {
     this.send(compact);
-    this.held = rest;
+    const context = extra.context ?? [];
+    this.held = { ...outgoing(rest, images, context, extra.pastes), text: rest };
     this.compactRan = false;
     const n = ++this.sent;
     this.heldEntry = `s:${n}`;
-    this.dispatch({ type: "_sent", n, text: rest, images: 0, held: true, at: Date.now(), uuid: randomUUID() });
+    this.dispatch({ type: "_sent", n, text: rest, images: images.length, held: true, at: Date.now(), uuid: randomUUID(), ...(context.length ? { context } : {}) });
   }
 
   /**
@@ -400,7 +403,7 @@ export class Chat extends EventEmitter {
    */
   private releaseHeld(): void {
     if (this.held === null) return;
-    const text = this.held;
+    const text = this.held.text;
     const id = this.heldEntry;
     this.held = null;
     this.heldEntry = null;

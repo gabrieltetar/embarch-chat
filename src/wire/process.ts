@@ -216,9 +216,13 @@ export class ClaudeProcess extends EventEmitter {
     return true;
   }
 
-  /** `uuid`: the message's own, so the CLI's queue knows it (cancel_async_message, Send now, command_lifecycle). */
-  sendUser(content: string | unknown[], uuid?: string): boolean {
-    return this.write({ type: "user", ...(uuid ? { uuid } : {}), message: { role: "user", content } });
+  /**
+   * A message of the owner's. `uuid`: its own, so the CLI's queue knows it
+   * (cancel_async_message, Send now, command_lifecycle); `pastes`: the long
+   * pastes in it, for the CLI to mark (Claude Code's `inline_pastes`, 56).
+   */
+  sendUser(content: string | unknown[], uuid?: string, pastes?: string[]): boolean {
+    return this.write({ type: "user", ...(uuid ? { uuid } : {}), message: { role: "user", content }, ...(pastes?.length ? { inline_pastes: pastes } : {}) });
   }
 
   /** A control request of ours (`interrupt`, `set_model`, ...), resolved by its response. */
