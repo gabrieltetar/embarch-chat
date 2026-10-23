@@ -1,0 +1,2 @@
+{"d":"in","o":{"type":"control_request","request_id":"ex-1","request":{"subtype":"export_conversation"}}}
+{"d":"out","o":{"type":"control_response","response":{"subtype":"success","request_id":"ex-1","response":{"text":"\n❯ Run the bash command echo hello-from-bash and then reply with just: done\n\n● Bash(echo hello-from-bash)\n  ⎿  hello-from-bash\n\n● done","default_filename":"2026-10-23-151905-run-the-bash-command-echo-hello-from-bash-and-t.txt"}}}}

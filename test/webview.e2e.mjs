@@ -468,7 +468,8 @@ await check("/ completes the session's commands", async () => {
   const id = Object.values(el)[0];
   await wd("POST", `${S}/element/${id}/value`, { text: "/co" });
   await settle();
-  assert.deepEqual(await text(".popup div"), ["/compact", "/context"]);
+  // With the page's own /copy (decision 74).
+  assert.deepEqual(await text(".popup div"), ["/compact", "/context", "/copy"]);
 });
 
 await check("mode and model switch, context meter and Compact", async () => {
@@ -1338,13 +1339,67 @@ await check("the 📚: one submenu per category; a click puts /<name> in the dra
   assert.deepEqual(await text(".popup div"), ["/embarch-chat:build-flash-verifyBench"]);
 });
 
-// ------------------------------------------------------------ history (decision 75)
+// ------------------------------------------------------------ history (decisions 74 and 75)
 
+/** What the page wrote to the clipboard: the browser's own is not the test's to read. */
+const stubClipboard = () =>
+  exec("window.__clip = []; Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: (t) => (window.__clip.push(t), Promise.resolve()) } });");
+const clip = () => exec("return window.__clip");
 const basicChat = async (view) => {
   const sid = await fresh();
   await send([...(view ? [snapshot({ sessionId: sid }, view)] : []), sent("Run the bash command `echo hello-from-bash` and then reply with just: done"), ...events(outLines("basic"))]);
+  await stubClipboard();
   await clearPosts();
 };
+
+await check("a reply's Copy takes the whole reply as Markdown; /copy the latest, /copy 2 the one before — nothing goes to Claude", async () => {
+  await basicChat();
+  assert.deepEqual(await text(".reply-copy"), ["Copy", "Copy"], "one per finished turn");
+  await click(".reply-copy");
+  await settle();
+  assert.deepEqual(await clip(), ["done"]);
+  assert.deepEqual(await text(".reply-copy"), ["Copied", "Copy"]);
+  await type("/copy " + ENTER);
+  await type("/copy 2" + ENTER);
+  await settle();
+  assert.deepEqual(await clip(), ["done", "ok", "done"]);
+  assert.deepEqual(await text(".toast"), ["Copied to the clipboard (4 characters, 1 line)"]);
+  await type("/copy 3" + ENTER);
+  assert.deepEqual(await text(".toast"), ["Only 2 replies to copy"]);
+  assert.ok(!(await posts()).some((p) => p.t === "send"), "nothing went to Claude");
+  await shot("history-copy");
+});
+
+await check("a turn still running has no Copy yet", async () => {
+  await fresh();
+  const lines = outLines("basic");
+  await send([sent("Run the bash command `echo hello-from-bash` and then reply with just: done"), ...events(upTo(lines, (o) => o.type === "assistant" && o.message.content.some((b) => b.type === "text")))]);
+  assert.deepEqual(await text(".reply-copy"), []);
+});
+
+await check("/export: the whole conversation as plain text, copied or saved through VS Code's save dialog", async () => {
+  await basicChat();
+  await type("/export " + ENTER);
+  assert.ok((await posts()).some((p) => p.t === "export"));
+  assert.match((await text(".dialog.export p"))[0], /Preparing/);
+  const t = "❯ Run the bash command `echo hello-from-bash` and then reply with just: done\n\n● Bash(echo hello-from-bash)\n  ⎿  hello-from-bash\n\n● done\n";
+  await send([{ t: "export", text: t, filename: "2026-10-23-140509-run-the-bash-command-echo-hello-from-bash-and-th.txt" }]);
+  assert.equal((await text(".dialog.export p"))[0], `The whole conversation as plain text, ${t.length} characters.`);
+  await shot("history-export");
+  await click(".dialog.export button", "Copy to clipboard");
+  await settle();
+  assert.deepEqual(await clip(), [t]);
+  await click(".dialog.export button", "Save to file");
+  const save = (await posts()).find((p) => p.t === "exportSave");
+  assert.deepEqual(save, { t: "exportSave", text: t, filename: "2026-10-23-140509-run-the-bash-command-echo-hello-from-bash-and-th.txt" });
+  assert.equal((await text(".dialog")).length, 0, "closed");
+  assert.ok(!(await posts()).some((p) => p.t === "send"));
+  // The dialog takes the keys: Escape closes it.
+  await type("/export " + ENTER);
+  await exec("document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
+  await settle();
+  assert.equal((await text(".dialog")).length, 0, "Escape closed it");
+});
 
 await check("the header's ✎ asks the host to rename the chat; a thread run elsewhere has none", async () => {
   await basicChat();

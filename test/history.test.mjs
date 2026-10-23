@@ -1,6 +1,6 @@
-// A chat's history over the wire (decision 75), against recorded
-// real sessions replayed by fake-claude.mjs: a name given by hand. Run with
-// `npm test`.
+// A chat's history over the wire (decisions 74 and 75), against
+// recorded real sessions replayed by fake-claude.mjs: the CLI's /export
+// text, and a name given by hand. Run with `npm test`.
 
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
@@ -58,6 +58,41 @@ const waitFor = async (pred, ms = 5000) => {
   }
 };
 const users = (s) => s.timeline.map((id) => s.entries[id]).filter((e) => e.kind === "user");
+
+// ------------------------------------------------------------ export
+
+test("a new chat has nothing to export, and starts no process for it", async () => {
+  const { chat, spawns } = makeChat("basic");
+  await assert.rejects(chat.exportConversation(), /no conversation yet/);
+  assert.equal(spawns().length, 0);
+  chat.dispose();
+});
+
+test("a closed chat is resumed for its export: the CLI's own /export text, with the file name it offers", async () => {
+  const { chat, spawns } = makeChat("export", { existing: true });
+  const r = await chat.exportConversation();
+  assert.ok(spawns()[0].argv.includes(`--resume=${SID}`));
+  assert.match(r.text, /^\n?❯ Run the bash command echo hello-from-bash and then reply with just: done\n\n● Bash\(echo hello-from-bash\)\n {2}⎿\s+hello-from-bash\n\n● done$/, "as the terminal renders it, a no-break space and all");
+  assert.match(r.filename, /^\d{4}-\d{2}-\d{2}-\d{6}-run-the-bash-command-echo-hello-from-bash-and-t\.txt$/);
+  assert.equal(chat.state.process, "running", "a process started for a request runs, though it wrote nothing yet");
+  chat.dispose();
+});
+
+test("the panel's own plain text for a chat no process may run: the owner's messages, Claude's replies and steps", () => {
+  const lines = fs
+    .readFileSync(fixture("basic"), "utf8")
+    .split("\n")
+    .filter((l) => l.trim())
+    .map((l) => JSON.parse(l))
+    .filter((e) => e.d === "out")
+    .map((e) => e.o);
+  const s = core.reduceAll(core.initialState(SID), lines);
+  const text = core.conversationText(s);
+  assert.match(text, /^❯ Run the bash command `echo hello-from-bash`/);
+  assert.match(text, /● Bash\(echo hello-from-bash\)\n {2}⎿ {2}hello-from-bash/);
+  assert.match(text, /● done\n\n❯ Reply with just: ok\n\n● ok\n$/);
+  assert.equal(core.exportFileName(s, new Date(2026, 9, 23, 14, 5, 9)), "2026-10-23-140509-run-the-bash-command-echo-hello-from-bash-and-th.txt", "cut at 48 as the CLI cuts its own");
+});
 
 // ------------------------------------------------------------ a name by hand
 

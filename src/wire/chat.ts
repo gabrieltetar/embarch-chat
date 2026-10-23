@@ -115,6 +115,11 @@ export class Chat extends EventEmitter {
     return this.proc?.pid;
   }
 
+  /** The session exists: a process of it has taken a message, or the chat came from a transcript. */
+  get started(): boolean {
+    return this.hasSession;
+  }
+
   /** Folds history (from a transcript) without a process. */
   preload(events: WireMessage[]): void {
     this.state = reduceAll(this.state, events);
@@ -504,6 +509,31 @@ export class Chat extends EventEmitter {
       appendTitle(file, this.sessionId, title);
       this.pendingTitle = null;
     } else this.pendingTitle = title;
+  }
+
+  /**
+   * A control request of the owner's to this chat's own process, resumed
+   * for it when it has closed (decision 41) — an export. Only a chat
+   * whose session exists: a new one has nothing to ask about.
+   */
+  private async control(subtype: string, fields: Record<string, unknown> = {}, timeoutMs?: number): Promise<Record<string, unknown>> {
+    if (!this.hasSession) throw new Error("this chat has no conversation yet");
+    if (this.proc && !this.proc.exited && (this.closing || this.proc.closing)) throw new Error("claude is closing; try again in a moment");
+    const proc = this.ensureProcess();
+    try {
+      return await proc.request(subtype, fields, timeoutMs);
+    } finally {
+      // A process resumed for a request writes nothing on stdout until a message: it runs all the same.
+      if (this.proc === proc && !proc.exited && this.state.process === "starting") this.dispatch({ type: "_process", state: "running" });
+      this.touch();
+    }
+  }
+
+  /** The conversation as the plain text Claude Code's `/export` writes, and the file name it offers (decision 74). */
+  async exportConversation(): Promise<{ text: string; filename: string }> {
+    const r = await this.control("export_conversation", {}, 30000);
+    if (typeof r.text !== "string") throw new Error("claude gave no text");
+    return { text: r.text, filename: typeof r.default_filename === "string" ? r.default_filename : "conversation.txt" };
   }
 
   async refreshContext(): Promise<void> {

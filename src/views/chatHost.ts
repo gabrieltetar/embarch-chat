@@ -22,6 +22,7 @@ import type { PromptHistory } from "../assistant/history";
 import type { AssistInput } from "../assistant/prompts";
 import type { LibraryEntry } from "../library/entries";
 import { invocation } from "../library/entries";
+import { historyMessage } from "./history";
 import type { ChatToHost, Header, HostToChat } from "../../webview/shared/protocol";
 
 export interface HostCtx {
@@ -254,6 +255,9 @@ export class ChatHost implements vscode.Disposable {
         return this.ctx.freshChat(chat.sessionId);
       case "rename":
         return this.ctx.rename(chat.sessionId);
+      case "export":
+      case "exportSave":
+        return historyMessage(this.ctx, rec, m, (x) => this.post(x));
       case "allow": {
         const p = pending(m.requestId);
         // Every change rejected in the diff tab: Allow has nothing left to allow (64).

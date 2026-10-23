@@ -394,6 +394,18 @@ const scenarios = {
     await r2.until((o) => o.type === "result", undefined, 60000).catch((e) => console.error(`reload: ${e.message}`));
     await r2.close();
   },
+  // Export (decision 74): a closed chat resumed for `export_conversation`, asked
+  // before any message — the text Claude Code's /export writes.
+  async export() {
+    const r = new Rec("exportsetup", ["--tools", "Bash"], { persist: true, dir: path.join(scratch, "export") });
+    r.user("Run the bash command `echo hello-from-bash` and then reply with just: done");
+    const res = await r.result();
+    await r.close();
+    const q = new Rec("export", ["--tools", "Bash", "--resume", res.session_id], { persist: true });
+    q.control("ex-1", { subtype: "export_conversation" });
+    await q.until(isResp("ex-1"));
+    await q.close();
+  },
   async persist() {
     const r = new Rec("persist", ["--tools", ""], { persist: true });
     r.user("Remember the word PELICAN. Reply with just: noted");

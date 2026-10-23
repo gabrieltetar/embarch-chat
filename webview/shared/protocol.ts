@@ -57,7 +57,9 @@ export type HostToChat =
   /** The reply chips for the chat on screen (25). */
   | { t: "chips"; sid: string; chips: Chip[] }
   /** Text back into a chat's draft: a held message not sent, a start the desk refused. */
-  | { t: "draft"; sid: string; text: string };
+  | { t: "draft"; sid: string; text: string }
+  /** The conversation as plain text, for the export dialog (decision 74). */
+  | { t: "export"; text: string; filename: string };
 
 export interface MentionItem {
   /** What goes after the @. */
@@ -97,6 +99,10 @@ export type ChatToHost =
   | { t: "assistCancel" }
   /** A chip that acts: a fresh chat with this chat's handoff (36). */
   | { t: "freshChat" }
+  /** The conversation as plain text, for the export dialog (decision 74). */
+  | { t: "export" }
+  /** Saves the export through VS Code's save dialog. */
+  | { t: "exportSave"; text: string; filename: string }
   /** The owner names the chat (decision 75). */
   | { t: "rename" };
 

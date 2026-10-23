@@ -1,7 +1,7 @@
 // Just enough of the `vscode` module to activate the built extension in
 // plain node and drive it: webviews are objects that record what the host
 // posts and let a test post back as the page would; commands, quick picks,
-// input boxes and messages are recorded or scripted.
+// input boxes, save dialogs and messages are recorded or scripted.
 
 const path = require("node:path");
 const { EventEmitter } = require("node:events");
@@ -98,6 +98,8 @@ const state = {
   statusItems: [],
   quickPick: async () => undefined,
   inputBox: async () => undefined,
+  /** What a save dialog answers: a Uri, or undefined for Cancel. */
+  saveDialog: async () => undefined,
   folders: [],
   output: [],
   /** The editor's open documents: { uri, isDirty, save() }. */
@@ -188,6 +190,7 @@ const vscode = {
     showInformationMessage: async (m) => void state.messages.push(["info", m]),
     showQuickPick: (items, opts) => state.quickPick(items, opts),
     showInputBox: (opts) => state.inputBox(opts),
+    showSaveDialog: (opts) => state.saveDialog(opts),
     showTextDocument: async (doc, opts) => (state.shown.push({ doc, opts }), { selection: null, revealRange() {} }),
     activeTextEditor: undefined,
     terminals: [],

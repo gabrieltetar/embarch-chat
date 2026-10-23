@@ -3,7 +3,8 @@
 // wire events, folded here by the same reducer the host runs; events are
 // folded as they come and rendered once per frame. The timeline is in turns,
 // one per message of the owner's (decision 51), and runs of quiet steps fold
-// into one row (decision 50).
+// into one row (decision 50). Its history — copy, export — is history.tsx's
+// (decision 74).
 
 import "../shared/style.css";
 import { render } from "preact";
@@ -25,6 +26,7 @@ import { LimitBannerView } from "./limits";
 import { Stamp, useNow } from "./clock";
 import { dayKey, elapsedText, stalled } from "./time";
 import { cacheClock } from "../../src/wire/limits";
+import { CopyReply, ExportDialog, LOCAL_COMMANDS, Toast, localCommand, replies } from "./history";
 
 let uiUrl = "";
 toolRenderers.push(benchRenderer(() => uiUrl));
@@ -260,6 +262,7 @@ function App() {
 
   const view = model.view;
   const entries = state.entries;
+  const reply = replies(state);
   const renderEntry = (e: Entry): preact.ComponentChildren => {
     switch (e.kind) {
       case "user":
@@ -274,8 +277,15 @@ function App() {
             {e.unsent && <div class="held muted">not sent — it is back in the draft</div>}
           </div>
         );
-      case "text":
-        return <Markdown text={e.text} ctx={ctx} />;
+      case "text": {
+        const whole = reply.get(e.id);
+        return (
+          <>
+            <Markdown text={e.text} ctx={ctx} />
+            {whole !== undefined && <CopyReply text={whole} />}
+          </>
+        );
+      }
       case "thinking":
         return (
           <details class="thinking">
@@ -329,6 +339,8 @@ function App() {
       </details>
     ) : null;
   const busy = state.busy || state.compacting;
+  // The page's own /copy and /export join the session's commands once it has them: a chat with none yet has nothing to copy.
+  const commands = state.slashCommands.length ? [...state.slashCommands, ...LOCAL_COMMANDS.filter((c) => !state.slashCommands.includes(c))] : state.slashCommands;
   let lastDay = "";
   const placeholder = view.readOnly ? "" : view.resumable ? "Message to resume this chat here" : busy ? "Queue a message…" : "Message Claude — @ for files, / for commands";
 
@@ -362,6 +374,8 @@ function App() {
           );
         })}
       </div>
+      <ExportDialog />
+      <Toast />
       <PendingCards
         pending={state.pending}
         ctx={ctx}
@@ -390,7 +404,7 @@ function App() {
           waiting={state.pending.length > 0}
           mode={state.mode}
           model={state.model}
-          slashCommands={state.slashCommands}
+          slashCommands={commands}
           placeholder={placeholder}
           mentions={mentions}
           prompts={prompts}
@@ -398,6 +412,7 @@ function App() {
           assistant={library.assistant && view.ours}
           chips={chips?.sid === state.sessionId && view.ours ? chips.chips : []}
           onSend={(text, opts) => {
+            if (localCommand(text, live.current)) return;
             stick.current = true;
             post({ t: "send", text, ...(opts.handoff ? { handoff: true } : {}) });
           }}

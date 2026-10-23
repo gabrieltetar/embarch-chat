@@ -580,7 +580,7 @@ test("with continueAfterReload off, a chat cut off mid-turn comes back saying no
   }
 });
 
-// ------------------------------------------------------------ history (decision 75)
+// ------------------------------------------------------------ history (decisions 74 and 75)
 
 test("Rename from the list: the owner's name, given before the first turn, is the chat's — Haiku's never replaces it — and the list shows it", { skip }, async () => {
   const sid = await startUntracked("suggest");
@@ -631,4 +631,20 @@ test("a chat named before its first message comes back after a reload with its n
   const run = calls().slice(spawnsBefore).find((c) => c.argv.includes("--input-format"));
   assert.equal(run.argv[run.argv.indexOf("--session-id") + 1], sid, "started by its id, not resumed: it had no transcript");
   assert.ok(!run.argv.some((a) => a.startsWith("--resume")));
+});
+
+test("Export: the conversation as plain text for the page; Save writes it where VS Code's save dialog says", { skip }, async () => {
+  const n = chatView.webview.posted.length;
+  chatView.webview.fromPage({ t: "export" });
+  const ex = await waitFor(() => chatView.webview.posted.slice(n).find((m) => m.t === "export"), 5000, "the export");
+  assert.match(ex.text, /❯ Run the bash command `echo hello-from-bash`/);
+  assert.match(ex.filename, /\.txt$/);
+  const target = path.join(dir, "exported.txt");
+  let asked = null;
+  mock.state.saveDialog = async (opts) => ((asked = opts), mock.vscode.Uri.file(target));
+  chatView.webview.fromPage({ t: "exportSave", text: ex.text, filename: ex.filename });
+  await waitFor(() => fs.existsSync(target), 3000, "the file");
+  assert.equal(fs.readFileSync(target, "utf8"), ex.text);
+  assert.equal(path.basename(asked.defaultUri.fsPath), ex.filename);
+  mock.state.saveDialog = async () => undefined;
 });
