@@ -293,6 +293,89 @@ await check("a subagent's steps nest under its call", async () => {
   assert.deepEqual(await text(".timeline > div > .tool > .line .name"), ["Agent"]);
 });
 
+// Decision 50: a step says what the agent is doing in its own words, and a
+// run of quiet steps folds into one row.
+const stepLabels = (sel) =>
+  exec(
+    "return [...document.querySelectorAll(arguments[0])].map(l => l.querySelector(':scope > .what')?.textContent ?? [...l.querySelectorAll(':scope > .name, :scope > .summary')].map(e => e.textContent).join(' '))",
+    [sel],
+  );
+const runRows = () =>
+  exec(
+    "return [...document.querySelectorAll('.timeline > div > .run')].map(r => ({ count: r.querySelector(':scope > .line .count')?.textContent, st: [...r.querySelectorAll(':scope > .line .st')].map(e => e.textContent).join(' '), spin: !!r.querySelector(':scope > .line .spinner'), open: !!r.querySelector(':scope > .steps') }))",
+  );
+
+await check("a run of quiet steps folds into one row: its latest step's own description, N steps, a red count; collapsed", async () => {
+  await send([snapshot(), ...events(outLines("steps"))]);
+  await shot("chat-turns");
+  assert.deepEqual(await runRows(), [{ count: "6 steps", st: "1 error", spin: false, open: false }]);
+  assert.deepEqual(await stepLabels(".timeline > div > .run > .line"), ["Print current year"]);
+  // The second turn's one step is a plain row: its description, the tool a tag.
+  assert.deepEqual(await stepLabels(".timeline > div > .tool:not(.run) > .line"), ["Echo second-turn"]);
+  assert.deepEqual(await text(".timeline > div > .tool:not(.run) > .line .name"), ["Bash"]);
+  assert.ok((await text(".timeline .md")).includes("done"));
+  await shot("chat-run-collapsed");
+});
+
+await check("a run opens to one line per step, each opening to its input and output; the toggle sticks", async () => {
+  await send([snapshot(), ...events(outLines("steps"))]);
+  await click(".run > .line");
+  assert.deepEqual(await stepLabels(".run .steps .tool > .line"), [
+    "List files in current directory",
+    "Read note.txt",
+    "Count bytes in note.txt",
+    "Grep MANGO  in /work/rec/steps",
+    "Try to read missing.txt",
+    "Print current year",
+  ]);
+  assert.deepEqual(await text(".run .steps .tool > .line .st.error"), ["error"]);
+  await click(".run .steps .tool > .line", "Try to read missing.txt");
+  const out = await text(".run .steps .tool pre.out");
+  assert.ok(out[0].startsWith("$ cat missing.txt") && out[1].includes("No such file"), JSON.stringify(out));
+  await shot("chat-run-expanded");
+  // Re-rendered by a new event, and by a new snapshot of the same chat: still open.
+  await send([{ t: "event", e: { type: "_title", title: "Steps" } }]);
+  assert.equal((await runRows())[0].open, true);
+  await send([snapshot(), ...events(outLines("steps"))]);
+  assert.equal((await runRows())[0].open, true, "the owner's toggle sticks, by the run's first step");
+  await click(".run > .line");
+  assert.equal((await runRows())[0].open, false);
+});
+
+await check("a streaming step joins the run at once; its description heads the run once it has arrived; the row stays when it lands", async () => {
+  const lines = outLines("steps");
+  const callIds = lines.filter((o) => o.type === "assistant").flatMap((o) => o.message.content.filter((b) => b.type === "tool_use").map((b) => b.id));
+  const startOf = (id) => lines.findIndex((o) => o.type === "stream_event" && o.event?.content_block?.id === id);
+  const landOf = (id) => lines.findIndex((o) => o.type === "assistant" && o.message.content.some((b) => b.id === id));
+  // The first step alone, streaming then landed: one plain row, the same element.
+  await send([snapshot(), ...events(lines.slice(0, landOf(callIds[0])))]);
+  assert.deepEqual(await runRows(), []);
+  assert.deepEqual(await stepLabels(".timeline > div > .tool:not(.run) > .line"), ["List files in current directory"]);
+  assert.equal((await text(".timeline > div > .tool:not(.run) .spinner")).length, 1);
+  await exec("document.querySelector('.timeline > div > .tool:not(.run)').__mark = 1");
+  await send(events(lines.slice(landOf(callIds[0]), startOf(callIds[1]))));
+  assert.equal(await exec("return document.querySelector('.timeline > div > .tool:not(.run)').__mark"), 1, "no new row when the step lands");
+  // The third call streams in two pieces: the command, then its description.
+  const s3 = startOf(callIds[2]);
+  const d3 = lines.findIndex((o, i) => i > s3 && o.event?.delta?.type === "input_json_delta" && o.event.delta.partial_json);
+  const pj = lines[d3].event.delta.partial_json;
+  const cut = pj.indexOf('"description"') + '"description": "Count'.length;
+  const piece = (s) => ({ ...lines[d3], event: { ...lines[d3].event, delta: { type: "input_json_delta", partial_json: s } } });
+  await send(events([...lines.slice(startOf(callIds[1]), s3 + 1)]));
+  assert.deepEqual(await runRows(), [{ count: "3 steps", st: "", spin: true, open: false }], "the streaming call is the run's third step");
+  await send(events([piece(pj.slice(0, cut))]));
+  assert.deepEqual(await stepLabels(".run > .line"), ["Bash wc -c note.txt"], "no description yet: its tool and command");
+  await click(".run > .line");
+  await exec("document.querySelector('.run').__mark = 1; document.querySelectorAll('.run .steps .tool')[2].__mark = 1");
+  await send(events([piece(pj.slice(cut))]));
+  assert.deepEqual(await stepLabels(".run > .line"), ["Count bytes in note.txt"]);
+  await send(events(lines.slice(d3 + 1, landOf(callIds[2]) + 1)));
+  assert.deepEqual(await stepLabels(".run > .line"), ["Count bytes in note.txt"]);
+  assert.deepEqual(await exec("return [document.querySelector('.run').__mark, document.querySelectorAll('.run .steps .tool')[2].__mark]"), [1, 1], "the same run and the same step row once it lands");
+  assert.equal((await runRows())[0].count, "3 steps");
+  await shot("chat-run-live");
+});
+
 await check("@ asks the host for paths and inserts the pick; Enter sends", async () => {
   await send([snapshot()]);
   await clearPosts();

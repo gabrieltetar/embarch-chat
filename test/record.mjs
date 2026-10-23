@@ -204,6 +204,20 @@ const scenarios = {
     await r.result();
     await r.close();
   },
+  // A run of quiet steps (decision 50): Bash calls with their own one-line
+  // descriptions, a Read, a Grep, one failing step; then a second turn.
+  async steps() {
+    const r = new Rec("steps", ["--tools", "Bash,Read,Grep"]);
+    r.user(
+      "Make these tool calls one at a time, one per message, giving each Bash call a short description: " +
+        "1) Bash `ls`; 2) Read note.txt; 3) Bash `wc -c note.txt`; 4) Grep for MANGO; 5) Bash `cat missing.txt`; 6) Bash `date +%Y`. " +
+        "Write no text before or between the calls. Then reply with just: done",
+    );
+    await r.result();
+    r.user("Run the bash command `echo second-turn`, then reply with just: ok");
+    await r.result();
+    await r.close();
+  },
   async edit() {
     const r = new Rec("edit", ["--tools", "Read,Write,Edit"]);
     r.user("Use the Write tool to create a.txt containing exactly two lines: one, two. Then use the Edit tool to change two to three. Then reply with just: done");

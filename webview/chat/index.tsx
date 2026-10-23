@@ -1,7 +1,8 @@
 // The chat webview: its card as a header (decision 18), the timeline, what
 // waits on the owner, the input. State arrives as one snapshot and then as
 // wire events, folded here by the same reducer the host runs; events are
-// folded as they come and rendered once per frame.
+// folded as they come and rendered once per frame. Runs of quiet steps fold
+// into one row (decision 50).
 
 import "../shared/style.css";
 import { render } from "preact";
@@ -15,7 +16,8 @@ import type { LibraryEntry } from "../../src/library/entries";
 import { duration, vscodeApi } from "../shared/vscode";
 import { PendingCards } from "./cards";
 import { Composer, returnToDraft } from "./composer";
-import { ToolCtx, ToolView, toolLabel, toolRenderers } from "./tools";
+import { RunView, ToolCtx, ToolView, quiet, toolRenderers } from "./tools";
+import { foldRuns, liveTool } from "./runs";
 import { benchRenderer } from "./bench";
 import { setAtlas } from "./atlas";
 
@@ -277,6 +279,31 @@ function App() {
   };
 
   const liveB = liveBlocks(state);
+  // Blocks still streaming join the timeline as entries: a streaming call
+  // folds into the run before it, and keeps its row when it lands.
+  const streaming = new Map<string, Entry>();
+  liveB.forEach((b, i) => {
+    if (b.type === "text" || b.type === "thinking") streaming.set(`live${i}`, { kind: b.type, id: `live${i}`, text: b.text, parent: null });
+    else if (b.type === "tool_use" && !(b.id && entries[b.id])) {
+      const t = liveTool(b, i);
+      streaming.set(t.id, t);
+    }
+  });
+  const get = (id: string) => streaming.get(id) ?? entries[id];
+  const rows = foldRuns(streaming.size ? [...state.timeline, ...streaming.keys()] : state.timeline, get, quiet);
+  const renderRow = (e: Entry): preact.ComponentChildren =>
+    !streaming.has(e.id) || e.kind === "tool" ? (
+      renderEntry(e)
+    ) : e.kind === "text" ? (
+      <div class="live cursor">
+        <Markdown text={e.text} ctx={ctx} />
+      </div>
+    ) : e.kind === "thinking" ? (
+      <details class="thinking" open>
+        <summary>Thinking…</summary>
+        <div class="md muted">{e.text.slice(-600)}</div>
+      </details>
+    ) : null;
   const busy = state.busy || state.compacting;
   const placeholder = view.readOnly ? "" : view.resumable ? "Message to resume this chat here" : busy ? "Queue a message…" : "Message Claude — @ for files, / for commands";
 
@@ -294,29 +321,9 @@ function App() {
         {!state.timeline.length && !liveB.length && (
           <div class="empty-note">{view.ours ? "A new chat. The first message starts Claude, in this window's folder." : "Nothing in this chat's transcript yet."}</div>
         )}
-        {state.timeline.map((id) => (
-          <div key={id}>{renderEntry(entries[id])}</div>
+        {rows.map((r) => (
+          <div key={r.key}>{r.run ? <RunView steps={r.ids.map((id) => get(id)!)} entries={entries} ctx={ctx} render={renderEntry} /> : renderRow(get(r.ids[0])!)}</div>
         ))}
-        {liveB.map((b, i) =>
-          b.type === "text" ? (
-            <div key={`live${i}`} class="live cursor">
-              <Markdown text={b.text} ctx={ctx} />
-            </div>
-          ) : b.type === "thinking" ? (
-            <details key={`live${i}`} class="thinking" open>
-              <summary>Thinking…</summary>
-              <div class="md muted">{b.text.slice(-600)}</div>
-            </details>
-          ) : b.type === "tool_use" ? (
-            <div key={`live${i}`} class="tool running">
-              <div class="line">
-                <span class="name">{toolLabel(b.name ?? "tool")}</span>
-                <span class="summary">{b.text.slice(0, 160)}</span>
-                <span class="spinner" />
-              </div>
-            </div>
-          ) : null,
-        )}
       </div>
       <PendingCards pending={state.pending} ctx={ctx} readOnly={view.readOnly} />
       <StatusLine state={state} warning={model.warning} />

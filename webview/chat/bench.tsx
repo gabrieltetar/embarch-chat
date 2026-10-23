@@ -7,9 +7,9 @@
 
 import { Link } from "../shared/link";
 import type { ToolCtx, ToolRenderer } from "./tools";
-import { BenchCardData, benchCard, benchTool } from "./benchcard";
+import { BenchCardData, benchCard, benchTool, hasBenchCard } from "./benchcard";
 
-export { benchCard, benchTool, firstError } from "./benchcard";
+export { benchCard, benchTool, firstError, hasBenchCard } from "./benchcard";
 export type { BenchCardData } from "./benchcard";
 
 export function BenchCard({ c, uiUrl, ctx }: { c: BenchCardData; uiUrl: string; ctx: ToolCtx }) {
@@ -34,12 +34,15 @@ export function BenchCard({ c, uiUrl, ctx }: { c: BenchCardData; uiUrl: string; 
   );
 }
 
-/** Registered with the tool view: a bench tool's body is its card. */
+/** Registered with the tool view: a bench tool's body is its card, and the call stands alone. */
 export function benchRenderer(uiUrl: () => string): ToolRenderer {
-  return (t, ctx) => {
-    const tool = benchTool(t.name);
-    if (!tool) return null;
-    const c = benchCard(tool, t);
-    return c ? <BenchCard c={c} uiUrl={uiUrl()} ctx={ctx} /> : null;
+  return {
+    claims: hasBenchCard,
+    render: (t, ctx) => {
+      const tool = benchTool(t.name);
+      if (!tool) return null;
+      const c = benchCard(tool, t);
+      return c ? <BenchCard c={c} uiUrl={uiUrl()} ctx={ctx} /> : null;
+    },
   };
 }

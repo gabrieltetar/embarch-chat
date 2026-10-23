@@ -397,6 +397,39 @@ details.thinking .md {
   font-size: 0.85em;
   white-space: nowrap;
 }
+/* What the agent says the step does; its tool a muted tag after it (decision 50). */
+.tool .what {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.tool .what + .name {
+  font-weight: normal;
+  font-size: 0.85em;
+  color: var(--muted);
+  margin-right: auto;
+}
+/* A run of quiet steps as one row, headed by its latest (decision 50). */
+.tool.run > .line .chev {
+  flex: none;
+  width: 0.8em;
+  color: var(--muted);
+}
+.tool.run > .line .what {
+  flex: 1;
+}
+.tool.run > .line .count {
+  font-size: 0.85em;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.tool.run > .steps {
+  margin: 4px 0 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
 .st.running,
 .st.awaiting {
   color: var(--busy);

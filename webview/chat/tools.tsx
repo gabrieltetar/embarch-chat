@@ -1,14 +1,16 @@
-// A tool call in the timeline: one line (name, what it acts on, status),
-// opening into its input and result. Edit and Write show their change as a
-// diff that opens VS Code's diff editor on a click (decision 8); a subagent's
-// own steps nest under its call. `toolRenderers` is the seam for bench
-// result cards (decision 15).
+// A tool call in the timeline: one line (what the agent says it does, else
+// the tool and what it acts on; its status), opening into its input and
+// result. Edit and Write show their change as a diff that opens VS Code's
+// diff editor on a click (decision 8); a subagent's own steps nest under its
+// call. Two or more quiet steps in a row fold into one run row (decision 50,
+// runs.ts). `toolRenderers` is the seam for bench result cards (decision 15).
 
 import { memo } from "preact/compat";
 import { useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import type { Entry, ToolEntry } from "../../src/wire/reducer";
 import { Markdown, MdCtx } from "../shared/markdown";
+import { failedText, foldRuns, quietTool, runHead, runTally, toolIntent } from "./runs";
 
 export interface ToolCtx extends MdCtx {
   openDiff(toolId: string): void;
@@ -16,8 +18,15 @@ export interface ToolCtx extends MdCtx {
 }
 
 /** A custom body for a tool by name — bench cards plug in here. */
-export type ToolRenderer = (t: ToolEntry, ctx: ToolCtx) => ComponentChildren | null;
+export interface ToolRenderer {
+  /** Whether it draws this tool: a claimed tool stands alone, never folded into a run (decision 50). */
+  claims(name: string): boolean;
+  render(t: ToolEntry, ctx: ToolCtx): ComponentChildren | null;
+}
 export const toolRenderers: ToolRenderer[] = [];
+
+/** A step that folds into a run (decision 50): any tool but those runs.ts names and those a renderer claims. */
+export const quiet = (t: ToolEntry) => quietTool(t.name) && !toolRenderers.some((r) => r.claims(t.name));
 
 function rel(p: unknown, cwd: string): string {
   const s = String(p ?? "");
@@ -65,6 +74,31 @@ export function toolSummary(name: string, input: Record<string, unknown>, cwd: s
 export function toolLabel(name: string): string {
   const m = /^mcp__(.+?)__(.+)$/.exec(name);
   return m ? `${m[2]}` : name;
+}
+
+/**
+ * A step's one line (decision 50): the agent's own description when the
+ * call carries one, its tool a muted tag after it (`tag`); else the tool and
+ * what it acts on. The raw input stays a hover away.
+ */
+function StepLabel({ t, cwd, tag = true }: { t: ToolEntry; cwd: string; tag?: boolean }) {
+  const summary = toolSummary(t.name, t.input, cwd);
+  const what = toolIntent(t.name, t.input);
+  return what ? (
+    <>
+      <span class="what" title={summary !== what ? summary : undefined}>
+        {what}
+      </span>
+      {tag && <span class="name">{toolLabel(t.name)}</span>}
+    </>
+  ) : (
+    <>
+      <span class="name">{toolLabel(t.name)}</span>
+      <span class="summary" title={summary}>
+        {summary}
+      </span>
+    </>
+  );
 }
 
 const STATUS: Record<ToolEntry["status"], string> = {
@@ -163,16 +197,13 @@ interface ToolProps {
 function ToolViewInner({ t, entries, ctx, render }: ToolProps) {
   const editLike = ["Edit", "Write", "MultiEdit"].includes(t.name);
   const sub = t.name === "Agent" || t.name === "Task";
-  const custom = toolRenderers.map((r) => r(t, ctx)).find((x) => x);
+  const custom = toolRenderers.map((r) => r.render(t, ctx)).find((x) => x);
   const [open, setOpen] = useState<boolean>(editLike || sub || t.name === "TodoWrite" || !!custom);
   const d = editLike ? diffLines(t) : null;
   return (
     <div class={`tool ${t.status}`}>
       <div class="line" onClick={() => setOpen(!open)}>
-        <span class="name">{toolLabel(t.name)}</span>
-        <span class="summary" title={toolSummary(t.name, t.input, ctx.cwd)}>
-          {toolSummary(t.name, t.input, ctx.cwd)}
-        </span>
+        <StepLabel t={t} cwd={ctx.cwd} />
         {d && (
           <span class="diffstat">
             <span class="a">+{d.add}</span> <span class="d">−{d.del}</span>
@@ -191,7 +222,9 @@ function ToolViewInner({ t, entries, ctx, render }: ToolProps) {
             <Todos input={t.input} />
           ) : sub ? (
             <div class="children">
-              {t.children.map((id) => entries[id] && <div key={id}>{render(entries[id])}</div>)}
+              {foldRuns(t.children, (id) => entries[id], quiet).map((f) => (
+                <div key={f.key}>{f.run ? <RunView steps={f.ids.map((id) => entries[id])} entries={entries} ctx={ctx} render={render} /> : render(entries[f.ids[0]])}</div>
+              ))}
               {t.result && t.status !== "running" && <Markdown text={t.result} ctx={ctx} />}
             </div>
           ) : (
@@ -218,3 +251,55 @@ function same(a: ToolProps, b: ToolProps): boolean {
 }
 
 export const ToolView = memo(ToolViewInner, same);
+
+/** The runs the owner opened, by first step: a toggle outlives a re-render, a new snapshot, a switch of chats. */
+const openRuns = new Set<string>();
+
+interface RunProps {
+  steps: Entry[];
+  entries: Record<string, Entry>;
+  ctx: ToolCtx;
+  render: (e: Entry) => ComponentChildren;
+}
+
+/**
+ * A run of quiet steps as one row (decision 50): ▸, the latest step's line,
+ * how many, and a spinner, "waits on you" or a red count. It follows each
+ * step as it arrives, opens only on the owner's click, and then lists one
+ * line per step, each opening as a tool row does.
+ */
+function RunViewInner({ steps, entries, ctx, render }: RunProps) {
+  const key = steps[0].id;
+  const [, redraw] = useState(0);
+  const open = openRuns.has(key);
+  const head = runHead(steps);
+  const n = runTally(steps);
+  const failed = failedText(n);
+  return (
+    <div class="tool run">
+      <div
+        class="line"
+        onClick={() => {
+          if (open) openRuns.delete(key);
+          else openRuns.add(key);
+          redraw((x) => x + 1);
+        }}
+      >
+        <span class="chev">{open ? "▾" : "▸"}</span>
+        {head && <StepLabel t={head} cwd={ctx.cwd} tag={false} />}
+        <span class="count">{n.steps} steps</span>
+        {failed && <span class="st error">{failed}</span>}
+        {n.awaiting ? <span class="st awaiting">{STATUS.awaiting}</span> : n.running ? <span class="spinner" /> : null}
+      </div>
+      {open && (
+        <div class="steps">
+          {steps.map((e) => (
+            <div key={e.id}>{e.kind === "tool" ? <ToolView t={e} entries={entries} ctx={ctx} render={render} /> : render(e)}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export const RunView = memo(RunViewInner, (a: RunProps, b: RunProps) => a.ctx === b.ctx && a.steps.length === b.steps.length && a.steps.every((e, i) => e === b.steps[i]));

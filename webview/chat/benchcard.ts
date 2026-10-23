@@ -89,6 +89,12 @@ const TITLES: Record<string, string> = {
   serial_log: "Serial log",
 };
 
+/** Whether a tool's result becomes a card: such a call stands alone, never folded into a run of steps (decision 50). */
+export function hasBenchCard(name: string): boolean {
+  const tool = benchTool(name);
+  return tool !== null && tool in TITLES;
+}
+
 function board(j: J | null | undefined): string | undefined {
   const t = j?.target ?? j?.build?.target;
   if (!t) return undefined;
