@@ -21,6 +21,7 @@ import { RunView, ToolCtx, ToolView, quiet, toolRenderers } from "./tools";
 import { foldRuns, liveTool } from "./runs";
 import { benchRenderer } from "./bench";
 import { setAtlas } from "./atlas";
+import { LimitBannerView } from "./limits";
 
 let uiUrl = "";
 toolRenderers.push(benchRenderer(() => uiUrl));
@@ -343,6 +344,7 @@ function App() {
           if (u?.kind === "user" && u.text.trim()) returnToDraft(state.sessionId, u.text);
         }}
       />
+      <LimitBannerView info={state.rateLimit} busy={busy} />
       <StatusLine state={state} warning={model.warning} />
       {view.readOnly ? (
         <div class="readonly">

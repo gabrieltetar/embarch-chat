@@ -1144,6 +1144,32 @@ await check("a request the panel cannot show leaves one line in the timeline, an
   assert.equal((await text(".card")).length, 0);
 });
 
+// Decision 67: the account's usage limit — the recorded line (elicit), and
+// the same line as the CLI writes it nearer a limit.
+const limitLine = elicitLines.find((o) => o.type === "rate_limit_event");
+const limit = (info) => ({ t: "event", e: { ...limitLine, rate_limit_info: info } });
+const inH = (h) => Math.floor(Date.now() / 1000 + h * 3600 + 60);
+
+await check("the usage-limit banner: nothing while allowed; from 70 % the percent and the reset; the limit hit, wrapping up; × hides it until the limit changes", async () => {
+  await fresh({}, false);
+  await send([sent("flash it"), limit(limitLine.rate_limit_info)]);
+  assert.deepEqual(await text(".limit-banner"), [], "allowed: nothing");
+  await send([limit({ status: "allowed_warning", rateLimitType: "seven_day", utilization: 0.69, resetsAt: inH(50) })]);
+  assert.deepEqual(await text(".limit-banner"), [], "under 70 %: nothing");
+  await send([limit({ status: "allowed_warning", rateLimitType: "seven_day", utilization: 0.86, resetsAt: inH(50) })]);
+  assert.deepEqual(await text(".limit-banner.warn span"), ["You've used 86% of your weekly limit · resets in 2d"]);
+  await shot("limit-warning");
+  await click(".limit-banner button");
+  assert.deepEqual(await text(".limit-banner"), [], "hidden");
+  await send([limit({ status: "allowed_warning", rateLimitType: "seven_day", utilization: 0.9, resetsAt: inH(50) })]);
+  assert.deepEqual(await text(".limit-banner"), [], "the same limit stays hidden");
+  await send([limit({ status: "rejected", rateLimitType: "five_hour", resetsAt: inH(2), rateLimitGraceActive: true })]);
+  assert.deepEqual(await text(".limit-banner.err span"), ["Usage limit reached · wrapping up"], "a new limit shows; the turn under way finishes");
+  await shot("limit-wrapping-up");
+  await send([{ t: "event", e: { type: "result", subtype: "success", is_error: false } }]);
+  assert.deepEqual(await text(".limit-banner.err span"), ["Usage limit reached · session limit resets in 2h"]);
+});
+
 await check("reply chips after a turn: a click sends it; the handoff's chip asks for a fresh chat", async () => {
   const sid = await fresh();
   const chips = [

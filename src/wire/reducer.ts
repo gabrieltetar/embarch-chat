@@ -7,7 +7,7 @@
 // whose type starts with "_" (a message sent, a prompt answered, the process
 // starting or closing, a control response folded in).
 
-import type { ContentBlock, ContextUsage, DialogRequest, ElicitationRequest, PermissionRequest, WireMessage } from "./types";
+import type { ContentBlock, ContextUsage, DialogRequest, ElicitationRequest, PermissionRequest, RateLimitInfo, WireMessage } from "./types";
 import { answerable, unansweredNote } from "./dialogs";
 
 export type ProcessState = "none" | "starting" | "running" | "closed" | "error";
@@ -109,6 +109,8 @@ export interface ChatState {
   unconfirmed: string[];
   context: ContextUsage | null;
   lastTurn: { ok: boolean; subtype: string; error?: string } | null;
+  /** The account's latest usage limit as the CLI reported it (decision 67). */
+  rateLimit: RateLimitInfo | null;
   seq: number;
 }
 
@@ -135,6 +137,7 @@ export function initialState(sessionId: string, mode = "auto"): ChatState {
     unconfirmed: [],
     context: null,
     lastTurn: null,
+    rateLimit: null,
     seq: 0,
   };
 }
@@ -466,6 +469,22 @@ export function reduce(s: ChatState, o: WireMessage): ChatState {
       let n: ChatState = { ...s, pending: [...s.pending, p] };
       if (p.toolUseId) n = patch(n, p.toolUseId, "tool", () => ({ status: "awaiting" }));
       return n;
+    }
+    // Sent when the account's limit changes — on a process's first turn at
+    // least — and on any line of a turn (67).
+    case "rate_limit_event": {
+      const i = o.rate_limit_info as RateLimitInfo | undefined;
+      if (!i || typeof i.status !== "string") return s;
+      return {
+        ...s,
+        rateLimit: {
+          status: i.status,
+          ...(typeof i.resetsAt === "number" ? { resetsAt: i.resetsAt } : {}),
+          ...(typeof i.rateLimitType === "string" ? { rateLimitType: i.rateLimitType } : {}),
+          ...(typeof i.utilization === "number" ? { utilization: i.utilization } : {}),
+          ...(i.rateLimitGraceActive === true ? { rateLimitGraceActive: true } : {}),
+        },
+      };
     }
     case "control_cancel_request": {
       const id = o.request_id as string;
