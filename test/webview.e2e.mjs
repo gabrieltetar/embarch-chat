@@ -1188,17 +1188,19 @@ const limit = (info) => ({ t: "event", e: { ...limitLine, rate_limit_info: info 
 const inH = (h) => Math.floor(Date.now() / 1000 + h * 3600 + 60);
 
 await check("the usage-limit banner: nothing while allowed; from 70 % the percent and the reset; the limit hit, wrapping up; × hides it until the limit changes", async () => {
+  // One reset time: the banner knows a limit by it, and two reads a second apart would be two limits.
+  const week = inH(50);
   await fresh({}, false);
   await send([sent("flash it"), limit(limitLine.rate_limit_info)]);
   assert.deepEqual(await text(".limit-banner"), [], "allowed: nothing");
-  await send([limit({ status: "allowed_warning", rateLimitType: "seven_day", utilization: 0.69, resetsAt: inH(50) })]);
+  await send([limit({ status: "allowed_warning", rateLimitType: "seven_day", utilization: 0.69, resetsAt: week })]);
   assert.deepEqual(await text(".limit-banner"), [], "under 70 %: nothing");
-  await send([limit({ status: "allowed_warning", rateLimitType: "seven_day", utilization: 0.86, resetsAt: inH(50) })]);
+  await send([limit({ status: "allowed_warning", rateLimitType: "seven_day", utilization: 0.86, resetsAt: week })]);
   assert.deepEqual(await text(".limit-banner.warn span"), ["You've used 86% of your weekly limit · resets in 2d"]);
   await shot("limit-warning");
   await click(".limit-banner button");
   assert.deepEqual(await text(".limit-banner"), [], "hidden");
-  await send([limit({ status: "allowed_warning", rateLimitType: "seven_day", utilization: 0.9, resetsAt: inH(50) })]);
+  await send([limit({ status: "allowed_warning", rateLimitType: "seven_day", utilization: 0.9, resetsAt: week })]);
   assert.deepEqual(await text(".limit-banner"), [], "the same limit stays hidden");
   await send([limit({ status: "rejected", rateLimitType: "five_hour", resetsAt: inH(2), rateLimitGraceActive: true })]);
   assert.deepEqual(await text(".limit-banner.err span"), ["Usage limit reached · wrapping up"], "a new limit shows; the turn under way finishes");
