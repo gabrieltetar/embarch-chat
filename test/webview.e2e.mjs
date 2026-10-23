@@ -30,18 +30,25 @@ const THEME = `:root{--vscode-font-family:sans-serif;--vscode-font-size:13px;--v
 
 // The page VS Code would get (src/views/page.ts): the same strict CSP —
 // scripts by nonce only — and the title escaped; the stand-in for the
-// webview's API rides in with the page's nonce. `?title=` sets the title.
+// webview's API rides in with the page's nonce, and so does VS Code's own
+// click handler for webview pages (fixtures/vscode-webview-click.js), which
+// records in `__vscode` what it would hand the workbench to open. `?title=`
+// sets the title.
 const PAGE_PORT = 4989;
 const WD_PORT = 4988;
 const origin = `http://127.0.0.1:${PAGE_PORT}`;
+const VSCODE_CLICK = fs.readFileSync(path.join(here, "fixtures", "vscode-webview-click.js"), "utf8");
 function page(bundle, title) {
   const nonce = Math.random().toString(36).slice(2);
   const head = `
 <style>${THEME}</style>
 <script nonce="${nonce}">
-window.__posts = []; window.__state = undefined; window.__violations = [];
+window.__posts = []; window.__state = undefined; window.__violations = []; window.__vscode = [];
 document.addEventListener("securitypolicyviolation", (e) => window.__violations.push(e.violatedDirective + " " + e.blockedURI));
 window.acquireVsCodeApi = () => ({ postMessage: (m) => window.__posts.push(JSON.parse(JSON.stringify(m))), getState: () => window.__state, setState: (s) => (window.__state = s) });
+const hostMessaging = { postMessage: (channel, data) => window.__vscode.push([channel, data && data.uri]) };
+${VSCODE_CLICK}
+window.addEventListener("click", handleInnerClick);
 </script>`;
   const html = core.pageHtml({ nonce, cspSource: origin, js: `${origin}/dist/webview/${bundle}.js`, css: `${origin}/dist/webview/${bundle}.css`, title, head });
   // The stand-in must run before the bundle: it goes in <head>, ahead of the body's script.
@@ -431,6 +438,81 @@ await check("atlas citations become links when the repo has an atlas", async () 
   assert.equal((await text("a.cite")).length, 0, "no atlas, no links");
 });
 
+// A real (trusted) click, as the owner's: VS Code's own handler acts only on those.
+const realClick = async (el) => {
+  await wd("POST", `${S}/element/${Object.values(el)[0]}/click`, {});
+  await settle();
+};
+
+await check("no link has an href: VS Code's own handler never opens one, each opens once, and vscode:, mailto: and command: links are refused", async () => {
+  const say = {
+    t: "event",
+    e: {
+      type: "assistant",
+      message: {
+        id: "m-links",
+        content: [
+          {
+            type: "text",
+            text: [
+              "See [the docs](https://example.com/docs) and https://example.com/bare.",
+              "Then [the PR](vscode://anthropic.claude-code/open?prompt=hello), [mail](mailto:someone@example.com), [run](command:workbench.action.terminal.new) and [a plugin](vscode://anthropic.claude-code/install-plugin?plugin=x).",
+              "The fix is in [main.c](src/main.c), per abc123@A p12.",
+            ].join("\n"),
+          },
+        ],
+      },
+      parent_tool_use_id: null,
+    },
+  };
+  await send([
+    snapshot({}, { ...OURS, atlas: { docs: ["abc123@A"], boards: [] } }),
+    say,
+    toolCall("toolu_l1", "mcp__embarch-api__run_study", { study: {} }),
+    toolResult("toolu_l1", JSON.stringify({ study_id: "st-7" })),
+  ]);
+  assert.equal(await exec("return document.body.querySelectorAll('[href]').length"), 0, "nothing on the page carries an href");
+  const want = [
+    // [selector, text, what one click posts (null: nothing)]
+    [".md a", "the docs", { t: "openLink", url: "https://example.com/docs" }],
+    [".md a", "https://example.com/bare", { t: "openLink", url: "https://example.com/bare" }],
+    [".md .link-refused", "the PR", null],
+    [".md .link-refused", "mail", null],
+    [".md .link-refused", "run", null],
+    [".md .link-refused", "a plugin", null],
+    [".md a", "main.c", { t: "openFile", path: "src/main.c" }],
+    ["a.cite", "abc123@A p12", { t: "atlas", doc: "abc123@A", page: 12 }],
+    [".bench-link", "Live Study", { t: "openLink", url: "http://127.0.0.1:4890/#live-study?study=st-7" }],
+    [".header a", "ABC-123", { t: "openLink", url: "https://linear.example/ABC-123" }],
+    [".header a", "#42", { t: "openLink", url: "https://github.example/o/r/pull/42" }],
+    [".header a", "Desk", { t: "openLink", url: "http://127.0.0.1:4890/#desk?item=w1" }],
+  ];
+  const opens = (ps) => ps.filter((p) => ["openLink", "openFile", "atlas"].includes(p.t));
+  for (const [sel, label, post] of want) {
+    const els = await wd("POST", `${S}/elements`, { using: "css selector", value: sel });
+    let el = null;
+    for (const e of els) if ((await wd("GET", `${S}/element/${Object.values(e)[0]}/text`)).includes(label)) el = e;
+    assert.ok(el, `no ${sel} "${label}"`);
+    await exec("window.__posts = []; window.__vscode = [];");
+    await realClick(el);
+    assert.deepEqual(await exec("return window.__vscode"), [], `VS Code's own handler opened nothing for "${label}"`);
+    assert.deepEqual(opens(await posts()), post ? [post] : [], `"${label}": ${post ? "opened once" : "refused"}`);
+  }
+  // And no source draws one another way: every <a> is shared/link.tsx's.
+  const sources = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? sources(path.join(d, e.name)) : /\.tsx?$/.test(e.name) ? [path.join(d, e.name)] : []));
+  for (const f of sources(path.join(root, "webview"))) {
+    if (f.endsWith(path.join("shared", "link.tsx"))) continue;
+    const src = fs.readFileSync(f, "utf8");
+    assert.ok(!/<a[\s>]|\bhref\s*=/.test(src), `${path.relative(root, f)} draws its own <a> or href`);
+  }
+  // The keyboard opens a link too, once.
+  await exec("window.__posts = [];");
+  const docs = (await wd("POST", `${S}/elements`, { using: "css selector", value: ".md a" }))[0];
+  await wd("POST", `${S}/element/${Object.values(docs)[0]}/value`, { text: "\uE007" });
+  await settle();
+  assert.deepEqual(opens(await posts()), [{ t: "openLink", url: "https://example.com/docs" }]);
+});
+
 // ------------------------------------------------------------ the assistant and the library
 
 const haikuLines = (name) =>
@@ -805,6 +887,12 @@ await check("the list: groups by item, waiting first, + per group, rows open", a
 await check("the list says so when the desk is down", async () => {
   await send([{ t: "groups", groups: [], desk: null, error: "The desk is not running — showing this window's chats only.", selected: null, now: Date.now() }]);
   assert.ok((await text(".warn-line"))[0].includes("not running"));
+  // Its links carry no href either.
+  assert.equal(await exec("return document.body.querySelectorAll('[href]').length"), 0);
+  await exec("window.__posts = []; window.__vscode = [];");
+  await realClick(await wd("POST", `${S}/element`, { using: "css selector", value: ".list a" }));
+  assert.deepEqual(await exec("return window.__vscode"), []);
+  assert.ok((await posts()).some((p) => p.t === "newChat"));
 });
 
 await check("the pages run under the production CSP, with nothing refused", async () => {

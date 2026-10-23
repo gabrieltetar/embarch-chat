@@ -5,6 +5,7 @@
 // embarch-api's own (its interfaces/tools-*.md): one JSON object as text, or
 // prose for an error raised before there was an object.
 
+import { Link } from "../shared/link";
 import type { ToolCtx, ToolRenderer } from "./tools";
 import { BenchCardData, benchCard, benchTool } from "./benchcard";
 
@@ -21,9 +22,9 @@ export function BenchCard({ c, uiUrl, ctx }: { c: BenchCardData; uiUrl: string; 
         {c.board && <span class="bench-board">{c.board}</span>}
         {c.steps && <span class="muted">{c.steps}</span>}
         {c.link && uiUrl && (
-          <a class="bench-link" onClick={() => ctx.openLink(`${uiUrl.replace(/\/?$/, "/")}#${c.link!.hash}`)}>
+          <Link class="bench-link" onOpen={() => ctx.openLink(`${uiUrl.replace(/\/?$/, "/")}#${c.link!.hash}`)}>
             {c.link.label} ↗
-          </a>
+          </Link>
         )}
       </div>
       {c.error && <div class="bench-error">{c.error}</div>}

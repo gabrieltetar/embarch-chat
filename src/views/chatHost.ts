@@ -277,6 +277,8 @@ export class ChatHost implements vscode.Disposable {
         return;
       }
       case "openFile": {
+        // A path, never a URI (vscode:, command:, file:, ...); one letter is a Windows drive.
+        if (/^[a-z][a-z0-9+.-]+:/i.test(m.path)) return;
         const cwd = chat.opts.cwd || chat.state.cwd || "";
         const abs = path.isAbsolute(m.path) ? m.path : path.join(cwd, m.path);
         const doc = await vscode.workspace.openTextDocument(abs).then(

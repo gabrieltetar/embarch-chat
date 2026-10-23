@@ -97,6 +97,14 @@ a {
 a:hover {
   text-decoration: underline;
 }
+a:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+}
+/* A link in a reply that is neither http(s) nor a path: shown, not opened. */
+.link-refused {
+  text-decoration: underline dotted;
+  cursor: help;
+}
 
 .muted {
   color: var(--muted);

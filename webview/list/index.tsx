@@ -8,6 +8,7 @@ import { render } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import type { Thread, ThreadGroup } from "../../src/desk/threads";
 import type { HostToList } from "../shared/protocol";
+import { Link } from "../shared/link";
 import { ago, duration, vscodeApi } from "../shared/vscode";
 
 const post = (m: unknown) => vscodeApi.postMessage(m);
@@ -78,12 +79,12 @@ function Group({ g, selected, now }: { g: ThreadGroup; selected: string | null; 
       ))}
       {ended.length > shownEnded.length && (
         <div class="older">
-          <a onClick={() => setMore(true)}>{ended.length - shownEnded.length} older chats</a>
+          <Link onOpen={() => setMore(true)}>{ended.length - shownEnded.length} older chats</Link>
         </div>
       )}
       {more && ended.length > SHOW_ENDED && (
         <div class="older">
-          <a onClick={() => setMore(false)}>fewer</a>
+          <Link onOpen={() => setMore(false)}>fewer</Link>
         </div>
       )}
     </div>
@@ -112,7 +113,7 @@ function App() {
       {d.error && <div class="warn-line">{d.error}</div>}
       {!d.groups.length && (
         <div class="muted" style="padding:4px 8px">
-          No threads yet. <a onClick={() => post({ t: "newChat" })}>Start a chat</a>.
+          No threads yet. <Link onOpen={() => post({ t: "newChat" })}>Start a chat</Link>.
         </div>
       )}
       {d.groups.map((g) => (

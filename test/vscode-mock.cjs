@@ -93,6 +93,8 @@ const state = {
   panels: [],
   messages: [],
   external: [],
+  /** Paths given to openTextDocument. */
+  opened: [],
   statusItems: [],
   quickPick: async () => undefined,
   inputBox: async () => undefined,
@@ -169,7 +171,7 @@ const vscode = {
     onDidChangeConfiguration: () => disposable(),
     registerTextDocumentContentProvider: () => disposable(),
     findFiles: async () => [],
-    openTextDocument: async () => null,
+    openTextDocument: async (p) => (state.opened.push(String(p)), null),
   },
   commands: {
     registerCommand: (id, fn) => {

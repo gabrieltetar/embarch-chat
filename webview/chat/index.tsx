@@ -7,6 +7,7 @@ import "../shared/style.css";
 import { render } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { ChatState, Entry, chatStatus, liveBlocks, reduce } from "../../src/wire/reducer";
+import { Link } from "../shared/link";
 import { Markdown } from "../shared/markdown";
 import type { ChatView, Header, HostToChat, MentionItem } from "../shared/protocol";
 import type { Chip, PastPrompt } from "../../src/assistant/edits";
@@ -51,9 +52,9 @@ function HeaderBar({ h, state, view }: { h: Header | null; state: ChatState; vie
       <div class="row">
         {h?.issueKey &&
           (h.issueUrl ? (
-            <a class="key" onClick={() => post({ t: "openLink", url: h.issueUrl })} title="Open the issue">
+            <Link class="key" onOpen={() => post({ t: "openLink", url: h.issueUrl })} title="Open the issue">
               {h.issueKey}
-            </a>
+            </Link>
           ) : (
             <span class="key">{h.issueKey}</span>
           ))}
@@ -81,15 +82,15 @@ function HeaderBar({ h, state, view }: { h: Header | null; state: ChatState; vie
       <div class="row second">
         {h?.untracked && <span>Untracked</span>}
         {h?.prs.map((p) => (
-          <a key={p.url} class={`pr ${p.state}`} onClick={() => post({ t: "openLink", url: p.url })} title={p.title}>
+          <Link key={p.url} class={`pr ${p.state}`} onOpen={() => post({ t: "openLink", url: p.url })} title={p.title}>
             #{p.number} {p.draft ? "draft" : p.state}
-          </a>
+          </Link>
         ))}
         {h && !h.untracked && <span title="Today's time on this work item">today {duration(h.todaySeconds)}</span>}
         {h && (
-          <a onClick={() => post({ t: "openLink", url: h.deskUrl })} title="Open the Desk">
+          <Link onOpen={() => post({ t: "openLink", url: h.deskUrl })} title="Open the Desk">
             Desk ↗
-          </a>
+          </Link>
         )}
         <span class="meter" title={ctx ? ctx.categories.map((c) => `${c.name}: ${Math.round(c.tokens / 100) / 10}K`).join("\n") : "Context usage shows after the first turn"}>
           {pct !== null && (
@@ -223,7 +224,7 @@ function App() {
           <div class="empty-note">
             <p>No chat open.</p>
             <p>
-              Pick a thread in the list, or <a onClick={() => post({ t: "newChat" })}>start a chat</a> on a work item.
+              Pick a thread in the list, or <Link onOpen={() => post({ t: "newChat" })}>start a chat</Link> on a work item.
             </p>
           </div>
         </div>

@@ -93,6 +93,13 @@ The desk is called from the extension's Node side only, on
 `127.0.0.1:4891` with the token in `~/.config/embarch-desk/desk-token`;
 **the webviews never hold the token**.
 
+**A link opens once, through the extension**: an http(s) link in a reply
+opens in the browser, a path in the editor; a `vscode:`, `mailto:`,
+`command:` or any other URI is shown, not opened. No link in the webviews
+carries an `href`, so VS Code's own handler for clicked links (which would
+open it a second time, and open `vscode:` links the extension refuses)
+never sees one.
+
 ## The library's plugin
 
 `plugin/` is a Claude Code plugin — the library's generic entries:

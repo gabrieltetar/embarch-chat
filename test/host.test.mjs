@@ -342,3 +342,20 @@ test("a turn that wrote a handoff offers a fresh chat; the chip starts one on th
   const back = await waitFor(() => chatView.webview.posted.slice(n).find((m) => m.t === "chips" && m.sid === sid), 3000, "the old chat's chips");
   assert.ok(!back.chips.some((c) => c.action === "freshChat"), "its chip is spent");
 });
+
+test("a link opens once, in the browser, and only http(s); a URI is never opened as a file", { skip }, async () => {
+  assert.ok(lastSnapshot()?.state.sessionId, "a chat on screen");
+  mock.state.external.length = 0;
+  mock.state.opened.length = 0;
+  for (const url of ["vscode://anthropic.claude-code/open?prompt=hi", "mailto:someone@example.com", "command:workbench.action.terminal.new", "file:///etc/hostname", "javascript:alert(1)"]) {
+    chatView.webview.fromPage({ t: "openLink", url });
+    chatView.webview.fromPage({ t: "openFile", path: url });
+  }
+  chatView.webview.fromPage({ t: "openLink", url: "https://example.com/docs" });
+  chatView.webview.fromPage({ t: "openFile", path: "src/main.c" });
+  await waitFor(() => mock.state.external.length && mock.state.opened.length, 3000, "the two that open");
+  await new Promise((r) => setTimeout(r, 200));
+  assert.deepEqual(mock.state.external, ["https://example.com/docs"]);
+  assert.equal(mock.state.opened.length, 1);
+  assert.ok(mock.state.opened[0].endsWith("/src/main.c"), mock.state.opened[0]);
+});

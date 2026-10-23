@@ -6,6 +6,7 @@
 // like a citation is turned into one.
 
 import type { ComponentChildren } from "preact";
+import { Link } from "../shared/link";
 import { MdCtx, inlineHooks } from "../shared/markdown";
 import { vscodeApi } from "../shared/vscode";
 
@@ -49,14 +50,14 @@ function citations(text: string, _ctx: MdCtx): ComponentChildren[] | null {
     const ref = docAlt ? m[4] : m[2];
     const label = m[0];
     out.push(
-      <a
+      <Link
         key={`cite${n++}`}
         class="cite"
         title={doc ? `Open ${doc}, page ${page}` : `Open board ${boardLabel}'s entry for ${ref}`}
-        onClick={() => vscodeApi.postMessage(doc ? { t: "atlas", doc, page: Number(page) } : { t: "atlas", board: boardLabel, ref })}
+        onOpen={() => vscodeApi.postMessage(doc ? { t: "atlas", doc, page: Number(page) } : { t: "atlas", board: boardLabel, ref })}
       >
         {label}
-      </a>,
+      </Link>,
     );
     last = r.lastIndex;
   }

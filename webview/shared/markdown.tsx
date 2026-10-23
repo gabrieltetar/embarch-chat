@@ -2,10 +2,13 @@
 // whatever HTML a reply carries shows as text. Covers what Claude writes:
 // fenced code, headings, lists (nested), quotes, tables, rules, and inline
 // code, bold, italic, strike, links. A code span that looks like a file path
-// opens the file. `inlineHooks` is the seam for atlas citation links
+// opens the file. A link opens in the browser when it is http(s), as a file
+// when it is a path, and not at all otherwise; none carries an href
+// (./link.tsx says why). `inlineHooks` is the seam for atlas citation links
 // (decision 16): each may turn a run of plain text into nodes.
 
 import type { ComponentChildren, VNode } from "preact";
+import { Link, hasScheme, isWebLink } from "./link";
 
 export interface MdCtx {
   openLink(url: string): void;
@@ -55,17 +58,33 @@ export function inline(text: string, ctx: MdCtx, key = "i"): ComponentChildren[]
       } else out.push(<code key={k}>{code}</code>);
     } else if (m[3] !== undefined) {
       const url = m[4];
-      out.push(
-        <a key={k} href={url} onClick={(e) => (e.preventDefault(), /^https?:/.test(url) ? ctx.openLink(url) : ctx.openFile(url))}>
-          {inline(m[3], ctx, k)}
-        </a>,
-      );
+      const label = inline(m[3], ctx, k);
+      if (isWebLink(url))
+        out.push(
+          <Link key={k} title={url} onOpen={() => ctx.openLink(url)}>
+            {label}
+          </Link>,
+        );
+      else if (hasScheme(url))
+        // vscode:, mailto:, command:, file: ... — a reply can carry one under
+        // innocent text, and nothing but the browser opens from here.
+        out.push(
+          <span key={k} class="link-refused" title={`Not opened from a reply: ${url}`}>
+            {label}
+          </span>,
+        );
+      else
+        out.push(
+          <Link key={k} title={url} onOpen={() => ctx.openFile(url)}>
+            {label}
+          </Link>,
+        );
     } else if (m[5] !== undefined) {
       const url = m[5];
       out.push(
-        <a key={k} href={url} onClick={(e) => (e.preventDefault(), ctx.openLink(url))}>
+        <Link key={k} onOpen={() => ctx.openLink(url)}>
           {url}
-        </a>,
+        </Link>,
       );
     } else if (m[6] !== undefined) out.push(<strong key={k}>{inline(m[6], ctx, k)}</strong>);
     else if (m[7] !== undefined) out.push(<s key={k}>{inline(m[7], ctx, k)}</s>);
