@@ -11,10 +11,13 @@ import type { ComponentChildren } from "preact";
 import type { Entry, ToolEntry } from "../../src/wire/reducer";
 import { Markdown, MdCtx } from "../shared/markdown";
 import { failedText, foldRuns, quietTool, runHead, runTally, toolIntent } from "./runs";
+import { Elapsed } from "./clock";
 
 export interface ToolCtx extends MdCtx {
   openDiff(toolId: string): void;
   cwd: string;
+  /** A turn runs: a step without its result counts its time (68); after the turn only a background one does. */
+  live?: boolean;
 }
 
 /** A custom body for a tool by name — bench cards plug in here. */
@@ -209,6 +212,7 @@ function ToolViewInner({ t, entries, ctx, render }: ToolProps) {
             <span class="a">+{d.add}</span> <span class="d">−{d.del}</span>
           </span>
         )}
+        {t.status !== "awaiting" && t.status !== "denied" && <Elapsed from={t.at} to={t.doneAt} live={!!ctx.live || !!t.background} always={sub && !t.background} />}
         {t.status === "running" ? <span class="spinner" /> : <span class={`st ${t.status}`}>{STATUS[t.status]}</span>}
       </div>
       {t.progress && sub && <div class="progress">{t.progress}</div>}
@@ -275,6 +279,10 @@ function RunViewInner({ steps, entries, ctx, render }: RunProps) {
   const head = runHead(steps);
   const n = runTally(steps);
   const failed = failedText(n);
+  // The run's time: since its first step, counting while one runs (68).
+  const tools = steps.filter((e): e is ToolEntry => e.kind === "tool");
+  const from = tools.find((t) => t.at !== undefined)?.at;
+  const to = n.running || n.awaiting ? undefined : Math.max(0, ...tools.map((t) => t.doneAt ?? 0)) || undefined;
   return (
     <div class="tool run">
       <div
@@ -289,6 +297,7 @@ function RunViewInner({ steps, entries, ctx, render }: RunProps) {
         {head && <StepLabel t={head} cwd={ctx.cwd} tag={false} />}
         <span class="count">{n.steps} steps</span>
         {failed && <span class="st error">{failed}</span>}
+        {!n.awaiting && <Elapsed from={from} to={to} live={!!ctx.live} />}
         {n.awaiting ? <span class="st awaiting">{STATUS.awaiting}</span> : n.running ? <span class="spinner" /> : null}
       </div>
       {open && (

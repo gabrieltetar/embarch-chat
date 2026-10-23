@@ -996,6 +996,36 @@ details.thinking .md {
 .limit-banner.err {
   color: var(--err);
 }
+/* Time on screen (68): a message's time, a date line, a step's time. */
+.stamp {
+  font-size: 0.8em;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 2px;
+}
+.stamp.mine {
+  align-self: flex-end;
+}
+.day-line {
+  align-self: center;
+  font-size: 0.8em;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.tool .line .elapsed {
+  color: var(--muted);
+  font-size: 0.9em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.status-line .stalled {
+  color: var(--err);
+}
+.status-line .stalled .spinner {
+  border-color: var(--err);
+  border-right-color: transparent;
+}
 .status-line {
   font-size: 0.88em;
   color: var(--muted);

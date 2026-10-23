@@ -22,6 +22,8 @@ import { foldRuns, liveTool } from "./runs";
 import { benchRenderer } from "./bench";
 import { setAtlas } from "./atlas";
 import { LimitBannerView } from "./limits";
+import { Stamp, useNow } from "./clock";
+import { dayKey, elapsedText, stalled } from "./time";
 
 let uiUrl = "";
 toolRenderers.push(benchRenderer(() => uiUrl));
@@ -123,8 +125,17 @@ function HeaderBar({ h, state, view }: { h: Header | null; state: ChatState; vie
 
 function StatusLine({ state, warning }: { state: ChatState; warning: string | null }) {
   const st = chatStatus(state);
+  // A minute with no word from the CLI and no tool running: it may be stuck, not flashing (68).
+  const now = useNow(1000, st === "busy");
+  const quiet = stalled(state, now);
   const parts: preact.ComponentChildren[] = [];
   if (state.compacting) parts.push(<span key="c"><span class="spinner" /> Compacting…</span>);
+  else if (quiet)
+    parts.push(
+      <span key="b" class="stalled" title={`No word from Claude Code for ${elapsedText(now - state.lastLineAt!)}, and no tool is running`}>
+        <span class="spinner" /> Not responding
+      </span>,
+    );
   else if (st === "busy") parts.push(<span key="b"><span class="spinner" /> Working…</span>);
   if (state.process === "starting") parts.push(<span key="s">Starting claude…</span>);
   if (state.process === "closed" && state.timeline.length) parts.push(<span key="cl">Closed when idle — the next message resumes it.</span>);
@@ -210,14 +221,16 @@ function App() {
 
   const state = model.state;
   const cwd = state?.cwd ?? "";
+  const turnRuns = !!state && (state.busy || state.compacting);
   const ctx: ToolCtx = useMemo(
     () => ({
       openLink: (url: string) => post({ t: "openLink", url }),
       openFile: (path: string, line?: number) => post({ t: "openFile", path, line }),
       openDiff: (toolId: string) => post({ t: "openDiff", toolId }),
       cwd,
+      live: turnRuns,
     }),
-    [cwd],
+    [cwd, turnRuns],
   );
 
   if (empty || !state || !model.view) {
@@ -307,6 +320,7 @@ function App() {
       </details>
     ) : null;
   const busy = state.busy || state.compacting;
+  let lastDay = "";
   const placeholder = view.readOnly ? "" : view.resumable ? "Message to resume this chat here" : busy ? "Queue a message…" : "Message Claude — @ for files, / for commands";
 
   return (
@@ -325,9 +339,15 @@ function App() {
         )}
         {rows.map((r, i) => {
           const e = get(r.ids[0])!;
+          // The time above the owner's messages and Claude's replies, a date line where the day changes (68).
+          const at = view.timestamps && !r.run && (e.kind === "user" || e.kind === "text") && !streaming.has(e.id) ? e.at : undefined;
+          const day = at !== undefined ? dayKey(at) : null;
+          const newDay = day !== null && day !== lastDay;
+          if (day) lastDay = day;
           // A turn begins at each of the owner's messages: a rule above it, none above the first (decision 51).
           return (
             <div key={r.key} class={i > 0 && !r.run && e.kind === "user" ? "turn" : undefined}>
+              {at !== undefined && <Stamp at={at} mine={e.kind === "user"} day={newDay} />}
               {r.run ? <RunView steps={r.ids.map((id) => get(id)!)} entries={entries} ctx={ctx} render={renderEntry} /> : renderRow(e)}
             </div>
           );

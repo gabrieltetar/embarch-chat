@@ -175,6 +175,12 @@
             "default": true,
             "scope": "machine",
             "description": "The Haiku assistant at the input: ghost text, the 💡 cards, reply chips and naming each chat (one stripped `claude -p --model haiku` call each, about $0.002). Off, only the CLI's own suggestion and the instant prefix match over your past prompts remain. User or Remote settings only — a workspace cannot turn it on."
+          },
+          "embarchChat.showMessageTimestamps": {
+            "type": "boolean",
+            "default": false,
+            "scope": "machine",
+            "description": "Show the time above each of your messages and Claude's replies, to the second, with a date line where the day changes — to line a turn up against a serial log or a trace (decision 68). User or Remote settings only."
           }
         }
       },

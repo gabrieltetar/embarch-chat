@@ -35,6 +35,8 @@ export interface ChatView {
   uiUrl: string;
   /** The chat's repo's atlas, for citation links (decision 16); null without one. */
   atlas: { docs: string[]; boards: string[] } | null;
+  /** The time above each message, with a date line where the day changes (decision 68): embarchChat.showMessageTimestamps. */
+  timestamps?: boolean;
 }
 
 export type HostToChat =

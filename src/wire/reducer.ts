@@ -23,18 +23,22 @@ export interface UserEntry {
   held?: boolean;
   /** Held, then not sent: the compaction was stopped or failed; its text went back to the draft. */
   unsent?: boolean;
+  /** When it was sent, ms since the epoch (decision 68): the panel's clock, else the CLI's. */
+  at?: number;
 }
 export interface TextEntry {
   kind: "text";
   id: string;
   text: string;
   parent: string | null;
+  at?: number;
 }
 export interface ThinkingEntry {
   kind: "thinking";
   id: string;
   text: string;
   parent: string | null;
+  at?: number;
 }
 export interface ToolEntry {
   kind: "tool";
@@ -50,6 +54,9 @@ export interface ToolEntry {
   children: string[];
   progress?: string;
   background?: boolean;
+  /** When the call came and when its result did (decision 68). */
+  at?: number;
+  doneAt?: number;
 }
 export interface NoteEntry {
   kind: "note";
@@ -111,6 +118,8 @@ export interface ChatState {
   lastTurn: { ok: boolean; subtype: string; error?: string } | null;
   /** The account's latest usage limit as the CLI reported it (decision 67). */
   rateLimit: RateLimitInfo | null;
+  /** When the CLI last wrote a line, or the owner last sent one: the "Not responding" clock (decision 68). */
+  lastLineAt: number | null;
   seq: number;
 }
 
@@ -138,6 +147,7 @@ export function initialState(sessionId: string, mode = "auto"): ChatState {
     context: null,
     lastTurn: null,
     rateLimit: null,
+    lastLineAt: null,
     seq: 0,
   };
 }
@@ -173,6 +183,17 @@ function formOf(toolName: string): Pending["form"] {
   if (toolName === "AskUserQuestion") return "question";
   if (toolName === "ExitPlanMode") return "plan";
   return "permission";
+}
+
+/**
+ * When a line was written, ms since the epoch (decision 68): the CLI's own
+ * `timestamp` (user and assistant lines, live and in a transcript), else the
+ * host's arrival time, `_at`, which chat.ts stamps on every live line.
+ */
+function stamp(o: WireMessage): number | undefined {
+  const t = typeof o.timestamp === "string" ? Date.parse(o.timestamp) : NaN;
+  if (Number.isFinite(t)) return t;
+  return typeof o._at === "number" ? o._at : undefined;
 }
 
 /** What waits on the owner, from one of the CLI's requests `answerable` takes (decision 66). */
@@ -292,6 +313,7 @@ function foldAssistant(s: ChatState, o: WireMessage): ChatState {
   if (!msg || !Array.isArray(msg.content)) return s;
   const parent = (o.parent_tool_use_id as string | null | undefined) ?? null;
   const msgId = msg.id ?? `m:${s.seq}`;
+  const at = stamp(o);
   for (const b of msg.content) {
     const sig =
       b.type === "tool_use" ? `${msgId}#u:${(b as { id: string }).id}` : `${msgId}#${b.type}:${hash(String((b as { text?: string; thinking?: string }).text ?? (b as { thinking?: string }).thinking ?? ""))}`;
@@ -305,14 +327,14 @@ function foldAssistant(s: ChatState, o: WireMessage): ChatState {
     }
     if (b.type === "text") {
       const text = (b as { text: string }).text;
-      if (text.trim()) s = put(s, { kind: "text", id: `${msgId}:${n}`, text, parent }, parent);
+      if (text.trim()) s = put(s, { kind: "text", id: `${msgId}:${n}`, text, parent, at }, parent);
     } else if (b.type === "thinking") {
       const text = (b as { thinking: string }).thinking ?? "";
-      if (text.trim()) s = put(s, { kind: "thinking", id: `${msgId}:${n}`, text, parent }, parent);
+      if (text.trim()) s = put(s, { kind: "thinking", id: `${msgId}:${n}`, text, parent, at }, parent);
     } else if (b.type === "tool_use") {
       const t = b as { id: string; name: string; input: Record<string, unknown> };
       if (!s.entries[t.id]) {
-        s = put(s, { kind: "tool", id: t.id, name: t.name, input: t.input ?? {}, parent, status: "running", children: [] }, parent);
+        s = put(s, { kind: "tool", id: t.id, name: t.name, input: t.input ?? {}, parent, status: "running", children: [], at }, parent);
       }
     }
   }
@@ -334,6 +356,7 @@ function foldUser(s: ChatState, o: WireMessage): ChatState {
         status: r.is_error ? (t.status === "denied" ? "denied" : "error") : "done",
         result: resultText(r.content),
         structured: structured ?? t.structured,
+        doneAt: stamp(o) ?? t.doneAt,
       }));
     }
     if ((content as ContentBlock[]).every((b) => b.type === "tool_result")) return s;
@@ -361,7 +384,7 @@ function foldUser(s: ChatState, o: WireMessage): ChatState {
     return e?.kind === "user" && e.pending && e.text.trim() === text.trim();
   });
   if (mine) return confirm(s, mine);
-  return put(s, { kind: "user", id: (o.uuid as string) ?? `u:${s.seq}`, text, images }, null);
+  return put(s, { kind: "user", id: (o.uuid as string) ?? `u:${s.seq}`, text, images, at: stamp(o) }, null);
 }
 
 function foldSystem(s: ChatState, o: WireMessage): ChatState {
@@ -451,6 +474,8 @@ export function liveBlocks(s: ChatState): StreamBlock[] {
 
 export function reduce(s: ChatState, o: WireMessage): ChatState {
   s = { ...s, seq: s.seq + 1 };
+  // A live line from the CLI: the "Not responding" clock starts again (68).
+  if (typeof o._at === "number" && !o.type.startsWith("_")) s.lastLineAt = o._at;
   switch (o.type) {
     case "assistant":
       return foldAssistant(s, o);
@@ -516,12 +541,15 @@ export function reduce(s: ChatState, o: WireMessage): ChatState {
       return n;
     }
     // ---- the host's own events
-    case "_sent":
+    case "_sent": {
+      // Sent: the time above it, and the "Not responding" clock starts (68).
+      const at = typeof o.at === "number" ? o.at : undefined;
       return put(
-        { ...s, busy: true, unconfirmed: [...(s.unconfirmed ?? []), `s:${o.n}`] },
-        { kind: "user", id: `s:${o.n}`, text: String(o.text ?? ""), images: Number(o.images ?? 0), pending: true, ...(o.held ? { held: true } : {}) },
+        { ...s, busy: true, unconfirmed: [...(s.unconfirmed ?? []), `s:${o.n}`], ...(at !== undefined ? { lastLineAt: at } : {}) },
+        { kind: "user", id: `s:${o.n}`, text: String(o.text ?? ""), images: Number(o.images ?? 0), pending: true, ...(o.held ? { held: true } : {}), ...(at !== undefined ? { at } : {}) },
         null,
       );
+    }
     case "_process":
       return {
         ...s,

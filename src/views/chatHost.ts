@@ -116,6 +116,12 @@ export class ChatHost implements vscode.Disposable {
     ctx.assistant.on("chips", this.onChips);
     ctx.history.on("changed", this.onPrompts);
     this.subs.push(webview.onDidReceiveMessage((m: ChatToHost) => void this.onMessage(m)));
+    // The times above messages come and go with their setting (68).
+    this.subs.push(
+      vscode.workspace.onDidChangeConfiguration((e) => {
+        if (e.affectsConfiguration("embarchChat.showMessageTimestamps")) this.snapshot();
+      }),
+    );
   }
 
   /** A viewer that became the owner's changes how it renders. */
@@ -158,6 +164,7 @@ export class ChatHost implements vscode.Disposable {
           const a = atlasInfo(rec.chat.opts.cwd || rec.chat.state.cwd || "");
           return a ? { docs: a.docs, boards: a.boards } : null;
         })(),
+        timestamps: vscode.workspace.getConfiguration("embarchChat").get<boolean>("showMessageTimestamps", false),
       },
       header: this.header(),
       warning: this.ctx.warning(),

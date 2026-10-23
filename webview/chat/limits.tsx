@@ -4,20 +4,10 @@
 // the limit changes. A turn that hits the limit mid-flash leaves the board
 // in an unknown state: the banner shows it before a long one starts.
 
-import { useEffect, useState } from "preact/hooks";
+import { useState } from "preact/hooks";
 import type { RateLimitInfo } from "../../src/wire/types";
 import { limitBanner } from "../../src/wire/limits";
-
-/** The time now, the component drawn again every `ms` while `on`. */
-export function useNow(ms: number, on = true): number {
-  const [, tick] = useState(0);
-  useEffect(() => {
-    if (!on) return;
-    const t = setInterval(() => tick((n) => n + 1), ms);
-    return () => clearInterval(t);
-  }, [ms, on]);
-  return Date.now();
-}
+import { useNow } from "./clock";
 
 /** Banners the owner closed, by limit, for the page's life. */
 const dismissed = new Set<string>();

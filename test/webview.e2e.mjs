@@ -1170,6 +1170,45 @@ await check("the usage-limit banner: nothing while allowed; from 70 % the percen
   assert.deepEqual(await text(".limit-banner.err span"), ["Usage limit reached · session limit resets in 2h"]);
 });
 
+// Decision 68: time on screen.
+const ago = (ms) => new Date(Date.now() - ms).toISOString();
+
+await check("times above messages: none by default; with the setting, the owner's at the right and Claude's at the left, to the second, a date line where the day changes", async () => {
+  const first = "Run the bash command `echo hello-from-bash` and then reply with just: done";
+  // Sent the day before the recorded replies: a date line at the first time, and one where the day changes.
+  const turn = [{ t: "event", e: { type: "_sent", n: 1, text: first, at: Date.parse("2026-10-23T06:20:38.000Z") - 86_400_000 } }, ...events(outLines("basic"))];
+  await send([snapshot(), ...turn]);
+  assert.deepEqual(await text(".stamp"), [], "off by default");
+  await send([snapshot({}, { ...OURS, timestamps: true }), ...turn]);
+  const stamps = await exec("return [...document.querySelectorAll('.stamp')].map(e => [e.textContent, e.classList.contains('mine'), e.title, getComputedStyle(e).alignSelf])");
+  assert.deepEqual(stamps.map((x) => x[1]), [true, false, true, false], "the owner's two messages and Claude's two replies");
+  for (const [t, , title] of stamps) {
+    assert.match(t, /^\d\d:\d\d:\d\d$/);
+    assert.match(title, /^2026-10-2\d \d\d:\d\d:\d\d\.\d{3}$/);
+  }
+  assert.equal(stamps[0][3], "flex-end", "over the owner's bubble");
+  assert.deepEqual((await text(".day-line")).length, 2, "the first day, then the next");
+  assert.equal(await exec("return document.querySelector('.tool .elapsed')"), null, "a quick step shows no time");
+  await shot("timestamps");
+});
+
+await check("a running step counts its time, and a long one keeps how long it took; Not responding after a minute with no line and no tool running", async () => {
+  await send([snapshot({ busy: true, lastLineAt: Date.now() - 61_000 }), sent("flash it")]);
+  assert.deepEqual(await text(".status-line .stalled"), [" Not responding"]);
+  assert.match(await exec("return document.querySelector('.status-line .stalled').title"), /^No word from Claude Code for 1m 0\ds, and no tool is running$/);
+  await shot("not-responding");
+  await send([{ t: "event", e: { type: "stream_event", event: { type: "message_start", message: { id: "m9" } }, _at: Date.now() } }]);
+  assert.deepEqual(await text(".status-line .stalled"), [], "a line came: Working… again");
+
+  await send([snapshot({ busy: true, lastLineAt: Date.now() - 75_000 }), sent("flash it")]);
+  await send([{ t: "event", e: { type: "assistant", message: { id: "m8", content: [{ type: "tool_use", id: "t8", name: "Bash", input: { command: "west flash", description: "Flash the board" } }] }, timestamp: ago(75_000) } }]);
+  assert.deepEqual(await text(".status-line .stalled"), [], "a long flash is not a stuck CLI");
+  assert.match((await text(".tool .elapsed"))[0], /^1m 1[5-7]s$/);
+  await shot("step-running");
+  await send([{ t: "event", e: { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t8", content: "flashed" }] }, timestamp: ago(1_000) } }]);
+  assert.match((await text(".tool .elapsed"))[0], /^1m 1[3-5]s$/, "done: how long it took");
+});
+
 await check("reply chips after a turn: a click sends it; the handoff's chip asks for a fresh chat", async () => {
   const sid = await fresh();
   const chips = [

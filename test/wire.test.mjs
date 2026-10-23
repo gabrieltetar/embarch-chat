@@ -858,3 +858,59 @@ test("the account's usage limit rides an ordinary turn: folded as reported, and 
   assert.equal(core.limitBanner(grace, false, now).text, "Usage limit reached · session limit resets in 2h");
   assert.equal(core.limitBanner(line({ status: "allowed", rateLimitType: "five_hour" }), true, now), null, "allowed again: gone");
 });
+
+// ---- time on screen (decision 68)
+
+test("times: the owner's message by the panel's clock, Claude's by the CLI's own timestamps, a step's start and end", async () => {
+  const { chat, events } = makeChat("basic");
+  const t0 = Date.now();
+  chat.send("Run the bash command `echo hello-from-bash` and then reply with just: done");
+  await turns(chat, 1);
+  const s = chat.state;
+  const [user] = entries(s, "user");
+  assert.ok(user.at >= t0 && user.at <= Date.now(), "sent now, not when the CLI echoed it");
+  const bash = entries(s, "tool")[0];
+  assert.deepEqual([bash.at, bash.doneAt], [Date.parse("2026-10-23T06:20:39.467Z"), Date.parse("2026-10-23T06:20:39.581Z")]);
+  assert.equal(entries(s, "text")[0].at, Date.parse("2026-10-23T06:20:39.953Z"));
+  // Every live line carries its arrival, and restarts the "Not responding" clock.
+  const wire = events.filter((e) => !e.type.startsWith("_"));
+  assert.ok(wire.length > 5 && wire.every((e) => typeof e._at === "number"));
+  assert.equal(s.lastLineAt, wire.at(-1)._at);
+  chat.dispose();
+});
+
+test("a transcript's messages keep their times", () => {
+  const lines = fs.readFileSync(path.join(here, "fixtures", "transcripts", "9508f515-9746-4b6f-b73a-b9780a28f8a4.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  const s = core.reduceAll(core.initialState("9508f515-9746-4b6f-b73a-b9780a28f8a4"), lines);
+  const shown = top(s).filter((e) => e.kind === "user" || e.kind === "text");
+  assert.ok(shown.length >= 2);
+  for (const e of shown) assert.ok(Number.isFinite(e.at), `${e.kind} has its time`);
+  assert.equal(shown[0].at, Date.parse("2026-10-23T06:21:56.687Z"));
+});
+
+test("Not responding: a minute without a line while the turn runs, nothing waits on the owner and no tool of this turn runs", () => {
+  const now = 1_800_000_000_000;
+  const base = core.reduceAll(core.initialState("s"), [
+    { type: "_process", state: "running" },
+    { type: "assistant", message: { id: "m0", content: [{ type: "tool_use", id: "old", name: "Bash", input: {} }] } },
+    { type: "_sent", n: 1, text: "flash it", images: 0, at: now - 61_000 },
+  ]);
+  assert.equal(core.stalled(base, now), true, "61 s quiet; the earlier turn's unfinished step does not count");
+  assert.equal(core.stalled(base, now - 2_000), false, "59 s");
+  const flashing = core.reduce(base, { type: "assistant", message: { id: "m1", content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "west flash" } }] } });
+  assert.equal(core.stalled(flashing, now), false, "a long flash is not a stuck CLI");
+  const done = core.reduce(flashing, { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] } });
+  assert.equal(core.stalled(done, now), true, "the flash ended and nothing came since");
+  assert.equal(core.stalled(core.reduce(done, { type: "stream_event", event: { type: "message_start" }, _at: now - 1_000 }), now), false, "a line restarts the clock");
+  const asked = core.reduce(done, { type: "control_request", request_id: "r", request: { subtype: "can_use_tool", tool_name: "Bash", input: {} } });
+  assert.equal(core.stalled(asked, now), false, "waiting on the owner");
+  assert.equal(core.stalled(core.reduce(done, { type: "result", subtype: "success" }), now), false, "the turn ended");
+});
+
+test("a step's time reads 8s, 3m 04s, 1h 02m; a message's to the second", () => {
+  assert.deepEqual([core.elapsedText(8_400), core.elapsedText(184_000), core.elapsedText(3_720_000)], ["8s", "3m 04s", "1h 02m"]);
+  const t = new Date(2026, 9, 23, 9, 5, 7, 42).getTime();
+  assert.deepEqual([core.clockTime(t), core.fullTime(t), core.dayKey(t)], ["09:05:07", "2026-10-23 09:05:07.042", "2026-10-23"]);
+  assert.equal(core.dayLine(t, t), "Fri, Oct 23");
+  assert.equal(core.dayLine(t, new Date(2027, 0, 2).getTime()), "Fri, Oct 23, 2026");
+});

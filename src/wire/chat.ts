@@ -180,6 +180,8 @@ export class Chat extends EventEmitter {
     this.dispatch({ type: "_process", state: "starting" });
     proc.on("message", (o: WireMessage) => {
       if (this.proc !== proc) return;
+      // When it came, on the host's clock: the pages fold the same time (decision 68).
+      o._at = Date.now();
       if (this.state.process !== "running") this.dispatch({ type: "_process", state: "running" });
       // A request nothing here can show is refused at once, never left to wait (decision 66).
       if (o.type === "control_request" && !answerable(o.request as { subtype?: string } | undefined)) {
@@ -262,7 +264,7 @@ export class Chat extends EventEmitter {
     const content: unknown[] | string = images.length
       ? [...images.map((i) => ({ type: "image", source: { type: "base64", media_type: i.mediaType, data: i.data } })), { type: "text", text }]
       : text;
-    this.dispatch({ type: "_sent", n: ++this.sent, text, images: images.length });
+    this.dispatch({ type: "_sent", n: ++this.sent, text, images: images.length, at: Date.now() });
     this.deliver(content);
     this.touch();
   }
@@ -288,7 +290,7 @@ export class Chat extends EventEmitter {
     this.compactRan = false;
     const n = ++this.sent;
     this.heldEntry = `s:${n}`;
-    this.dispatch({ type: "_sent", n, text: rest, images: 0, held: true });
+    this.dispatch({ type: "_sent", n, text: rest, images: 0, held: true, at: Date.now() });
   }
 
   /**
