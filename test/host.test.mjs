@@ -3,7 +3,9 @@
 // (EMBARCH_DESK_BIN) and the fake `claude` replaying recorded sessions: a
 // chat started from the + is assigned on the desk before claude runs, its
 // stream reaches the chat webview, Start work's mailbox entry starts a chat
-// with its prompt, and a waiting chat shows as a count.
+// with its prompt, and a waiting chat shows as a count. The assistant's
+// Haiku calls are replayed too (test/fixtures/haiku/), and the owner's
+// past prompts come from a scratch CLAUDE_CONFIG_DIR, never the real one.
 
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -49,6 +51,12 @@ before(async () => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "embarch-chat-host-"));
   for (const d of ["data", "config", "work"]) fs.mkdirSync(path.join(dir, d));
   folder = path.join(dir, "work");
+  // A scratch Claude config: one transcript with one prompt of the "owner's".
+  const projects = path.join(dir, "claude", "projects", "-work-x");
+  fs.mkdirSync(projects, { recursive: true });
+  fs.writeFileSync(path.join(projects, "33333333-0000-4000-8000-000000000001.jsonl"), JSON.stringify({ type: "user", origin: { kind: "human" }, timestamp: new Date().toISOString(), message: { role: "user", content: "continue with the widget" } }) + "\n");
+  process.env.CLAUDE_CONFIG_DIR = path.join(dir, "claude");
+  process.env.FAKE_CLAUDE_ARGS_LOG = path.join(dir, "args.jsonl");
   desk = spawn(BIN, ["serve"], {
     env: { ...process.env, EMBARCH_DESK_DATA_DIR: path.join(dir, "data"), EMBARCH_DESK_CONFIG_DIR: path.join(dir, "config"), EMBARCH_DESK_PORT: String(PORT) },
     stdio: "ignore",
@@ -82,6 +90,8 @@ after(() => {
   for (const d of context?.subscriptions ?? []) d.dispose?.();
   desk?.kill();
   if (dir) fs.rmSync(dir, { recursive: true, force: true });
+  delete process.env.CLAUDE_CONFIG_DIR;
+  delete process.env.FAKE_CLAUDE_ARGS_LOG;
   Module._load = load;
 });
 
@@ -184,4 +194,113 @@ test("a terminal session in this folder lists read-only, and Jump asks Claude Co
   chatView.webview.fromPage({ t: "send", text: "should not run" });
   await new Promise((r) => setTimeout(r, 200));
   assert.ok(!chatView.webview.posted.some((m) => m.t === "event" && m.e.type === "_sent" && m.e.text === "should not run"), "a live foreign thread takes no input here");
+});
+
+// ------------------------------------------------------------ the assistant and the library
+
+const posted = (pred, v = chatView) => [...v.webview.posted].reverse().find(pred);
+const calls = () => fs.readFileSync(process.env.FAKE_CLAUDE_ARGS_LOG, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+const haikuAnswer = (name) =>
+  core.parseObject(
+    fs
+      .readFileSync(path.join(here, "fixtures", "haiku", `${name}.jsonl`), "utf8")
+      .split("\n")
+      .filter((l) => l.trim())
+      .map((l) => JSON.parse(l))
+      .find((e) => e.o.type === "result").o.result,
+  );
+
+async function startUntracked(fixture) {
+  process.env.FAKE_CLAUDE_FIXTURE = path.join(here, "fixtures", "wire", `${fixture}.jsonl`);
+  const before = lastSnapshot()?.state.sessionId;
+  mock.state.quickPick = async (items) => items.find((i) => i.label.includes("Untracked"));
+  await mock.state.commands.get("embarchChat.newChat")();
+  return waitFor(() => {
+    const s = lastSnapshot();
+    return s && s.state.sessionId !== before && s.header?.untracked && s.state.sessionId;
+  }, 5000, "the new chat");
+}
+
+test("the chat page gets the library and the owner's past prompts", { skip }, async () => {
+  const lib = await waitFor(() => posted((m) => m.t === "library"), 3000, "the library");
+  assert.deepEqual(lib.entries.map((e) => e.name).sort(), ["build-flash-verify", "embarch-claude-md", "embarch-permissions"]);
+  assert.equal(lib.assistant, true);
+  const pr = await waitFor(() => posted((m) => m.t === "prompts" && m.items.length), 8000, "the past prompts");
+  assert.deepEqual(pr.items.map((p) => [p.text, p.n]), [["continue with the widget", 1]]);
+});
+
+test("after a new chat's first turn on screen: the CLI's guess with Haiku's chips, and a name", { skip }, async () => {
+  const sid = await startUntracked("suggest");
+  const before = calls().length;
+  chatView.webview.fromPage({ t: "send", text: "I am setting up a small Node project in this folder. Run `echo setup` with bash, then suggest what I should do first, in two sentences." });
+  const chips = await waitFor(() => {
+    const m = posted((x) => x.t === "chips" && x.sid === sid);
+    return m && m.chips.some((c) => c.source === "cli") && m.chips.some((c) => c.source === "haiku") && m.chips;
+  }, 8000, "the chips");
+  assert.equal(chips[0].text, "npm init -y", "the CLI's own guess among them");
+  assert.ok(chips.length >= 3 && chips.length <= 4);
+  const name = core.parseTurn(haikuAnswer("turn")).name;
+  await waitFor(() => posted((m) => m.t === "event" && m.e.type === "_title" && m.e.title === name), 5000, "the name");
+  const turn = calls().slice(before).filter((c) => c.task === "turn");
+  assert.equal(turn.length, 1, "one call for chips and name together");
+  assert.equal(turn[0].env.EMBARCH_DESK_INTERNAL, "1");
+  assert.ok(turn[0].prompt.includes('"npm init -y"') || !turn[0].prompt.includes("Claude Code itself guessed"), "the CLI's guess, when it came first, is in the prompt");
+  // The next message spends them.
+  chatView.webview.fromPage({ t: "send", text: "Now run `ls` and tell me how many files there are." });
+  await waitFor(() => posted((m) => m.t === "chips" && m.sid === sid)?.chips.length === 0, 3000, "the chips cleared");
+});
+
+test("the page asks for ghost text and cards; the host streams Haiku's answers back", { skip }, async () => {
+  const n = chatView.webview.posted.length;
+  chatView.webview.fromPage({ t: "assist", kind: "ghost", text: "now flash it on the", seq: 701 });
+  const done = await waitFor(() => posted((m) => m.t === "ghost" && m.seq === 701 && m.done), 5000, "the ghost text");
+  const partial = chatView.webview.posted.slice(n).filter((m) => m.t === "ghost" && m.seq === 701 && !m.done);
+  assert.ok(partial.length >= 2, "streamed");
+  assert.equal(done.text, haikuAnswer("ghost").completion);
+  chatView.webview.fromPage({ t: "assist", kind: "cards", text: "fix the flash thing", seq: 702 });
+  const c = await waitFor(() => posted((m) => m.t === "cards" && m.seq === 702), 5000, "the cards");
+  assert.ok(c.cards.length >= 1);
+  const ghostCall = calls().filter((x) => x.task === "ghost").at(-1);
+  for (const s of ["<draft>now flash it on the</draft>", "<claude_last_reply>", "<library_commands>"]) assert.ok(ghostCall.prompt.includes(s), s);
+});
+
+test("the compact card's draft: the host sends its /compact line, then the rest after the compaction", { skip }, async () => {
+  await startUntracked("compact");
+  const m0 = chatView.webview.posted.length;
+  chatView.webview.fromPage({ t: "send", text: "@note.txt what is the secret? One word." });
+  await waitFor(() => chatView.webview.posted.slice(m0).some((m) => m.t === "event" && m.e.type === "result"), 5000, "the first turn");
+  const n = chatView.webview.posted.length;
+  chatView.webview.fromPage({ t: "send", text: "/compact focus on: the secret word in note.txt\nWhat was the secret word? One word." });
+  await waitFor(() => chatView.webview.posted.slice(n).filter((m) => m.t === "event" && m.e.type === "result").length >= 2, 8000, "the compaction and the turn after it");
+  const sent = chatView.webview.posted.slice(n).filter((m) => m.t === "event" && m.e.type === "_sent").map((m) => [m.e.text, !!m.e.held]);
+  assert.deepEqual(sent, [
+    ["/compact focus on: the secret word in note.txt", false],
+    ["What was the secret word? One word.", true],
+  ]);
+  assert.ok(chatView.webview.posted.slice(n).some((m) => m.t === "event" && m.e.subtype === "compact_boundary"));
+});
+
+test("a turn that wrote a handoff offers a fresh chat; the chip starts one on the same item with it", { skip }, async () => {
+  const { id: item } = await client.call("POST", "/items", { title: "ABC-125 hand it over", desk: "none" });
+  await mock.state.commands.get("embarchChat.refresh")();
+  process.env.FAKE_CLAUDE_FIXTURE = path.join(here, "fixtures", "wire", "handoff.jsonl");
+  mock.state.quickPick = async (items) => items.find((i) => i.label.includes("ABC-125 hand it over"));
+  await mock.state.commands.get("embarchChat.newChat")();
+  const sid = await waitFor(() => lastSnapshot()?.header?.itemId === item && lastSnapshot().state.sessionId, 5000, "the chat on the item");
+  chatView.webview.fromPage({ t: "send", text: "Read note.txt and tell me the secret in one word." });
+  await waitFor(() => posted((m) => m.t === "chips" && m.sid === sid && m.chips.length), 8000, "the first turn's chips");
+  chatView.webview.fromPage({ t: "send", text: core.handoffRequest("Next: write the secret into a file named answer.txt."), handoff: true });
+  const chips = await waitFor(() => posted((m) => m.t === "chips" && m.sid === sid && m.chips.some((c) => c.action === "freshChat"))?.chips, 8000, "the handoff chip");
+  assert.equal(chips[0].text, "Fresh chat with this handoff");
+  chatView.webview.fromPage({ t: "freshChat" });
+  const snap = await waitFor(() => {
+    const s = lastSnapshot();
+    return s && s.state.sessionId !== sid && s.header?.itemId === item && s;
+  }, 5000, "the fresh chat");
+  const first = await waitFor(() => posted((m) => m.t === "event" && m.e.type === "_sent"), 3000, "its first message");
+  assert.match(first.e.text, /^# Handoff/);
+  assert.ok(!first.e.text.includes("```"));
+  const v = await client.view();
+  assert.equal(v.sessions.find((x) => x.session_id === snap.state.sessionId)?.item_id, item, "on the same work item");
+  assert.ok(lastGroups().groups.some((g) => g.threads.some((t) => t.sessionId === sid)), "the old one stays in the list");
 });

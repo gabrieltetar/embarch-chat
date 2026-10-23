@@ -51,14 +51,56 @@ whose decision numbers the code cites.
   in the board's nets or parts.
 - `claude --version` outside the tested range (2.1.287–2.1.308) shows a
   one-line warning and keeps working.
+- **The Haiku assistant at the input**, for the chat on screen only, in
+  three waves: at once, typing through the ghost text shown and a prefix
+  match over your own prompts of the last 30 days (read from Claude Code's
+  transcripts at runtime, kept in memory only); after a 300 ms pause,
+  Haiku's ghost text, streamed — Tab takes it; after a 2 s pause, or just
+  before a longer draft goes, Haiku's cards behind the 💡, one submenu per
+  kind: missing context, improvements, context handling. **Every card is an
+  edit to the draft**: hovering previews it in place (added words grey,
+  removed ones struck through), a click applies it, Ctrl+Z restores. The
+  compact card adds `/compact focus on: …` as a first line, and Enter sends
+  that, waits for the compaction, then sends the rest; the handoff card
+  turns the draft into a request for a handoff; the background card asks
+  for a background subagent. The next keystroke cancels a stale call.
+- **Reply chips after each turn**: two to four, Claude Code's own guess
+  (`--prompt-suggestions`) among them; a click sends one. After a turn that
+  wrote a handoff, **Fresh chat with this handoff** starts a new chat on the
+  same work item with it. **Haiku names each new chat** after its first turn
+  (`rename_session`, so Claude Code's own history shows the name too).
+- Each assistant call is one stripped `claude -p --model haiku` (thinking
+  off, no tools, no MCP, no settings, unsaved, streamed, the prompt on
+  stdin, `EMBARCH_DESK_INTERNAL=1`), about $0.002; it sees the draft,
+  Claude's last reply, the work item's card, the library's names and the
+  context usage. The calls and their cost are in the log.
+- **The 📚 library** beside the 💡: this repo's own plugin (`plugin/`) and
+  your `~/.claude/commands`, one submenu per `category:` in each entry's
+  frontmatter (none is Other); a click puts `/<name> ` at the head of the
+  draft, as the session knows it (`/embarch-chat:<name>` for the plugin's).
+  `/` completes them too.
 
 The desk is called from the extension's Node side only, on
 `127.0.0.1:4891` with the token in `~/.config/embarch-desk/desk-token`;
 **the webviews never hold the token**.
 
-Not in this version: the Haiku assistant (ghost text, the 💡 cards, reply
-chips, naming chats — Claude's own `ai-title` names them meanwhile) and the
-📚 library menu. `src/seams.ts` is where they plug in.
+## The library's plugin
+
+`plugin/` is a Claude Code plugin — the library's generic entries:
+`/embarch-permissions` and `/embarch-claude-md` (show what they would write
+into the open repo, and write it only on a yes) and the `build-flash-verify`
+skill (the build → flash → serial log → diagnose loop). The repo root is its
+marketplace (`.claude-plugin/marketplace.json`). An entry naming a client
+belongs in `~/.claude/commands`, never here. The extension ships a copy for
+the 📚, but a chat can run an entry only once the plugin is installed in
+Claude Code:
+
+```sh
+claude plugin marketplace add /path/to/embarch-chat
+claude plugin install embarch-chat@embarch-chat
+```
+
+Until then a started chat shows the plugin's entries greyed.
 
 ## Installing
 
@@ -82,6 +124,7 @@ old one while both are installed, and says so in its log).
 | `embarchChat.idleMinutes` | `5` | How long an idle chat's process lives. |
 | `embarchChat.deskUrl` | `"http://127.0.0.1:4891"` | The desk. |
 | `embarchChat.deskTokenPath` | `"~/.config/embarch-desk/desk-token"` | The desk's token. |
+| `embarchChat.assistant` | `true` | The Haiku assistant: ghost text, cards, chips, naming. Off, the instant prefix match and the CLI's own suggestion remain. |
 | `embarchUi.binaryPath` | `"embarch-ui"` | The embarch-ui binary the launcher starts. |
 | `embarchUi.host` / `embarchUi.port` | `127.0.0.1` / `4890` | Where embarch-ui serves (also the Desk link). |
 | `embarchUi.configPath` | `""` | An embarch-ui TOML config, as `EMBARCH_UI_CONFIG`. |
@@ -92,7 +135,7 @@ old one while both are installed, and says so in its log).
 ```sh
 npm run build        # esbuild: dist/extension.js, dist/webview/{chat,list}.{js,css}
 npm run typecheck
-npm test             # node --test: the wire, the desk client, the extension host
+npm test             # node --test: the wire, the assistant, the desk client, the extension host
 npm run test:webview # both webviews in headless Firefox over geckodriver
 ```
 
@@ -106,6 +149,13 @@ npm run test:webview # both webviews in headless Firefox over geckodriver
   without it. They never touch the live desk on :4891.
 - `node test/live.smoke.mjs <scratch-dir> [claude]` runs one real, stripped
   Haiku chat through the wire layer (about three cents).
+- **The assistant tests** replay real recorded Haiku calls
+  (`test/fixtures/haiku/`, by the prompt's `TASK:` line) through the same
+  fake. Record more with `node test/record-haiku.mjs <scratch-dir>
+  [scenario]` — neutral drafts and a made-up work item only, never your own
+  prompts — and scrub them with `test/sanitize.mjs`. The prompt history is
+  tested on synthetic transcripts; the host test points `CLAUDE_CONFIG_DIR`
+  at a scratch folder.
 
 ## Distribution
 

@@ -164,10 +164,11 @@ export class DeskService extends EventEmitter {
 
   rebuild(): void {
     // Claude names every session itself (an ai-title in the transcript); own
-    // chats show it until the assistant names them (decision 12).
+    // chats show it until the assistant names them (decision 12) — a name
+    // given here is not taken back by a transcript read before it.
     for (const p of this.past) {
       const rec = this.chats.get(p.sessionId);
-      if (rec?.ours && p.title && p.title !== rec.chat.state.title) rec.chat.noteTitle(p.title);
+      if (rec?.ours && !rec.chat.renamed && p.title && p.title !== rec.chat.state.title) rec.chat.noteTitle(p.title);
     }
     // Session ids the desk's view places on an item, for live sessions it lists without a title.
     for (const s of this.view?.sessions ?? []) {

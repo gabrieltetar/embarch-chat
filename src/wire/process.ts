@@ -20,7 +20,7 @@ export interface SpawnSpec {
   extraArgs?: string[];
 }
 
-/** The official panel's flags (proposal, "What is possible"), plus streaming. */
+/** The official panel's flags (proposal, "What is possible"), plus streaming and prompt suggestions. */
 export function claudeArgs(spec: SpawnSpec): string[] {
   const args = [
     "--input-format",
@@ -33,6 +33,8 @@ export function claudeArgs(spec: SpawnSpec): string[] {
     `--permission-mode=${spec.permissionMode}`,
     "--replay-user-messages",
     "--include-partial-messages",
+    // The CLI's own guess at the next prompt, one of the reply chips (decision 25).
+    "--prompt-suggestions",
   ];
   args.push(...(spec.resume ? [`--resume=${spec.sessionId}`] : ["--session-id", spec.sessionId]));
   if (spec.model) args.push("--model", spec.model);

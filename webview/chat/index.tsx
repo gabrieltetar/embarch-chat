@@ -9,6 +9,8 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { ChatState, Entry, chatStatus, liveBlocks, reduce } from "../../src/wire/reducer";
 import { Markdown } from "../shared/markdown";
 import type { ChatView, Header, HostToChat, MentionItem } from "../shared/protocol";
+import type { Chip, PastPrompt } from "../../src/assistant/edits";
+import type { LibraryEntry } from "../../src/library/entries";
 import { duration, vscodeApi } from "../shared/vscode";
 import { PendingCards } from "./cards";
 import { Composer } from "./composer";
@@ -135,6 +137,9 @@ function App() {
   const [model, setModel] = useState<Model>({ state: null, view: null, header: null, warning: null });
   const [empty, setEmpty] = useState(false);
   const [mentions, setMentions] = useState<{ q: string; items: MentionItem[] } | null>(null);
+  const [prompts, setPrompts] = useState<PastPrompt[]>([]);
+  const [library, setLibrary] = useState<{ entries: LibraryEntry[]; assistant: boolean }>({ entries: [], assistant: false });
+  const [chips, setChips] = useState<{ sid: string; chips: Chip[] } | null>(null);
   const live = useRef<ChatState | null>(null);
   const frame = useRef(0);
   const scroller = useRef<HTMLDivElement>(null);
@@ -173,6 +178,15 @@ function App() {
           return;
         case "mentions":
           setMentions({ q: m.q, items: m.items });
+          return;
+        case "prompts":
+          setPrompts(m.items);
+          return;
+        case "library":
+          setLibrary({ entries: m.entries, assistant: m.assistant });
+          return;
+        case "chips":
+          setChips({ sid: m.sid, chips: m.chips });
           return;
       }
     };
@@ -220,9 +234,10 @@ function App() {
     switch (e.kind) {
       case "user":
         return (
-          <div class={`user ${e.pending ? "pending" : ""}`} title={e.pending ? "Sent; Claude has not taken it yet" : undefined}>
+          <div class={`user ${e.pending ? "pending" : ""}`} title={e.pending ? (e.held ? "Sent once the compaction before it finishes" : "Sent; Claude has not taken it yet") : undefined}>
             {e.images ? <span class="muted">[{e.images} image{e.images > 1 ? "s" : ""}] </span> : null}
             {e.text}
+            {e.pending && e.held && <div class="held muted">after the compaction</div>}
           </div>
         );
       case "text":
@@ -302,9 +317,17 @@ function App() {
           slashCommands={state.slashCommands}
           placeholder={placeholder}
           mentions={mentions}
-          onSend={(text) => {
+          prompts={prompts}
+          library={library.entries}
+          assistant={library.assistant && view.ours}
+          chips={chips?.sid === state.sessionId && view.ours ? chips.chips : []}
+          onSend={(text, opts) => {
             stick.current = true;
-            post({ t: "send", text });
+            post({ t: "send", text, ...(opts.handoff ? { handoff: true } : {}) });
+          }}
+          onChip={(c) => {
+            stick.current = true;
+            post(c.action === "freshChat" ? { t: "freshChat" } : { t: "send", text: c.text });
           }}
         />
       )}

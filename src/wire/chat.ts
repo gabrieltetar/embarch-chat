@@ -6,7 +6,7 @@
 
 import { EventEmitter } from "events";
 import { ClaudeProcess, SpawnSpec, chatEnv } from "./process";
-import { ChatState, Pending, chatStatus, initialState, reduce } from "./reducer";
+import { ChatState, Pending, chatStatus, initialState, reduce, textOf } from "./reducer";
 import type { ContextUsage, PermissionDecision, WireMessage } from "./types";
 
 export interface ChatOptions {
@@ -29,10 +29,20 @@ export interface Attachment {
   data: string;
 }
 
+/** A line that says a /compact has run: its boundary, or its output (or error) as a local command. */
+function isCompactEnd(o: WireMessage): boolean {
+  if (o.type === "system" && o.subtype === "compact_boundary") return true;
+  if (o.type !== "user") return false;
+  const t = textOf((o.message as { content?: unknown } | undefined)?.content).trim();
+  return t.startsWith("<local-command-stdout>") || t.startsWith("<local-command-stderr>");
+}
+
 /**
  * Events: `event` (one folded line or host event, for webviews to fold too),
  * `status` (the list-visible status changed), `closed` (the process went
- * away), `turn` (a turn ended).
+ * away), `turn` (a turn ended: the result, and how many turns this chat has
+ * had in this window), `suggestion` (the CLI's own guess at the next prompt,
+ * decision 25).
  */
 export class Chat extends EventEmitter {
   state: ChatState;
@@ -44,6 +54,14 @@ export class Chat extends EventEmitter {
   private idleTimer: NodeJS.Timeout | undefined;
   private closing = false;
   private lastStatus: string;
+  /** The rest of a draft that waits for its /compact line's compaction to finish (decision 36). */
+  private held: string | null = null;
+  /** The held /compact has run (its boundary or its output came): the next result is its own. */
+  private compactRan = false;
+  /** Turns ended in this window, compactions aside: naming runs after the first (decision 12). */
+  turns = 0;
+  /** Named with rename_session here: Claude's own ai-title no longer applies. */
+  renamed = false;
 
   constructor(readonly opts: ChatOptions) {
     super();
@@ -104,11 +122,25 @@ export class Chat extends EventEmitter {
     proc.on("message", (o: WireMessage) => {
       if (this.proc !== proc) return;
       if (this.state.process !== "running") this.dispatch({ type: "_process", state: "running" });
+      if (o.type === "prompt_suggestion") {
+        if (typeof o.suggestion === "string") this.emit("suggestion", o.suggestion);
+        return;
+      }
       if ((o.type === "user" && o.isReplay) || o.type === "result") this.hasSession = true;
       this.dispatch(o);
+      if (this.held !== null && isCompactEnd(o)) this.compactRan = true;
       if (o.type === "result") {
         this.touch();
-        this.emit("turn", o);
+        if (this.held !== null && this.compactRan) {
+          // The compaction finished: now the rest of the draft.
+          const rest = this.held;
+          this.held = null;
+          this.compactRan = false;
+          proc.sendUser(rest);
+        } else {
+          this.turns++;
+          this.emit("turn", o, this.turns);
+        }
         void this.refreshContext();
       } else if (o.type === "system" && (o.subtype === "background_tasks_changed" || o.subtype === "task_notification")) {
         this.touch();
@@ -124,6 +156,12 @@ export class Chat extends EventEmitter {
     proc.on("exit", (info: { code: number | null; signal: string | null; stderr: string }) => {
       if (this.proc !== proc) return;
       const expected = this.closing;
+      if (this.held !== null && !expected) {
+        // Gone before the compaction ended: the rest goes to the resumed session.
+        const rest = this.held;
+        this.held = null;
+        setImmediate(() => this.ensureProcess().sendUser(rest));
+      }
       this.log(`exit ${info.code ?? info.signal}${expected ? " (idle close)" : ""}`);
       if (!expected && info.code) {
         this.dispatch({ type: "_process", state: "error", error: info.stderr.split("\n").slice(-3).join("\n") || `claude exited with ${info.code}` });
@@ -148,6 +186,18 @@ export class Chat extends EventEmitter {
     this.dispatch({ type: "_sent", n: ++this.sent, text, images: images.length });
     proc.sendUser(content);
     this.touch();
+  }
+
+  /**
+   * The compact card's draft (decision 36): its `/compact focus on: …` line
+   * goes first, and the rest once that compaction has finished — shown at
+   * once as a message waiting for it.
+   */
+  sendAfterCompact(compact: string, rest: string): void {
+    this.send(compact);
+    this.held = rest;
+    this.compactRan = false;
+    this.dispatch({ type: "_sent", n: ++this.sent, text: rest, images: 0, held: true });
   }
 
   answer(requestId: string, decision: PermissionDecision): void {
@@ -208,10 +258,13 @@ export class Chat extends EventEmitter {
     this.dispatch({ type: "_model", model });
   }
 
+  /** Names the session (`rename_session`), so Claude Code's own panel and history show it too (decision 12). */
   async rename(title: string): Promise<void> {
     if (!this.running) return;
     try {
       await this.proc!.request("rename_session", { title });
+      this.renamed = true;
+      this.noteTitle(title);
     } catch (e) {
       this.log(`rename: ${(e as Error).message}`);
     }
@@ -235,7 +288,7 @@ export class Chat extends EventEmitter {
     }
   }
 
-  /** Claude's own ai-title, read from the transcript, until the assistant names chats (decision 12). */
+  /** The session's name as the transcript or a rename has it (decision 12). */
   noteTitle(title: string): void {
     if (title && title !== this.state.title) this.dispatch({ type: "_title", title });
   }

@@ -408,6 +408,300 @@ await check("atlas citations become links when the repo has an atlas", async () 
   assert.equal((await text("a.cite")).length, 0, "no atlas, no links");
 });
 
+// ------------------------------------------------------------ the assistant and the library
+
+const haikuLines = (name) =>
+  fs
+    .readFileSync(path.join(here, "fixtures", "haiku", `${name}.jsonl`), "utf8")
+    .split("\n")
+    .filter((l) => l.trim())
+    .map((l) => JSON.parse(l))
+    .filter((e) => e.d === "out")
+    .map((e) => e.o);
+const haikuAnswer = (name) => core.parseObject(haikuLines(name).find((o) => o.type === "result").result);
+/** The ghost messages the host posts while the recorded call streams (assistant.ts). */
+const ghostStream = (name, seq, draft) => {
+  let text = "";
+  const out = [];
+  for (const o of haikuLines(name)) {
+    if (o.type !== "stream_event" || o.event?.delta?.type !== "text_delta") continue;
+    text += o.event.delta.text;
+    const p = core.partialCompletion(text);
+    if (p === null) continue;
+    const c = core.cleanCompletion(draft, p);
+    if (c && c !== out.at(-1)?.text) out.push({ t: "ghost", seq, text: c, done: false });
+  }
+  out.push({ t: "ghost", seq, text: core.cleanCompletion(draft, haikuAnswer(name).completion), done: true });
+  return out;
+};
+const LIBRARY = [...core.readLibrary(path.join(root, "plugin"), path.join(here, "fixtures", "none")), { name: "notes", category: "Other", source: "user", kind: "command", description: "A command of the owner's own" }];
+let sidN = 0;
+/** A fresh composer: its own session id, the assistant on or off. */
+const fresh = async (over = {}, assistant = true) => {
+  const sid = `22222222-0000-4000-8000-${String(++sidN).padStart(12, "0")}`;
+  await send([{ t: "library", entries: LIBRARY, assistant }, snapshot({ sessionId: sid, ...over })]);
+  await clearPosts();
+  return sid;
+};
+const textarea = async () => Object.values(await wd("POST", `${S}/element`, { using: "css selector", value: ".composer textarea" }))[0];
+const type = async (keys) => {
+  await wd("POST", `${S}/element/${await textarea()}/value`, { text: keys });
+  await settle();
+};
+const value = () => exec("return document.querySelector('.composer textarea').value");
+const ghostText = () => exec("const g=document.querySelector('.overlay .ghost'); return g ? g.textContent : null");
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const hover = async (sel, txt) => {
+  const id = await exec(
+    `const e=[...document.querySelectorAll(arguments[0])].find(x => !arguments[1] || x.textContent.includes(arguments[1])); if(!e) throw new Error('no '+arguments[0]); e.setAttribute('data-h','1'); return true;`,
+    [sel, txt ?? null],
+  );
+  const el = Object.values(await wd("POST", `${S}/element`, { using: "css selector", value: "[data-h='1']" }))[0];
+  await exec("document.querySelector(\"[data-h='1']\").removeAttribute('data-h')");
+  await wd("POST", `${S}/actions`, { actions: [{ type: "pointer", id: "mouse", parameters: { pointerType: "mouse" }, actions: [{ type: "pointerMove", duration: 0, origin: { "element-6066-11e4-a52e-4f735466cecf": el }, x: 0, y: 0 }] }] });
+  await settle();
+  return id;
+};
+const mouseAway = async () => {
+  await wd("POST", `${S}/actions`, { actions: [{ type: "pointer", id: "mouse", parameters: { pointerType: "mouse" }, actions: [{ type: "pointerMove", duration: 0, origin: "viewport", x: 5, y: 5 }] }] });
+  await settle();
+};
+const pick = (sel, txt) =>
+  exec(
+    `const e=[...document.querySelectorAll(arguments[0])].find(x => x.textContent.includes(arguments[1])); if(!e) throw new Error('no '+arguments[1]); e.dispatchEvent(new MouseEvent('mousedown', {bubbles:true, cancelable:true})); return true;`,
+    [sel, txt],
+  );
+const CTRL_Z = "z";
+const TAB = "";
+const ENTER = "";
+const lastAssist = async (kind) => (await posts()).filter((p) => p.t === "assist" && p.kind === kind).at(-1);
+
+await check("the instant wave: the owner's own past prompts complete the draft; typing through, Tab takes it", async () => {
+  await fresh({}, false);
+  await send([{ t: "prompts", items: [{ text: "continue with the next step", n: 4, lastMs: 1 }, { text: "commit it", n: 9, lastMs: 2 }] }]);
+  await type("con");
+  assert.equal(await ghostText(), "tinue with the next step");
+  await type("t");
+  assert.equal(await ghostText(), "inue with the next step", "typed through");
+  await shot("assist-ghost-local");
+  await type(TAB);
+  assert.equal(await value(), "continue with the next step");
+  assert.equal(await ghostText(), null);
+  await type(CTRL_Z);
+  assert.equal(await value(), "cont", "Ctrl+Z gives back what was typed");
+  await type("x");
+  assert.equal(await ghostText(), null, "no prompt starts so");
+  assert.ok(!(await posts()).some((p) => p.t === "assist"), "the assistant is off: no Haiku call");
+});
+
+await check("Haiku's ghost text after a 300 ms pause, streamed; Tab takes it; the next keystroke cancels a stale call", async () => {
+  await fresh();
+  await type("now flash it on the");
+  await sleep(150);
+  assert.equal(await lastAssist("ghost"), undefined, "not before the pause");
+  await sleep(300);
+  const ask = await lastAssist("ghost");
+  assert.equal(ask.text, "now flash it on the");
+  const stream = ghostStream("ghost", ask.seq, ask.text);
+  await send([stream[0]]);
+  assert.equal(await ghostText(), stream[0].text, "the first words show while it streams");
+  await send(stream.slice(1));
+  const final = stream.at(-1).text;
+  assert.equal(await ghostText(), final);
+  await send([{ t: "ghost", seq: ask.seq - 1, text: " something stale", done: true }]);
+  assert.equal(await ghostText(), final, "an answer to an older request is ignored");
+  await shot("assist-ghost-haiku");
+  await type(TAB);
+  assert.equal(await value(), "now flash it on the" + final);
+  // A call in flight, and a keystroke.
+  await clearPosts();
+  await type(" and");
+  await sleep(420);
+  assert.ok(await lastAssist("ghost"), "asked again after the pause");
+  await type(" x");
+  assert.ok((await posts()).some((p) => p.t === "assistCancel"), "cancelled by the next keystroke");
+});
+
+await check("the 💡 lights with Haiku's cards; hovering a card previews its edit in the draft; a click applies it; Ctrl+Z restores", async () => {
+  await fresh();
+  await type("fix the flash thing");
+  await sleep(2150);
+  const ask = await lastAssist("cards");
+  assert.equal(ask?.text, "fix the flash thing", "cards after a 2 s pause");
+  const cards = core.parseCards(haikuAnswer("cards"), ask.text, "w");
+  await send([{ t: "cards", seq: ask.seq, cards }]);
+  assert.equal(await exec("return document.querySelector('.bulb').classList.contains('lit')"), true);
+  assert.equal((await text(".bulb .count"))[0], String(cards.length));
+  await click(".bulb");
+  await settle();
+  const cats = await text(".menu.bulb .menu-cat .menu-label");
+  assert.deepEqual(cats, core.CATEGORIES.filter((c) => cards.some((x) => x.category === c.id)).map((c) => c.label));
+  const first = cards.find((c) => c.category === core.CATEGORIES.find((x) => x.label === cats[0]).id);
+  await hover(".menu.bulb .menu-item", first.title);
+  const after = core.applyEdit("fix the flash thing", first.edit);
+  const pv = await exec(
+    "const o=document.querySelector('.overlay'); return {previewing: document.querySelector('.composer textarea').classList.contains('previewing'), add: [...o.querySelectorAll('.add')].map(e=>e.textContent).join(''), del: [...o.querySelectorAll('.del')].map(e=>e.textContent).join(''), shown: [...o.children].filter(e=>!e.classList.contains('del')).map(e=>e.textContent).join('').replace(/\\u200b/g,'')}",
+  );
+  assert.equal(pv.previewing, true, "the draft shows the preview, not itself");
+  assert.ok(pv.add.length > 0, "added words in ghost grey");
+  assert.equal(pv.shown, after, "the preview reads as the edited draft");
+  assert.equal(await value(), "fix the flash thing", "nothing applied by a hover");
+  await shot("assist-card-preview");
+  await mouseAway();
+  assert.equal(await exec("return document.querySelector('.composer textarea').classList.contains('previewing')"), false);
+  await click(".bulb");
+  await settle();
+  await pick(".menu.bulb .menu-item", first.title);
+  await settle();
+  assert.equal(await value(), after, "applied");
+  assert.equal((await text(".menu.bulb")).length, 0, "the menu closes");
+  await type(CTRL_Z);
+  assert.equal(await value(), "fix the flash thing", "Ctrl+Z restores the draft");
+});
+
+await check("the compact card adds /compact focus on: …; Enter sends the draft and the rest waits for the compaction", async () => {
+  const draft = "the widget is done. next, move on to the UART driver: add a ring buffer for RX and a test for it";
+  const sid = await fresh({ context: { totalTokens: 136000, maxTokens: 200000, percentage: 68, categories: [] } });
+  await exec("const t=document.querySelector('.composer textarea'); t.value=arguments[0]; t.dispatchEvent(new Event('input', {bubbles:true}))", [draft]);
+  await sleep(2150);
+  const ask = await lastAssist("cards");
+  const cards = core.parseCards(haikuAnswer("cards-compact"), draft, "k");
+  const compact = cards.find((c) => c.kind === "compact");
+  await send([{ t: "cards", seq: ask.seq, cards }]);
+  await click(".bulb");
+  await settle();
+  await hover(".menu.bulb .menu-cat", "Context handling");
+  await hover(".menu.bulb .menu-item", compact.title);
+  assert.match(await exec("return [...document.querySelectorAll('.overlay .add')].map(e=>e.textContent).join('')"), /\/compact focus on:/);
+  await pick(".menu.bulb .menu-item", compact.title);
+  await settle();
+  const v = await value();
+  assert.equal(v, core.applyEdit(draft, compact.edit));
+  assert.match(v.split("\n")[0], /^\/compact focus on: \S/);
+  await clearPosts();
+  await type(ENTER);
+  const sentP = (await posts()).find((p) => p.t === "send");
+  assert.equal(sentP?.text, v, "the whole draft goes to the host, which sends it in two");
+  const split = core.splitCompact(v);
+  // What the host then shows: the /compact line, and the rest held for the compaction.
+  await send([{ t: "event", e: { type: "_sent", n: 1, text: split.compact } }, { t: "event", e: { type: "_sent", n: 2, text: split.rest, held: true } }]);
+  assert.ok((await text(".user.pending .held"))[0]?.includes("after the compaction"));
+  await shot("assist-compact-held");
+  // The recorded compaction and turn after it, with this draft's words in place of the recording's.
+  const lines = outLines("compact");
+  const firstResult = lines.findIndex((o) => o.type === "result");
+  const rest = JSON.parse(JSON.stringify(lines.slice(firstResult + 1)).split("What was the secret word? One word.").join(split.rest.replace(/"/g, '\\"')));
+  await send(events(rest));
+  assert.ok((await text(".note.compact")).length === 1, "compacted");
+  assert.equal((await text(".user.pending")).length, 0, "both echoed back");
+  assert.equal(sid.length, 36);
+});
+
+await check("just before send: a long draft typed fast waits for its cards; the 💡 opens; Enter again sends it as it is", async () => {
+  await fresh();
+  const draft = "please also update the readme with the new flash steps";
+  await exec("const t=document.querySelector('.composer textarea'); t.value=arguments[0]; t.dispatchEvent(new Event('input', {bubbles:true}))", [draft]);
+  await type(ENTER);
+  let ps = await posts();
+  assert.ok(!ps.some((p) => p.t === "send"), "held");
+  const ask = ps.filter((p) => p.t === "assist" && p.kind === "cards").at(-1);
+  assert.equal(ask.text, draft);
+  assert.equal(await exec("return document.querySelector('.bulb').classList.contains('checking')"), true);
+  await send([{ t: "cards", seq: ask.seq, cards: [{ id: "h1", category: "improve", title: "Name the readme section", edit: { op: "append", text: "(the Flashing section)" } }] }]);
+  assert.equal((await text(".menu.bulb")).length, 1, "the 💡 opens on its cards");
+  assert.ok(!(await posts()).some((p) => p.t === "send"));
+  await type(ENTER);
+  ps = await posts();
+  assert.equal(ps.find((p) => p.t === "send")?.text, draft, "the next Enter sends it as it is");
+  // A short reply never waits.
+  await clearPosts();
+  await type("done" + ENTER);
+  assert.equal((await posts()).find((p) => p.t === "send")?.text, "done");
+  // No cards: it goes as soon as the answer comes.
+  await clearPosts();
+  await exec("const t=document.querySelector('.composer textarea'); t.value=arguments[0]; t.dispatchEvent(new Event('input', {bubbles:true}))", [draft + " too"]);
+  await type(ENTER);
+  const ask2 = await lastAssist("cards");
+  await send([{ t: "cards", seq: ask2.seq, cards: [] }]);
+  assert.equal((await posts()).find((p) => p.t === "send")?.text, draft + " too");
+});
+
+await check("reply chips after a turn: a click sends it; the handoff's chip asks for a fresh chat", async () => {
+  const sid = await fresh();
+  const chips = [
+    { text: "Fresh chat with this handoff", source: "handoff", action: "freshChat" },
+    { text: "npm init -y", source: "cli" },
+    ...core.parseTurn(haikuAnswer("turn")).chips.map((t) => ({ text: t, source: "haiku" })),
+  ].slice(0, 5);
+  await send([{ t: "chips", sid: "someone-else", chips: [{ text: "not mine", source: "haiku" }] }]);
+  assert.equal((await text(".chip")).length, 0, "another chat's chips do not show");
+  await send([{ t: "chips", sid, chips }]);
+  assert.deepEqual(await text(".chip"), chips.map((c) => c.text));
+  await shot("assist-chips");
+  await click(".chip", "npm init -y");
+  await click(".chip", "Fresh chat with this handoff");
+  const ps = await posts();
+  assert.ok(ps.some((p) => p.t === "send" && p.text === "npm init -y"));
+  assert.ok(ps.some((p) => p.t === "freshChat"));
+  assert.equal(await value(), "", "the draft is left alone");
+  await send([{ t: "chips", sid, chips: [] }]);
+  assert.equal((await text(".chip")).length, 0);
+});
+
+await check("the handoff card turns the draft into a request for a handoff, and its send says so", async () => {
+  await fresh({ context: { totalTokens: 172000, maxTokens: 200000, percentage: 86, categories: [] } });
+  const draft = "now write the release notes for the whole quarter";
+  await exec("const t=document.querySelector('.composer textarea'); t.value=arguments[0]; t.dispatchEvent(new Event('input', {bubbles:true}))", [draft]);
+  await sleep(2150);
+  const ask = await lastAssist("cards");
+  const cards = core.parseCards(haikuAnswer("cards-context"), draft, "h");
+  const handoff = cards.find((c) => c.kind === "handoff");
+  await send([{ t: "cards", seq: ask.seq, cards }]);
+  await click(".bulb");
+  await settle();
+  await hover(".menu.bulb .menu-cat", "Context handling");
+  await pick(".menu.bulb .menu-item", handoff.title);
+  await settle();
+  assert.equal(await value(), core.handoffRequest(draft));
+  await clearPosts();
+  await type(ENTER);
+  const p = (await posts()).find((x) => x.t === "send");
+  assert.equal(p.handoff, true);
+  assert.equal(p.text, core.handoffRequest(draft));
+});
+
+await check("the 📚: one submenu per category; a click puts /<name> in the draft as the session knows it", async () => {
+  await fresh({ slashCommands: [] });
+  await type("for this repo");
+  await click(".library");
+  await settle();
+  assert.deepEqual(await text(".menu.library .menu-cat .menu-label"), ["Bench", "Repo setup", "Other"]);
+  await hover(".menu.library .menu-cat", "Repo setup");
+  assert.deepEqual(await text(".menu.library .menu-item .menu-item-label"), ["/embarch-claude-md", "/embarch-permissions"]);
+  await shot("library-menu");
+  await pick(".menu.library .menu-item", "/embarch-permissions");
+  await settle();
+  assert.equal(await value(), "/embarch-chat:embarch-permissions for this repo", "a plugin's entry, namespaced as the CLI lists it");
+  await click(".library");
+  await settle();
+  await hover(".menu.library .menu-cat", "Other");
+  await pick(".menu.library .menu-item", "/notes");
+  await settle();
+  assert.equal(await value(), "/notes for this repo", "a second pick replaces the first");
+  // A started session that does not know the plugin's entries: shown, not offered.
+  await fresh({ slashCommands: ["compact", "notes"] });
+  await click(".library");
+  await settle();
+  await hover(".menu.library .menu-cat", "Bench");
+  assert.equal(await exec("return document.querySelector('.menu.library .menu-item').classList.contains('disabled')"), true);
+  await exec("document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape'}))");
+  await settle();
+  // `/` lists the library's entries with the session's own commands.
+  await fresh({ slashCommands: ["compact", "embarch-chat:build-flash-verify"] });
+  await type("/b");
+  assert.deepEqual(await text(".popup div"), ["/embarch-chat:build-flash-verifyBench"]);
+});
+
 // ------------------------------------------------------------ the list
 
 await go("/list.html");

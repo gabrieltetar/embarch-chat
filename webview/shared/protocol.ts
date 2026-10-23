@@ -7,6 +7,8 @@ import type { ChatState } from "../../src/wire/reducer";
 import type { WireMessage } from "../../src/wire/types";
 import type { PrRef } from "../../src/desk/client";
 import type { ThreadGroup } from "../../src/desk/threads";
+import type { Card, Chip, PastPrompt } from "../../src/assistant/edits";
+import type { LibraryEntry } from "../../src/library/entries";
 
 /** The chat's card in two lines (decision 18). */
 export interface Header {
@@ -41,7 +43,17 @@ export type HostToChat =
   | { t: "header"; header: Header | null }
   | { t: "empty"; warning: string | null }
   | { t: "mentions"; q: string; items: MentionItem[] }
-  | { t: "states"; states: Array<{ id: string; name: string; type: string }>; error?: string };
+  | { t: "states"; states: Array<{ id: string; name: string; type: string }>; error?: string }
+  /** The owner's own prompts of the last 30 days, for the instant prefix match (26); never stored by the page. */
+  | { t: "prompts"; items: PastPrompt[] }
+  /** The 📚's entries (38) and whether the Haiku assistant runs. */
+  | { t: "library"; entries: LibraryEntry[]; assistant: boolean }
+  /** Haiku's ghost text for draft request `seq`, streamed (24, 26). */
+  | { t: "ghost"; seq: number; text: string; done: boolean }
+  /** Haiku's cards for draft request `seq` (28, 36, 37). */
+  | { t: "cards"; seq: number; cards: Card[] }
+  /** The reply chips for the chat on screen (25). */
+  | { t: "chips"; sid: string; chips: Chip[] };
 
 export interface MentionItem {
   /** What goes after the @. */
@@ -52,7 +64,7 @@ export interface MentionItem {
 
 export type ChatToHost =
   | { t: "ready" }
-  | { t: "send"; text: string }
+  | { t: "send"; text: string; handoff?: boolean }
   | { t: "allow"; requestId: string; always?: boolean }
   | { t: "deny"; requestId: string; message?: string }
   | { t: "answer"; requestId: string; answers: Record<string, string> }
@@ -70,7 +82,13 @@ export type ChatToHost =
   | { t: "states" }
   | { t: "setStatus"; stateId: string }
   | { t: "newChat" }
-  | { t: "refreshContext" };
+  | { t: "refreshContext" }
+  /** Asks the assistant about the draft: ghost text after a 300 ms pause, cards after 2 s or before send (26). */
+  | { t: "assist"; kind: "ghost" | "cards"; text: string; seq: number }
+  /** The next keystroke cancels a stale call (26). */
+  | { t: "assistCancel" }
+  /** A chip that acts: a fresh chat with this chat's handoff (36). */
+  | { t: "freshChat" };
 
 export type HostToList = {
   t: "groups";

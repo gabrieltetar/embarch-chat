@@ -1,0 +1,14 @@
+{
+  "name": "embarch-chat",
+  "description": "EmbArch Chat's prompt library, as a Claude Code plugin",
+  "owner": {
+    "name": "EmbArch"
+  },
+  "plugins": [
+    {
+      "name": "embarch-chat",
+      "source": "./plugin",
+      "description": "Generic EmbArch commands and skills: repo setup, and the build, flash and verify loop."
+    }
+  ]
+}

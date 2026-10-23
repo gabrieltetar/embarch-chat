@@ -150,6 +150,11 @@
             "type": "string",
             "default": "~/.config/embarch-desk/desk-token",
             "description": "The desk's bearer token file."
+          },
+          "embarchChat.assistant": {
+            "type": "boolean",
+            "default": true,
+            "description": "The Haiku assistant at the input: ghost text, the 💡 cards, reply chips and naming each chat (one stripped `claude -p --model haiku` call each, about $0.002). Off, only the CLI's own suggestion and the instant prefix match over your past prompts remain."
           }
         }
       },
@@ -159,7 +164,7 @@
           "embarchUi.binaryPath": {
             "type": "string",
             "default": "embarch-ui",
-            "description": "Path to the embarch-ui binary. Defaults to 'embarch-ui' on PATH \u2014 set an absolute path if it isn't installed there."
+            "description": "Path to the embarch-ui binary. Defaults to 'embarch-ui' on PATH — set an absolute path if it isn't installed there."
           },
           "embarchUi.host": {
             "type": "string",

@@ -10,10 +10,20 @@
 // not expect next (the panel's own context-meter refresh, say) gets a canned
 // answer instead of failing.
 //
+// With -p it stands in for one of the Haiku assistant's calls instead
+// (test/fixtures/haiku/*.jsonl, from record-haiku.mjs): it reads the prompt
+// from stdin, picks the recording by the prompt's TASK line, and writes it.
+//
 // Env: FAKE_CLAUDE_FIXTURE (the recording), FAKE_CLAUDE_ARGS_LOG (a file each
-// invocation appends its argv to as one JSON line), FAKE_CLAUDE_VERSION.
+// invocation appends its argv to as one JSON line), FAKE_CLAUDE_VERSION;
+// for -p, FAKE_HAIKU_DIR (default test/fixtures/haiku), FAKE_HAIKU_<TASK>
+// (a recording for one task, e.g. FAKE_HAIKU_CARDS), FAKE_HAIKU_DELAY_MS
+// (between lines, default 5); FAKE_CLAUDE_INPUT_LOG (each line the client
+// sends, with how many lines had been written by then).
 
 import * as fs from "node:fs";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const argv = process.argv.slice(2);
 if (argv.includes("--version")) {
@@ -22,6 +32,30 @@ if (argv.includes("--version")) {
 }
 if (argv[0] === "agents") {
   process.stdout.write("[]\n");
+  process.exit(0);
+}
+if (argv.includes("-p")) {
+  let prompt = "";
+  process.stdin.setEncoding("utf8");
+  for await (const d of process.stdin) prompt += d;
+  const task = /^TASK: (\S+)/m.exec(prompt)?.[1] ?? "none";
+  if (process.env.FAKE_CLAUDE_ARGS_LOG) {
+    fs.appendFileSync(process.env.FAKE_CLAUDE_ARGS_LOG, JSON.stringify({ argv, cwd: process.cwd(), prompt, task, env: { EMBARCH_DESK_INTERNAL: process.env.EMBARCH_DESK_INTERNAL ?? null } }) + "\n");
+  }
+  const dir = process.env.FAKE_HAIKU_DIR ?? path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "haiku");
+  const file = process.env[`FAKE_HAIKU_${task.toUpperCase()}`] ?? path.join(dir, `${task}.jsonl`);
+  if (!fs.existsSync(file)) {
+    process.stderr.write(`fake-claude: no Haiku recording for ${task}\n`);
+    process.exit(3);
+  }
+  const delay = Number(process.env.FAKE_HAIKU_DELAY_MS ?? 5);
+  for (const l of fs.readFileSync(file, "utf8").split("\n")) {
+    if (!l.trim()) continue;
+    const e = JSON.parse(l);
+    if (e.d !== "out") continue;
+    process.stdout.write(JSON.stringify(e.o) + "\n");
+    await new Promise((r) => setTimeout(r, delay));
+  }
   process.exit(0);
 }
 if (process.env.FAKE_CLAUDE_ARGS_LOG) {
@@ -78,6 +112,7 @@ process.stdin.on("data", (d) => {
     buf = buf.slice(i + 1);
     if (!line.trim()) continue;
     const o = JSON.parse(line);
+    if (process.env.FAKE_CLAUDE_INPUT_LOG) fs.appendFileSync(process.env.FAKE_CLAUDE_INPUT_LOG, JSON.stringify({ written, o }) + "\n");
     const want = nextIn();
     if (o.type === "control_request" && !(want && want.type === "control_request" && want.request?.subtype === o.request?.subtype)) {
       cannedAnswer(o);
@@ -92,7 +127,9 @@ process.stdin.on("end", () => {
   if (wake) wake();
 });
 
+let written = 0;
 function write(o) {
+  written++;
   let s = JSON.stringify(o);
   if (sid && recordedSid) s = s.split(recordedSid).join(sid);
   process.stdout.write(s + "\n");

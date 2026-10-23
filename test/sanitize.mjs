@@ -35,26 +35,39 @@ const scrub = (s) => {
   return s;
 };
 
-// A tool's input streams as JSON fragments that can split a path anywhere,
-// so the fragments of one block are joined into a single delta, scrubbed
-// whole, before the block's next line.
+// A tool's input and a reply's text stream as fragments that can split a
+// path anywhere. A tool's fragments are joined into a single delta, scrubbed
+// whole; a reply's are joined only when a path spans them, so a fixture
+// keeps its streaming where nothing needed scrubbing.
 const out = [];
 let held = null;
+const FIELD = { input_json_delta: "partial_json", text_delta: "text" };
 const flush = () => {
   if (!held) return;
-  held.e.o.event.delta.partial_json = held.json;
-  out.push(scrub(JSON.stringify(held.e)));
+  const f = FIELD[held.type];
+  if (held.type === "text_delta" && scrub(held.text) === held.text) {
+    for (const e of held.lines) out.push(scrub(JSON.stringify(e)));
+  } else {
+    const e = held.lines[0];
+    e.o.event.delta[f] = held.text;
+    out.push(scrub(JSON.stringify(e)));
+  }
   held = null;
 };
 for (const line of fs.readFileSync(src, "utf8").split("\n")) {
   if (!line.trim()) continue;
   const e = JSON.parse(line);
   const o = e.o;
-  if (o.type === "stream_event" && o.event?.delta?.type === "input_json_delta") {
-    if (held && held.e.o.event.index === o.event.index) held.json += o.event.delta.partial_json;
-    else {
+  const dt = o.type === "stream_event" ? o.event?.delta?.type : undefined;
+  if (dt && FIELD[dt]) {
+    const piece = o.event.delta[FIELD[dt]];
+    const h = held?.lines[0].o;
+    if (held && held.type === dt && h.event.index === o.event.index && h.parent_tool_use_id === o.parent_tool_use_id) {
+      held.text += piece;
+      held.lines.push(e);
+    } else {
       flush();
-      held = { e, json: o.event.delta.partial_json };
+      held = { lines: [e], type: dt, text: piece };
     }
     continue;
   }

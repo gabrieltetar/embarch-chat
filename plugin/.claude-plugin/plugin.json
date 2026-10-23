@@ -1,0 +1,8 @@
+{
+  "name": "embarch-chat",
+  "version": "0.1.0",
+  "description": "EmbArch's prompt library: generic commands and skills for firmware work with EmbArch — set a repo up for it, and the build, flash and verify loop on the bench. The EmbArch Chat panel shows them behind its library menu.",
+  "author": { "name": "EmbArch" },
+  "homepage": "https://github.com/gabrieltetar/embarch-chat",
+  "license": "MIT"
+}

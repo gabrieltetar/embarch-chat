@@ -5,20 +5,25 @@
 // (launcher/, decision 29).
 
 import * as crypto from "crypto";
+import * as path from "path";
 import * as vscode from "vscode";
+import { HaikuAssistant } from "./assistant/assistant";
+import { PromptHistory } from "./assistant/history";
+import { LibraryEntry } from "./library/entries";
+import { readLibrary } from "./library/files";
 import { ChatManager, ChatRecord } from "./chats";
 import { AssignBody, DeskClient, DeskError, MailboxEntry, expandHome } from "./desk/client";
 import { DeskService } from "./deskService";
 import { DIFF_SCHEME, DiffContent } from "./diff";
 import { jump } from "./jump";
 import { activateLauncher, deactivateLauncher, serverUrl } from "./launcher/launcher";
-import { noAssistant } from "./seams";
-import { HostCtx } from "./views/chatHost";
+import { HostCtx, assistInput } from "./views/chatHost";
 import { CHAT_VIEW, ChatPanels, ChatViewProvider, THREADS_VIEW, ThreadsViewProvider } from "./views/views";
 import { claudeVersion, versionWarning } from "./wire/version";
 
 let chats: ChatManager | undefined;
 let deskService: DeskService | undefined;
+let assistant: HaikuAssistant | undefined;
 
 function cfg() {
   const c = vscode.workspace.getConfiguration("embarchChat");
@@ -27,8 +32,11 @@ function cfg() {
     idleMs: Math.max(1, c.get<number>("idleMinutes", 5)) * 60_000,
     deskUrl: c.get<string>("deskUrl", "http://127.0.0.1:4891"),
     deskTokenPath: c.get<string>("deskTokenPath", "~/.config/embarch-desk/desk-token"),
+    assistant: c.get<boolean>("assistant", true),
   };
 }
+
+const MIN = 60_000;
 
 function folders(): string[] {
   return (vscode.workspace.workspaceFolders ?? []).filter((f) => f.uri.scheme === "file").map((f) => f.uri.fsPath);
@@ -86,6 +94,26 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const titleOf = (rec: ChatRecord | undefined) => rec?.chat.state.title ?? rec?.itemTitle ?? "Chat";
 
+  // ------------------------------------------------------------ the assistant and the library
+
+  // The owner's own prompts of the last 30 days, read in the background (decision 26).
+  const history = new PromptHistory();
+  const refreshHistory = () => void history.refresh().catch((e) => log(`prompt history: ${(e as Error).message}`));
+  const historyStart = setTimeout(refreshHistory, 2000);
+  const historyTimer = setInterval(refreshHistory, 10 * MIN);
+  context.subscriptions.push({ dispose: () => (clearTimeout(historyStart), clearInterval(historyTimer)) });
+
+  // The library: this repo's own plugin, shipped inside the extension, and ~/.claude/commands (decisions 13, 38).
+  const pluginDir = path.join(context.extensionUri.fsPath, "plugin");
+  let libraryCache: { at: number; entries: LibraryEntry[] } = { at: 0, entries: [] };
+  const library = () => {
+    if (Date.now() - libraryCache.at > 30_000) libraryCache = { at: Date.now(), entries: readLibrary(pluginDir) };
+    return libraryCache.entries;
+  };
+
+  assistant = new HaikuAssistant(() => ({ claudePath: cfg().claudePath, enabled: cfg().assistant, log }));
+  const haiku = assistant;
+
   const ctx: HostCtx = {
     chats: manager,
     desk,
@@ -97,6 +125,11 @@ export function activate(context: vscode.ExtensionContext): void {
     warning: () => warning,
     openInEditor: (sid) => openInEditor(sid),
     newChat: (itemId) => void newChat(itemId),
+    assistant: haiku,
+    assistantOn: () => cfg().assistant,
+    history,
+    library,
+    freshChat: (sid) => void freshChat(sid),
   };
 
   const chatView = new ChatViewProvider(context.extensionUri, ctx);
@@ -213,7 +246,6 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     log(`new chat ${sid} on ${itemId ?? "untracked"} in ${cwd}`);
     const rec = manager.create(sid, cwd, itemId, itemTitle);
-    rec.chat.on("turn", () => void noAssistant.afterTurn(rec.chat, manager.current === sid));
     desk.rebuild();
     await show(sid);
     return rec;
@@ -278,6 +310,38 @@ export function activate(context: vscode.ExtensionContext): void {
     if (pick) await pick.run();
   }
 
+  // ------------------------------------------------------------ chips and names
+
+  /** On screen: the sidebar's chat while the sidebar shows, or a visible editor tab (decision 34). */
+  const onScreen = (sid: string) => (manager.current === sid && !!chatView.view?.visible) || panels.visible(sid);
+
+  // After each turn: chips for the chat on screen (25), a name after a new chat's first turn (12).
+  manager.on("turn", (sid: string, _result: unknown, n: number) => {
+    const rec = manager.get(sid);
+    if (!rec?.ours) return;
+    void haiku.turnEnded(sid, () => assistInput(ctx, rec, ""), {
+      onScreen: onScreen(sid),
+      firstTurn: n === 1 && !rec.chat.opts.existing,
+      rename: async (name) => {
+        log(`[${sid.slice(0, 8)}] named "${name}"`);
+        await rec.chat.rename(name);
+      },
+    });
+  });
+  manager.on("suggestion", (sid: string, text: string) => haiku.suggestion(sid, text));
+
+  /** "Fresh chat with this handoff" (36): a new chat on the same work item that starts with it; the old one stays readable. */
+  async function freshChat(sid: string): Promise<void> {
+    const text = haiku.handoffFor(sid);
+    const rec = manager.get(sid);
+    if (!text || !rec) return;
+    const cwd = windowCwd(rec.chat.opts.cwd) ?? rec.chat.opts.cwd;
+    const fresh = await startChat(rec.itemId ? { item_id: rec.itemId } : { untracked: true }, cwd, rec.itemTitle);
+    if (!fresh) return;
+    haiku.sent(fresh.chat.sessionId);
+    fresh.chat.send(text);
+  }
+
   // ------------------------------------------------------------ the mailbox
 
   /** Start work and Open chat from the Desk land here (desk decisions 11, 32, 33). */
@@ -316,6 +380,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
 /** Chats die with their window (decision 5). */
 export function deactivate(): void {
+  assistant?.dispose();
   deskService?.dispose();
   chats?.dispose();
   deactivateLauncher();

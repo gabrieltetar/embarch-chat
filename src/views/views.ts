@@ -78,6 +78,10 @@ export class ChatPanels implements vscode.Disposable {
     return this.panels.has(sid);
   }
 
+  visible(sid: string): boolean {
+    return !!this.panels.get(sid)?.panel.visible;
+  }
+
   dispose(): void {
     for (const p of this.panels.values()) p.panel.dispose();
   }

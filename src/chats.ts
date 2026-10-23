@@ -36,7 +36,8 @@ export interface ChatSettings {
 /**
  * Events: `changed` (a chat's list-visible state moved), `event` (sid, wire
  * event — for webviews showing it), `snapshot` (sid — a webview must reload
- * the whole state).
+ * the whole state), `turn` (sid, result, turns so far) and `suggestion`
+ * (sid, the CLI's guess at the next prompt) for the assistant.
  */
 export class ChatManager extends EventEmitter {
   readonly records = new Map<string, ChatRecord>();
@@ -54,6 +55,8 @@ export class ChatManager extends EventEmitter {
     });
     rec.chat.on("status", () => this.emit("changed"));
     rec.chat.on("closed", () => this.emit("changed"));
+    rec.chat.on("turn", (o: WireMessage, n: number) => this.emit("turn", sid, o, n));
+    rec.chat.on("suggestion", (text: string) => this.emit("suggestion", sid, text));
   }
 
   /** A new chat of this window's, already assigned on the desk (decision 10); its process starts with the first message. */

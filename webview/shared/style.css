@@ -544,13 +544,190 @@ details.thinking .md {
   padding: 6px var(--gap) 6px;
   border-top: 1px solid var(--border);
 }
+.composer .field {
+  position: relative;
+}
+/* The textarea and the overlay over it wrap the same text the same way: the
+   overlay shows the ghost text after the draft (24) and a card's preview
+   inside it (37). */
+.composer textarea,
+.composer .overlay {
+  font: inherit;
+  line-height: 1.4;
+  padding: 6px 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  scrollbar-gutter: stable;
+}
 .composer textarea {
   width: 100%;
   resize: none;
-  padding: 6px 8px;
   min-height: 2.4em;
   max-height: 40vh;
   display: block;
+}
+.composer textarea.previewing {
+  color: transparent;
+  caret-color: transparent;
+}
+.composer .overlay {
+  position: absolute;
+  inset: 0;
+  border: 1px solid transparent;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 1;
+  color: var(--vscode-input-foreground);
+}
+.overlay .mirror {
+  color: transparent;
+}
+.overlay .ghost,
+.overlay .add {
+  color: var(--vscode-editorGhostText-foreground, var(--muted));
+  opacity: 0.85;
+}
+.overlay .del {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+.user .held {
+  font-size: 0.85em;
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 5px;
+}
+.chip {
+  border-radius: 10px;
+  padding: 1px 9px;
+  font-size: 0.92em;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--vscode-foreground);
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chip:hover {
+  background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+}
+.chip.cli {
+  border-style: dashed;
+}
+.chip.handoff {
+  border-color: var(--busy);
+  color: var(--vscode-textLink-foreground);
+}
+.assist-slot {
+  display: inline-flex;
+  gap: 2px;
+}
+.assist-slot button.icon {
+  padding: 0 3px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.bulb:not(.lit) {
+  filter: grayscale(1);
+}
+.bulb .count {
+  font-size: 0.78em;
+  background: var(--waiting);
+  color: var(--vscode-badge-foreground, #fff);
+  border-radius: 8px;
+  padding: 0 5px;
+}
+.bulb.checking {
+  opacity: 1;
+}
+.bulb .spinner {
+  width: 8px;
+  height: 8px;
+}
+.menu {
+  position: absolute;
+  left: var(--gap);
+  right: var(--gap);
+  bottom: calc(100% - 4px);
+  display: flex;
+  max-height: 50vh;
+  background: var(--vscode-editorWidget-background, var(--vscode-editorSuggestWidget-background));
+  border: 1px solid var(--vscode-editorWidget-border, var(--border));
+  border-radius: var(--radius);
+  z-index: 20;
+  box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.35));
+}
+/* The menu opens upward from the input and grows with the open category's
+   items: both columns sit on its bottom edge, so a category row never moves
+   under the pointer when its items change the menu's height. */
+.menu-cats,
+.menu-items {
+  display: flex;
+  flex-direction: column;
+}
+.menu-cats > :first-child,
+.menu-items > :first-child {
+  margin-top: auto;
+}
+.menu-cats {
+  flex: 0 0 38%;
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 2px 0;
+}
+.menu-cat {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  cursor: default;
+}
+.menu-cat .menu-label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.menu-cat .menu-n,
+.menu-cat .menu-arrow {
+  color: var(--muted);
+  font-size: 0.85em;
+}
+.menu-cat.on {
+  background: var(--vscode-list-activeSelectionBackground, var(--vscode-list-hoverBackground));
+  color: var(--vscode-list-activeSelectionForeground, inherit);
+}
+.menu-items {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 2px 0;
+}
+.menu-item {
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.menu-item:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+.menu-item.disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.menu-item-detail {
+  color: var(--muted);
+  font-size: 0.86em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 .composer .bar {
   display: flex;

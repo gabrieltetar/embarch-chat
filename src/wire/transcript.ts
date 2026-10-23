@@ -52,6 +52,7 @@ export interface TranscriptMeta {
 export function transcriptEvents(text: string): { events: WireMessage[]; meta: Omit<TranscriptMeta, "sessionId" | "file" | "size" | "lastMs"> & { lastTs: number } } {
   const events: WireMessage[] = [];
   let title: string | null = null;
+  let custom: string | null = null;
   let cwd: string | null = null;
   let firstPrompt: string | null = null;
   let lastTs = 0;
@@ -65,13 +66,16 @@ export function transcriptEvents(text: string): { events: WireMessage[]; meta: O
     }
     const ts = typeof o.timestamp === "string" ? Date.parse(o.timestamp) : NaN;
     if (!Number.isNaN(ts)) lastTs = Math.max(lastTs, ts);
+    // A name given with rename_session (the assistant's, decision 12) wins
+    // over Claude's own ai-title, which it renews as it goes.
     if (o.type === "ai-title" && typeof o.aiTitle === "string") {
+      if (custom) continue;
       title = o.aiTitle;
       events.push({ type: "_title", title });
       continue;
     }
     if (o.type === "custom-title" && typeof o.customTitle === "string") {
-      title = o.customTitle;
+      title = custom = o.customTitle;
       events.push({ type: "_title", title });
       continue;
     }

@@ -13,6 +13,11 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createInterface } from "node:readline";
+import { createRequire } from "node:module";
+
+// The handoff card's own words (src/assistant/edits.ts), so the recording asks as the panel does.
+const core = createRequire(import.meta.url)("../test-out/core.js");
+const HANDOFF_REQUEST = (draft) => core.handoffRequest(draft);
 
 const [, , scratch, ...only] = process.argv;
 if (!scratch) {
@@ -34,7 +39,7 @@ function cleanEnv() {
 }
 
 class Rec {
-  constructor(name, args, { persist = false } = {}) {
+  constructor(name, args, { persist = false, system = true } = {}) {
     this.name = name;
     this.dir = path.join(scratch, name);
     fs.mkdirSync(this.dir, { recursive: true });
@@ -42,7 +47,10 @@ class Rec {
     this.lines = [];
     this.waiters = [];
     this.buffer = [];
-    const full = [...BASE, ...(persist ? [] : ["--no-session-persistence"]), ...args];
+    // Without the terse system prompt the session is big enough to cache,
+    // which the CLI's prompt suggestions need (it skips a cold cache).
+    const base = system ? BASE : BASE.slice(0, BASE.indexOf("--system-prompt"));
+    const full = [...base, ...(persist ? [] : ["--no-session-persistence"]), ...args];
     this.p = spawn("claude", full, {
       cwd: this.dir,
       env: cleanEnv(),
@@ -189,6 +197,40 @@ const scenarios = {
     // Whatever the CLI does when the background task ends.
     await new Promise((res) => setTimeout(res, 9000));
     r.user("Reply with just: ok");
+    await r.result();
+    await r.close();
+  },
+  // The CLI's own guess at the next prompt (decision 25): a prompt_suggestion
+  // line after each turn, with --prompt-suggestions.
+  async suggest() {
+    const r = new Rec("suggest", ["--tools", "Bash", "--prompt-suggestions"], { system: false });
+    // Trivial turns ("reply with just: done") get no suggestion: the CLI filters them.
+    r.user("I am setting up a small Node project in this folder. Run `echo setup` with bash, then suggest what I should do first, in two sentences.");
+    await r.result();
+    await r.until((o) => o.type === "prompt_suggestion", undefined, 30000).catch(() => null);
+    r.user("Now run `ls` and tell me how many files there are.");
+    await r.result();
+    await r.until((o) => o.type === "prompt_suggestion", undefined, 30000).catch(() => null);
+    await r.close();
+  },
+  // The compact card's send sequence (decision 36): the /compact line, its
+  // compaction finished, then the rest of the draft.
+  async compact() {
+    const r = new Rec("compact", ["--tools", ""]);
+    r.user("@note.txt what is the secret? One word.");
+    await r.result();
+    r.user("/compact focus on: the secret word in note.txt");
+    await r.result();
+    r.user("What was the secret word? One word.");
+    await r.result();
+    await r.close();
+  },
+  // A turn that writes a handoff (decision 36), asked as the handoff card asks.
+  async handoff() {
+    const r = new Rec("handoff", ["--tools", "Read"]);
+    r.user("Read note.txt and tell me the secret in one word.");
+    await r.result();
+    r.user(HANDOFF_REQUEST("Next: write the secret into a file named answer.txt."));
     await r.result();
     await r.close();
   },

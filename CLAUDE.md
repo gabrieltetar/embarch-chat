@@ -22,11 +22,17 @@ This repo is public: never write client names, client project names or codenames
 client internals, people's names or real issue keys — in code, tests, recorded
 fixtures or commits; examples use ABC-123. Before each commit run
 `python3 ../embarch-doc/scripts/check-client-names.py --repo .` and fix any hit.
-Fixtures are recorded with `test/record.mjs` in a scratch folder, with neutral
-prompts, then scrubbed by `test/sanitize.mjs`.
+Fixtures are recorded with `test/record.mjs` (sessions) and
+`test/record-haiku.mjs` (the assistant's calls) in a scratch folder, with
+neutral prompts, then scrubbed by `test/sanitize.mjs`. The owner's own
+prompts (the assistant's prefix match reads them from `~/.claude/projects`)
+stay at runtime: never in a fixture, a test or a commit.
 
 ## Build and test
 `npm run build` (esbuild: extension + two Preact webviews), `npm run typecheck`,
-`npm test` (node --test; the wire tests replay real recorded sessions through
-`test/fake-claude.mjs`, the desk tests run against a stub desk).
+`npm test` (node --test; the wire and assistant tests replay real recorded
+sessions and Haiku calls through `test/fake-claude.mjs`, the desk and host
+tests run against a scratch `embarch-desk` named by `EMBARCH_DESK_BIN`),
+`npm run test:webview` (headless Firefox). `plugin/` is the library's Claude
+Code plugin; `claude plugin validate plugin` checks it.
 `./reinstall.sh --package-only` builds the .vsix without installing it.

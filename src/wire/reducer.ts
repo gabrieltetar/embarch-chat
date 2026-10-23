@@ -18,6 +18,8 @@ export interface UserEntry {
   images: number;
   /** Sent by this panel and not yet echoed back by the CLI. */
   pending?: boolean;
+  /** Held until the compaction before it finishes (decision 36). */
+  held?: boolean;
 }
 export interface TextEntry {
   kind: "text";
@@ -398,7 +400,7 @@ export function reduce(s: ChatState, o: WireMessage): ChatState {
     }
     // ---- the host's own events
     case "_sent":
-      return put({ ...s, busy: true }, { kind: "user", id: `s:${o.n}`, text: String(o.text ?? ""), images: Number(o.images ?? 0), pending: true }, null);
+      return put({ ...s, busy: true }, { kind: "user", id: `s:${o.n}`, text: String(o.text ?? ""), images: Number(o.images ?? 0), pending: true, ...(o.held ? { held: true } : {}) }, null);
     case "_process":
       return {
         ...s,

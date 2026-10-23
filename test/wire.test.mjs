@@ -62,7 +62,7 @@ test("a new chat starts with the official panel's flags, in auto mode, by sessio
   chat.send("Run the bash command `echo hello-from-bash` and then reply with just: done");
   await turns(chat, 1);
   const a = spawns()[0].argv;
-  for (const f of ["--input-format", "stream-json", "--output-format", "--verbose", "--permission-prompt-tool=stdio", "--setting-sources=user,project,local", "--permission-mode=auto", "--replay-user-messages", "--include-partial-messages"]) {
+  for (const f of ["--input-format", "stream-json", "--output-format", "--verbose", "--permission-prompt-tool=stdio", "--setting-sources=user,project,local", "--permission-mode=auto", "--replay-user-messages", "--include-partial-messages", "--prompt-suggestions"]) {
     assert.ok(a.includes(f), `missing ${f}`);
   }
   assert.equal(a[a.indexOf("--session-id") + 1], chat.sessionId);

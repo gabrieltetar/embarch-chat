@@ -95,6 +95,10 @@ with zipfile.ZipFile(vsix, "w", zipfile.ZIP_DEFLATED) as z:
             z.writestr(f"extension/{f}", open(f, "rb").read())
     for f in sorted(glob.glob("media/*")):
         z.writestr(f"extension/{f}", open(f, "rb").read())
+    # The library's own entries (decision 13): the plugin, read by the 📚.
+    for f in sorted(glob.glob("plugin/**/*", recursive=True) + glob.glob("plugin/.claude-plugin/*")):
+        if os.path.isfile(f):
+            z.writestr(f"extension/{f}", open(f, "rb").read())
     z.writestr("extension/readme.md", open("README.md", "rb").read())
     z.writestr("extension/LICENSE.txt", open("LICENSE", "rb").read())
 

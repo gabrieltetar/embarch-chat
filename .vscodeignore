@@ -8,3 +8,4 @@ tsconfig.json
 reinstall.sh
 **/*.map
 .gitignore
+.claude-plugin/**

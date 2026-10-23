@@ -1,15 +1,36 @@
 // The input: Enter sends, Shift+Enter breaks the line, Stop while a turn
 // runs (decision 8). `@` completes a workspace path (with the selected lines)
-// and the CLI inlines it; `/` completes the session's own commands from
-// system/init. The 📚 library and the Haiku assistant's 💡 sit by the input
-// when they exist (decision 38); this pass leaves their slot empty.
+// and the CLI inlines it; `/` completes the library's entries and the
+// session's own commands.
+//
+// The Haiku assistant comes in three waves (embarch-chat-assistant-proposal.md
+// decision 26): instantly, typing through the ghost text shown and a prefix
+// match over the owner's own past prompts; after a 300 ms pause, Haiku's
+// ghost text, streamed, Tab takes it; after a 2 s pause or just before send,
+// its cards behind the 💡 (38), each an edit to the draft previewed in place
+// on hover — added words in ghost grey, removed ones struck through — applied
+// on a click, Ctrl+Z restores (37). The next keystroke cancels a stale call.
+// After each turn, reply chips above the input (25). The 📚 beside the 💡
+// holds the library, one submenu per category (38).
 
-import { useEffect, useRef, useState } from "preact/hooks";
-import type { MentionItem } from "../shared/protocol";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import type { Card, Chip, PastPrompt } from "../../src/assistant/edits";
+import { CATEGORIES, applyEdit, ghostRest, prefixMatch, wordDiff } from "../../src/assistant/edits";
+import type { LibraryEntry } from "../../src/library/entries";
+import { byCategory, invocation } from "../../src/library/entries";
+import type { HostToChat, MentionItem } from "../shared/protocol";
 import { MODELS, MODES } from "../shared/protocol";
 import { vscodeApi } from "../shared/vscode";
+import { CategoryMenu, MenuGroup } from "./menus";
 
 const post = (m: unknown) => vscodeApi.postMessage(m);
+
+/** The waves' pauses (26), and how long a send waits for its cards. */
+export const GHOST_MS = 300;
+export const CARDS_MS = 2000;
+const HOLD_MS = 2500;
+/** A draft this short sends at once: the owner's most-sent replies are one word (14). */
+const HOLD_MIN_WORDS = 6;
 
 interface Props {
   sid: string;
@@ -19,10 +40,18 @@ interface Props {
   slashCommands: string[];
   placeholder: string;
   mentions: { q: string; items: MentionItem[] } | null;
-  onSend: (text: string) => void;
+  prompts: PastPrompt[];
+  library: LibraryEntry[];
+  /** The Haiku assistant runs (a setting). */
+  assistant: boolean;
+  chips: Chip[];
+  onSend: (text: string, opts: { handoff?: boolean }) => void;
+  onChip: (chip: Chip) => void;
 }
 
 type Pop = { kind: "at" | "slash"; start: number; q: string; items: MentionItem[]; on: number };
+type Ghost = { base: string; completion: string; src: "local" | "haiku" };
+type Undo = { before: string; after: string; cardId?: string; handoff?: boolean };
 
 type Saved = { drafts?: Record<string, string> };
 
@@ -35,24 +64,161 @@ function saveDraft(sid: string, text: string): void {
   vscodeApi.setState({ ...st, drafts });
 }
 
-export function Composer({ sid, busy, mode, model, slashCommands, placeholder, mentions, onSend }: Props) {
-  const [text, setText] = useState(() => (vscodeApi.getState() as Saved | undefined)?.drafts?.[sid] ?? "");
+const words = (s: string) => s.trim().split(/\s+/).filter(Boolean).length;
+
+export function Composer(p: Props) {
+  const { sid, busy, mode, model, slashCommands, placeholder, mentions, library, chips, onChip } = p;
+  const [text, setTextState] = useState(() => (vscodeApi.getState() as Saved | undefined)?.drafts?.[sid] ?? "");
   const [pop, setPop] = useState<Pop | null>(null);
+  const [ghost, setGhost] = useState<Ghost | null>(null);
+  const [atEnd, setAtEnd] = useState(true);
+  const [cards, setCards] = useState<{ judged: string; list: Card[] }>({ judged: "", list: [] });
+  const [used, setUsed] = useState<string[]>([]);
+  const [menu, setMenu] = useState<null | "bulb" | "library">(null);
+  const [preview, setPreview] = useState<Card | null>(null);
+  const [holding, setHolding] = useState(false);
   const ta = useRef<HTMLTextAreaElement>(null);
-  const timer = useRef<number>(0);
+  const overlay = useRef<HTMLDivElement>(null);
+  const bulbBtn = useRef<HTMLButtonElement>(null);
+  const libBtn = useRef<HTMLButtonElement>(null);
+  const mentionTimer = useRef<number>(0);
+  const textRef = useRef(text);
+  const props = useRef(p);
+  props.current = p;
+  const a = useRef({
+    seq: 0,
+    ghostReq: null as null | { seq: number; text: string },
+    cardsReq: null as null | { seq: number; text: string },
+    inflight: false,
+    ghostTimer: 0,
+    cardsTimer: 0,
+    holdTimer: 0,
+    hold: null as null | string,
+    handoff: false,
+    undo: [] as Undo[],
+  });
+
+  const setText = (v: string) => {
+    textRef.current = v;
+    setTextState(v);
+  };
 
   useEffect(() => {
     saveDraft(sid, text);
     const el = ta.current;
     if (el) {
       el.style.height = "auto";
-      el.style.height = `${Math.min(el.scrollHeight + 2, window.innerHeight * 0.4)}px`;
+      const want = Math.max(el.scrollHeight, overlay.current?.scrollHeight ?? 0);
+      el.style.height = `${Math.min(want + 2, window.innerHeight * 0.4)}px`;
     }
-  }, [text]);
+  });
 
   useEffect(() => {
     if (mentions && pop?.kind === "at" && mentions.q === pop.q) setPop({ ...pop, items: mentions.items, on: 0 });
   }, [mentions]);
+
+  useEffect(
+    () => () => {
+      const s = a.current;
+      clearTimeout(s.ghostTimer);
+      clearTimeout(s.cardsTimer);
+      clearTimeout(s.holdTimer);
+    },
+    [],
+  );
+
+  // ------------------------------------------------------------ the assistant's answers
+
+  useEffect(() => {
+    const on = (ev: MessageEvent<HostToChat>) => {
+      const m = ev.data;
+      const s = a.current;
+      if (m.t === "ghost") {
+        if (!s.ghostReq || m.seq !== s.ghostReq.seq) return;
+        if (m.done) s.inflight = false;
+        if (m.text) setGhost({ base: s.ghostReq.text, completion: m.text, src: "haiku" });
+      } else if (m.t === "cards") {
+        if (!s.cardsReq || m.seq !== s.cardsReq.seq) return;
+        s.inflight = false;
+        const judged = s.cardsReq.text;
+        setCards({ judged, list: m.cards });
+        if (s.hold !== null && s.hold === judged) {
+          clearTimeout(s.holdTimer);
+          if (m.cards.some((c) => applyEdit(judged, c.edit) !== null)) {
+            // Something to look at before it goes: the 💡 opens, the next Enter sends as it is.
+            s.hold = null;
+            setHolding(false);
+            setMenu("bulb");
+          } else doSend(judged);
+        }
+      }
+    };
+    window.addEventListener("message", on);
+    return () => window.removeEventListener("message", on);
+  }, []);
+
+  const cancelStale = () => {
+    const s = a.current;
+    if (s.inflight) {
+      post({ t: "assistCancel" });
+      s.inflight = false;
+    }
+  };
+
+  const askGhost = (v: string) => {
+    const s = a.current;
+    s.ghostReq = { seq: ++s.seq, text: v };
+    s.inflight = true;
+    post({ t: "assist", kind: "ghost", text: v, seq: s.ghostReq.seq });
+  };
+
+  const askCards = (v: string) => {
+    const s = a.current;
+    s.cardsReq = { seq: ++s.seq, text: v };
+    s.inflight = true;
+    post({ t: "assist", kind: "cards", text: v, seq: s.cardsReq.seq });
+  };
+
+  /** The draft moved: the instant wave now, Haiku's after their pauses (26). */
+  const changed = (v: string, end: boolean, prev: Ghost | null) => {
+    const s = a.current;
+    const on = props.current.assistant;
+    clearTimeout(s.ghostTimer);
+    clearTimeout(s.cardsTimer);
+    const command = /^\/\S*\s*$/.test(v);
+    const cardsLater = () => {
+      if (on && words(v) >= 3 && !command) s.cardsTimer = window.setTimeout(() => askCards(v), CARDS_MS);
+    };
+    // Typing through the ghost text already shown keeps it, and its call.
+    if (prev && end && ghostRest(v, prev.base, prev.completion)) {
+      cardsLater();
+      return;
+    }
+    cancelStale();
+    const local = end ? prefixMatch(props.current.prompts, v) : null;
+    setGhost(local ? { base: v, completion: local, src: "local" } : null);
+    if (on && end && !local && v.trim().length >= 2 && !command && !v.endsWith("\n")) s.ghostTimer = window.setTimeout(() => askGhost(v), GHOST_MS);
+    cardsLater();
+  };
+
+  // ------------------------------------------------------------ the popup: @ and /
+
+  const slashItems = (q: string): MentionItem[] => {
+    const out: MentionItem[] = [];
+    const seen = new Set<string>();
+    for (const e of library) {
+      const inv = invocation(e, slashCommands);
+      if (!inv || !(inv.toLowerCase().includes(q) || e.name.toLowerCase().includes(q))) continue;
+      seen.add(inv);
+      out.push({ insert: inv, label: `/${inv}`, detail: e.category });
+    }
+    for (const c of slashCommands) {
+      if (seen.has(c) || !c.toLowerCase().includes(q)) continue;
+      out.push({ insert: c, label: `/${c}` });
+    }
+    const starts = (it: MentionItem) => Number(!it.insert.toLowerCase().startsWith(q) && !it.insert.toLowerCase().includes(`:${q}`));
+    return out.sort((x, y) => starts(x) - starts(y)).slice(0, 30);
+  };
 
   const detect = (value: string, caret: number) => {
     const before = value.slice(0, caret);
@@ -60,24 +226,28 @@ export function Composer({ sid, busy, mode, model, slashCommands, placeholder, m
     if (at) {
       const q = at[2];
       const start = caret - q.length - 1;
-      setPop((p) => ({ kind: "at", start, q, items: p?.kind === "at" ? p.items : [], on: 0 }));
-      clearTimeout(timer.current);
-      timer.current = window.setTimeout(() => post({ t: "mention", q }), 120);
+      setPop((x) => ({ kind: "at", start, q, items: x?.kind === "at" ? x.items : [], on: 0 }));
+      clearTimeout(mentionTimer.current);
+      mentionTimer.current = window.setTimeout(() => post({ t: "mention", q }), 120);
       return;
     }
     const sl = /^\/(\S*)$/.exec(before);
-    if (sl && slashCommands.length) {
-      const q = sl[1].toLowerCase();
-      const items = slashCommands
-        .filter((c) => c.toLowerCase().includes(q))
-        .sort((a, b) => Number(!a.toLowerCase().startsWith(q)) - Number(!b.toLowerCase().startsWith(q)))
-        .slice(0, 30)
-        .map((c) => ({ insert: c, label: `/${c}` }));
-      setPop(items.length ? { kind: "slash", start: 0, q, items, on: 0 } : null);
+    if (sl && (slashCommands.length || library.length)) {
+      const items = slashItems(sl[1].toLowerCase());
+      setPop(items.length ? { kind: "slash", start: 0, q: sl[1], items, on: 0 } : null);
       return;
     }
     setPop(null);
   };
+
+  const focusAt = (pos: number) =>
+    requestAnimationFrame(() => {
+      const el = ta.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(pos, pos);
+      setAtEnd(pos === el.value.length);
+    });
 
   const choose = (it: MentionItem) => {
     if (!pop) return;
@@ -87,11 +257,90 @@ export function Composer({ sid, busy, mode, model, slashCommands, placeholder, m
     const next = text.slice(0, pop.start) + ins + text.slice(caret);
     setText(next);
     setPop(null);
-    requestAnimationFrame(() => {
-      el.focus();
-      const pos = pop.start + ins.length;
-      el.setSelectionRange(pos, pos);
-    });
+    setGhost(null);
+    focusAt(pop.start + ins.length);
+  };
+
+  // ------------------------------------------------------------ edits: cards, ghost, library
+
+  const live = useMemo(() => cards.list.filter((c) => !used.includes(c.id) && applyEdit(text, c.edit) !== null), [cards, used, text]);
+
+  const edit = (after: string, undo: Omit<Undo, "before" | "after"> = {}) => {
+    const s = a.current;
+    clearTimeout(s.ghostTimer);
+    clearTimeout(s.cardsTimer);
+    cancelStale();
+    s.undo.push({ before: textRef.current, after, ...undo });
+    setText(after);
+    setGhost(null);
+    setPreview(null);
+    focusAt(after.length);
+  };
+
+  const applyCard = (c: Card) => {
+    const after = applyEdit(textRef.current, c.edit);
+    if (after === null) return;
+    if (c.kind === "handoff") a.current.handoff = true;
+    setUsed((u) => [...u, c.id]);
+    // The owner has seen the cards: sending this does not wait for them again.
+    setCards((x) => ({ ...x, judged: after }));
+    setMenu(null);
+    edit(after, { cardId: c.id, handoff: c.kind === "handoff" });
+  };
+
+  const acceptGhost = (rest: string) => {
+    const after = textRef.current + rest;
+    edit(after);
+    changed(after, true, null);
+  };
+
+  const pickEntry = (e: LibraryEntry) => {
+    const inv = invocation(e, slashCommands) ?? e.name;
+    const cur = textRef.current;
+    const m = /^\/\S+[ \t]*/.exec(cur);
+    const rest = (m ? cur.slice(m[0].length) : cur).replace(/^\s+/, "");
+    const head = `/${inv} `;
+    setMenu(null);
+    a.current.undo.push({ before: cur, after: head + rest });
+    setText(head + rest);
+    setGhost(null);
+    focusAt(head.length);
+  };
+
+  const undo = (e: KeyboardEvent): boolean => {
+    const s = a.current;
+    const top = s.undo[s.undo.length - 1];
+    if (!top || textRef.current !== top.after) return false;
+    e.preventDefault();
+    s.undo.pop();
+    if (top.handoff) s.handoff = false;
+    if (top.cardId) setUsed((u) => u.filter((x) => x !== top.cardId));
+    setText(top.before);
+    setGhost(null);
+    focusAt(top.before.length);
+    return true;
+  };
+
+  // ------------------------------------------------------------ sending
+
+  const doSend = (t: string) => {
+    const s = a.current;
+    clearTimeout(s.ghostTimer);
+    clearTimeout(s.cardsTimer);
+    clearTimeout(s.holdTimer);
+    cancelStale();
+    s.hold = null;
+    setHolding(false);
+    props.current.onSend(t, s.handoff ? { handoff: true } : {});
+    s.handoff = false;
+    s.undo = [];
+    setText("");
+    setPop(null);
+    setGhost(null);
+    setPreview(null);
+    setMenu(null);
+    setCards({ judged: "", list: [] });
+    setUsed([]);
   };
 
   const send = () => {
@@ -99,9 +348,21 @@ export function Composer({ sid, busy, mode, model, slashCommands, placeholder, m
     // otherwise send the text from before them.
     const t = (ta.current?.value ?? text).trim();
     if (!t) return;
-    onSend(t);
-    setText("");
-    setPop(null);
+    const s = a.current;
+    if (s.hold !== null) return doSend(t);
+    // Just before send, the cards judge the whole prompt (26) — unless they already have.
+    if (props.current.assistant && words(t) >= HOLD_MIN_WORDS && !t.startsWith("/") && cards.judged.trim() !== t) {
+      s.hold = t;
+      setHolding(true);
+      clearTimeout(s.cardsTimer);
+      if (!(s.inflight && s.cardsReq?.text.trim() === t)) {
+        cancelStale();
+        askCards(t);
+      }
+      s.holdTimer = window.setTimeout(() => s.hold !== null && doSend(s.hold), HOLD_MS);
+      return;
+    }
+    doSend(t);
   };
 
   const onKey = (e: KeyboardEvent) => {
@@ -123,15 +384,60 @@ export function Composer({ sid, busy, mode, model, slashCommands, placeholder, m
         return;
       }
     }
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "z" && undo(e)) return;
+    if (e.key === "Tab" && !e.shiftKey && shown) {
+      e.preventDefault();
+      acceptGhost(shown);
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       send();
+      return;
     }
-    if (e.key === "Escape" && busy) post({ t: "interrupt" });
+    if (e.key === "Escape") {
+      if (menu) setMenu(null);
+      else if (shown) setGhost(null);
+      else if (busy) post({ t: "interrupt" });
+    }
   };
+
+  const shown = ghost && atEnd && !pop && !preview ? ghostRest(text, ghost.base, ghost.completion) : null;
+  const after = preview ? applyEdit(text, preview.edit) : null;
+
+  const bulbGroups: Array<MenuGroup<Card>> = CATEGORIES.map((c) => ({
+    id: c.id,
+    label: c.label,
+    items: live.filter((x) => x.category === c.id).map((x) => ({ key: x.id, label: x.title, detail: x.why, value: x })),
+  })).filter((g) => g.items.length);
+
+  const libGroups: Array<MenuGroup<LibraryEntry>> = byCategory(library).map((g) => ({
+    id: g.category,
+    label: g.category,
+    items: g.entries.map((e) => {
+      const inv = invocation(e, slashCommands);
+      return {
+        key: `${e.source}:${e.name}`,
+        label: `/${e.name}`,
+        detail: e.description,
+        title: inv ? `${e.description ?? ""}\n\n/${inv}` : "This session does not know it: install the embarch-chat plugin in Claude Code.",
+        disabled: !inv,
+        value: e,
+      };
+    }),
+  }));
 
   return (
     <div class="composer">
+      {chips.length > 0 && !busy && (
+        <div class="chips">
+          {chips.map((c) => (
+            <button key={`${c.source}:${c.text}`} class={`chip ${c.source}`} title={c.action === "freshChat" ? "A new chat on this work item that starts with the handoff; this one stays readable" : c.source === "cli" ? "Claude Code's own guess — sends it" : "Sends it"} onClick={() => onChip(c)}>
+              {c.text}
+            </button>
+          ))}
+        </div>
+      )}
       {pop && pop.items.length > 0 && (
         <div class="popup">
           {pop.items.map((it, i) => (
@@ -142,19 +448,63 @@ export function Composer({ sid, busy, mode, model, slashCommands, placeholder, m
           ))}
         </div>
       )}
-      <textarea
-        ref={ta}
-        rows={1}
-        value={text}
-        placeholder={placeholder}
-        onInput={(e) => {
-          const el = e.target as HTMLTextAreaElement;
-          setText(el.value);
-          detect(el.value, el.selectionStart);
-        }}
-        onKeyDown={onKey}
-        onBlur={() => setTimeout(() => setPop(null), 150)}
-      />
+      {menu === "bulb" && bulbGroups.length > 0 && <CategoryMenu kind="bulb" groups={bulbGroups} anchor={bulbBtn.current} onPick={applyCard} onHover={setPreview} onClose={() => (setMenu(null), setPreview(null))} />}
+      {menu === "library" && libGroups.length > 0 && <CategoryMenu kind="library" groups={libGroups} anchor={libBtn.current} onPick={pickEntry} onClose={() => setMenu(null)} />}
+      <div class="field">
+        <div class="overlay" ref={overlay} aria-hidden="true">
+          {after !== null ? (
+            wordDiff(text, after).map((d, i) => (
+              <span key={i} class={d.t}>
+                {d.s}
+              </span>
+            ))
+          ) : (
+            <>
+              <span class="mirror">{text}</span>
+              {shown && <span class="ghost">{shown}</span>}
+            </>
+          )}
+          {"​"}
+        </div>
+        <textarea
+          ref={ta}
+          rows={1}
+          value={text}
+          class={after !== null ? "previewing" : ""}
+          placeholder={placeholder}
+          onInput={(e) => {
+            const el = e.target as HTMLTextAreaElement;
+            const v = el.value;
+            const end = el.selectionStart === v.length && el.selectionEnd === v.length;
+            const s = a.current;
+            if (s.hold !== null) {
+              // Writing again: the held send is off.
+              clearTimeout(s.holdTimer);
+              s.hold = null;
+              setHolding(false);
+            }
+            setText(v);
+            setAtEnd(end);
+            setPreview(null);
+            if (!v.trim()) a.current.handoff = false;
+            detect(v, el.selectionStart);
+            changed(v, end, ghost);
+          }}
+          onKeyDown={onKey}
+          onKeyUp={(e) => {
+            const el = e.currentTarget as HTMLTextAreaElement;
+            setAtEnd(el.selectionStart === el.value.length);
+          }}
+          onClick={(e) => {
+            const el = e.currentTarget as HTMLTextAreaElement;
+            setAtEnd(el.selectionStart === el.value.length);
+          }}
+          onScroll={(e) => {
+            if (overlay.current) overlay.current.scrollTop = (e.currentTarget as HTMLTextAreaElement).scrollTop;
+          }}
+          onBlur={() => setTimeout(() => setPop(null), 150)}
+        />
+      </div>
       <div class="bar">
         <select title="Permission mode" value={mode} onChange={(e) => post({ t: "mode", mode: (e.target as HTMLSelectElement).value })}>
           {MODES.map((m) => (
@@ -171,7 +521,21 @@ export function Composer({ sid, busy, mode, model, slashCommands, placeholder, m
             </option>
           ))}
         </select>
-        <span class="assist-slot" />
+        <span class="assist-slot">
+          <button
+            ref={bulbBtn}
+            class={`icon bulb ${live.length ? "lit" : ""} ${holding ? "checking" : ""}`}
+            title={holding ? "Checking the draft before it goes — Enter sends now" : live.length ? `${live.length} suggestion${live.length > 1 ? "s" : ""} for this draft` : p.assistant ? "Suggestions for the draft show here after a pause" : "The assistant is off (embarchChat.assistant)"}
+            disabled={!live.length}
+            onClick={() => setMenu(menu === "bulb" ? null : "bulb")}
+          >
+            💡{live.length > 0 && <span class="count">{live.length}</span>}
+            {holding && <span class="spinner" />}
+          </button>
+          <button ref={libBtn} class="icon library" title="Library" disabled={!library.length} onClick={() => setMenu(menu === "library" ? null : "library")}>
+            📚
+          </button>
+        </span>
         <span class="spacer" />
         {busy && (
           <button title="Stop (Esc)" onClick={() => post({ t: "interrupt" })}>
