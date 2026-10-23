@@ -4,8 +4,10 @@
 // code, bold, italic, strike, links. A code span that looks like a file path
 // opens the file. A link opens in the browser when it is http(s), as a file
 // when it is a path, and not at all otherwise; none carries an href
-// (./link.tsx says why). `inlineHooks` is the seam for atlas citation links
-// (decision 16): each may turn a run of plain text into nodes.
+// (./link.tsx says why). A link's own text holds no other link — a URL, a
+// file path or a citation in it is text — so a click opens one thing.
+// `inlineHooks` is the seam for atlas citation links (decision 16): each may
+// turn a run of plain text into nodes.
 
 import type { ComponentChildren, VNode } from "preact";
 import { Link, hasScheme, isWebLink } from "./link";
@@ -22,10 +24,12 @@ const FILE_RE = /^((?:[\w@.~-]+\/)*[\w@.~-]+\.[A-Za-z0-9]{1,8})(?::(\d+))?(?::\d
 const INLINE_RE =
   /(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)|\[([^\]\n]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)|(https?:\/\/[^\s<>()]*[^\s<>().,;:!?'"`])|\*\*([^*\n](?:[\s\S]*?[^*\s])?)\*\*|~~([\s\S]+?)~~|\*([^*\s](?:[^*\n]*?[^*\s])?)\*|(?<![\w])_([^_\s](?:[^_\n]*?[^_\s])?)_(?![\w])/g;
 
-function plain(text: string, ctx: MdCtx, key: string): ComponentChildren[] {
-  for (const hook of inlineHooks) {
-    const r = hook(text, ctx);
-    if (r) return r;
+function plain(text: string, ctx: MdCtx, key: string, noLinks: boolean): ComponentChildren[] {
+  if (!noLinks) {
+    for (const hook of inlineHooks) {
+      const r = hook(text, ctx);
+      if (r) return r;
+    }
   }
   const parts = text.split("\n");
   const out: ComponentChildren[] = [];
@@ -36,7 +40,8 @@ function plain(text: string, ctx: MdCtx, key: string): ComponentChildren[] {
   return out;
 }
 
-export function inline(text: string, ctx: MdCtx, key = "i"): ComponentChildren[] {
+/** `noLinks`: inside a link's text, where nothing else may open. */
+export function inline(text: string, ctx: MdCtx, key = "i", noLinks = false): ComponentChildren[] {
   const out: ComponentChildren[] = [];
   let last = 0;
   let n = 0;
@@ -44,22 +49,31 @@ export function inline(text: string, ctx: MdCtx, key = "i"): ComponentChildren[]
   // shared lastIndex under the outer loop.
   const re = new RegExp(INLINE_RE.source, "g");
   for (let m: RegExpExecArray | null; (m = re.exec(text)); ) {
-    if (m.index > last) out.push(...plain(text.slice(last, m.index), ctx, `${key}p${n}`));
+    if (m.index > last) out.push(...plain(text.slice(last, m.index), ctx, `${key}p${n}`, noLinks));
     const k = `${key}${n++}`;
     if (m[2] !== undefined) {
       const code = m[2].replace(/^ (.*) $/, "$1");
       const f = FILE_RE.exec(code);
-      if (f && (code.includes("/") || /\.(c|h|cpp|hpp|rs|ts|tsx|js|py|md|json|toml|yaml|yml|dts|dtsi|overlay|conf|txt|sh|cmake)$/.test(f[1]))) {
+      if (!noLinks && f && (code.includes("/") || /\.(c|h|cpp|hpp|rs|ts|tsx|js|py|md|json|toml|yaml|yml|dts|dtsi|overlay|conf|txt|sh|cmake)$/.test(f[1]))) {
         out.push(
-          <code key={k} class="file" title="Open file" onClick={() => ctx.openFile(f[1], f[2] ? Number(f[2]) : undefined)}>
+          <code
+            key={k}
+            class="file"
+            title="Open file"
+            onClick={(e) => {
+              e.stopPropagation();
+              ctx.openFile(f[1], f[2] ? Number(f[2]) : undefined);
+            }}
+          >
             {code}
           </code>,
         );
       } else out.push(<code key={k}>{code}</code>);
     } else if (m[3] !== undefined) {
       const url = m[4];
-      const label = inline(m[3], ctx, k);
-      if (isWebLink(url))
+      const label = inline(m[3], ctx, k, true);
+      if (noLinks) out.push(<span key={k}>{label}</span>);
+      else if (isWebLink(url))
         out.push(
           <Link key={k} title={url} onOpen={() => ctx.openLink(url)}>
             {label}
@@ -81,18 +95,20 @@ export function inline(text: string, ctx: MdCtx, key = "i"): ComponentChildren[]
         );
     } else if (m[5] !== undefined) {
       const url = m[5];
-      out.push(
-        <Link key={k} onOpen={() => ctx.openLink(url)}>
-          {url}
-        </Link>,
-      );
-    } else if (m[6] !== undefined) out.push(<strong key={k}>{inline(m[6], ctx, k)}</strong>);
-    else if (m[7] !== undefined) out.push(<s key={k}>{inline(m[7], ctx, k)}</s>);
-    else if (m[8] !== undefined) out.push(<em key={k}>{inline(m[8], ctx, k)}</em>);
-    else if (m[9] !== undefined) out.push(<em key={k}>{inline(m[9], ctx, k)}</em>);
+      if (noLinks) out.push(url);
+      else
+        out.push(
+          <Link key={k} onOpen={() => ctx.openLink(url)}>
+            {url}
+          </Link>,
+        );
+    } else if (m[6] !== undefined) out.push(<strong key={k}>{inline(m[6], ctx, k, noLinks)}</strong>);
+    else if (m[7] !== undefined) out.push(<s key={k}>{inline(m[7], ctx, k, noLinks)}</s>);
+    else if (m[8] !== undefined) out.push(<em key={k}>{inline(m[8], ctx, k, noLinks)}</em>);
+    else if (m[9] !== undefined) out.push(<em key={k}>{inline(m[9], ctx, k, noLinks)}</em>);
     last = re.lastIndex;
   }
-  if (last < text.length) out.push(...plain(text.slice(last), ctx, `${key}p${n}`));
+  if (last < text.length) out.push(...plain(text.slice(last), ctx, `${key}p${n}`, noLinks));
   return out;
 }
 

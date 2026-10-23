@@ -5,7 +5,8 @@
 // side: http(s) a second time, and `vscode:` or `mailto:` links the
 // extension would refuse. Without an href that handler never sees a link;
 // the click is the page's alone and goes to the extension's own routing
-// (`openLink`: http(s) only, opened once).
+// (`openLink`: http(s) only, opened once). Nor does the click go on to
+// anything around the link: one click is one open.
 
 import type { ComponentChildren } from "preact";
 
@@ -18,11 +19,13 @@ export function Link({ onOpen, class: cls, title, children }: { onOpen: () => vo
       title={title}
       onClick={(e) => {
         e.preventDefault();
+        e.stopPropagation();
         onOpen();
       }}
       onKeyDown={(e) => {
         if (e.key === "Enter") {
           e.preventDefault();
+          e.stopPropagation();
           onOpen();
         }
       }}

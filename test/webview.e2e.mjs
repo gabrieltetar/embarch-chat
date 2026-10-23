@@ -520,6 +520,61 @@ await check("no link has an href: VS Code's own handler never opens one, each op
   assert.deepEqual(opens(await posts()), [{ t: "openLink", url: "https://example.com/docs" }]);
 });
 
+await check("a link's text holds no other link: a URL, a file or a citation in it is text, and one click opens one thing", async () => {
+  const say = {
+    t: "event",
+    e: {
+      type: "assistant",
+      message: {
+        id: "m-nested",
+        content: [
+          {
+            type: "text",
+            text: [
+              "One [https://docs.example/a](https://other.example/b) here.",
+              "Two [`src/main.c`](https://example.com/c) there.",
+              "Three [see abc123@A p12](https://example.com/d) too.",
+              "Four [**https://docs.example/e**](https://example.com/f), and [https://docs.example/g](vscode://x/y) refused.",
+            ].join("\n"),
+          },
+        ],
+      },
+      parent_tool_use_id: null,
+    },
+  };
+  await send([snapshot({}, { ...OURS, atlas: { docs: ["abc123@A"], boards: [] } }), say]);
+  const inner = ".md a a, .md a code.file, .md a .cite, .md .link-refused a, .md .link-refused code.file, .md .link-refused .cite";
+  assert.equal(await exec("return document.querySelectorAll(arguments[0]).length", [inner]), 0, "nothing inside a link opens on its own");
+  const want = [
+    ["https://docs.example/a", { t: "openLink", url: "https://other.example/b" }],
+    ["src/main.c", { t: "openLink", url: "https://example.com/c" }],
+    ["see abc123@A p12", { t: "openLink", url: "https://example.com/d" }],
+    ["https://docs.example/e", { t: "openLink", url: "https://example.com/f" }],
+  ];
+  const opens = (ps) => ps.filter((p) => ["openLink", "openFile", "atlas"].includes(p.t));
+  const find = async (sel, label) => {
+    let el = null;
+    for (const e of await wd("POST", `${S}/elements`, { using: "css selector", value: sel })) if ((await wd("GET", `${S}/element/${Object.values(e)[0]}/text`)) === label) el = e;
+    assert.ok(el, `no ${sel} "${label}"`);
+    return el;
+  };
+  for (const [label, post] of want) {
+    const el = await find(".md a", label);
+    await exec("window.__posts = []; window.__vscode = [];");
+    await realClick(el);
+    assert.deepEqual(await exec("return window.__vscode"), [], `VS Code's own handler opened nothing for "${label}"`);
+    assert.deepEqual(opens(await posts()), [post], `"${label}" opened once, its own target`);
+    await exec("window.__posts = [];");
+    await wd("POST", `${S}/element/${Object.values(el)[0]}/value`, { text: "" });
+    await settle();
+    assert.deepEqual(opens(await posts()), [post], `"${label}": Enter opens it once too`);
+  }
+  await exec("window.__posts = []; window.__vscode = [];");
+  await realClick(await find(".md .link-refused", "https://docs.example/g"));
+  assert.deepEqual(opens(await posts()), [], "a refused link's URL text opens nothing either");
+  assert.deepEqual(await exec("return window.__vscode"), []);
+});
+
 // ------------------------------------------------------------ the assistant and the library
 
 const haikuLines = (name) =>
