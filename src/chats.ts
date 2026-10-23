@@ -98,10 +98,14 @@ export class ChatManager extends EventEmitter {
     this.emit("draft", sid);
   }
 
-  /** A new chat of this window's, already assigned on the desk (decision 10); its process starts with the first message. */
-  create(sessionId: string, cwd: string, itemId: string | null, itemTitle: string | null, opts: { untracked?: boolean; deskDue?: DeskDue | null } = {}): ChatRecord {
+  /**
+   * A new chat of this window's, already assigned on the desk (decision 10);
+   * its process starts with the first message. A fork's (decision 73) copies
+   * another session's conversation up to a point.
+   */
+  create(sessionId: string, cwd: string, itemId: string | null, itemTitle: string | null, opts: { untracked?: boolean; deskDue?: DeskDue | null; fork?: { from: string; at: string } } = {}): ChatRecord {
     const s = this.settings();
-    const chat = new Chat({ sessionId, cwd, claudePath: s.claudePath, existing: false, idleMs: s.idleMs, log: s.log, hooks: s.hooks });
+    const chat = new Chat({ sessionId, cwd, claudePath: s.claudePath, existing: false, idleMs: s.idleMs, log: s.log, hooks: s.hooks, fork: opts.fork });
     const rec: ChatRecord = {
       chat,
       ours: true,

@@ -427,6 +427,39 @@ a:focus-visible {
   opacity: 0.6;
   border-style: dashed;
 }
+/* The owner's message carries its fork and rewind menu (decision 73):
+   a quiet arrow just left of the bubble while the pointer is on it; the
+   menu opens under it at the timeline's right edge. */
+.user {
+  position: relative;
+}
+.msg-acts {
+  position: absolute;
+  top: 2px;
+  right: 100%;
+  margin-right: 2px;
+  opacity: 0;
+  white-space: normal;
+}
+.user:hover .msg-acts,
+.msg-acts.open,
+.msg-acts:focus-within {
+  opacity: 1;
+}
+.msg-menu {
+  position: fixed;
+  right: var(--gap);
+  min-width: 14em;
+  padding: 2px 0;
+  background: var(--vscode-editorWidget-background, var(--vscode-editorSuggestWidget-background));
+  border: 1px solid var(--vscode-editorWidget-border, var(--border));
+  border-radius: var(--radius);
+  box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.35));
+  z-index: 20;
+}
+.msg-menu .menu-item {
+  white-space: nowrap;
+}
 /* A reply's Copy (decision 74): quiet under its last block, clearer with the pointer on it. */
 .reply-acts {
   display: flex;
@@ -1101,7 +1134,8 @@ details.thinking .md {
   margin-left: 6px;
   font-size: 0.9em;
 }
-/* A dialog over the chat: the export (decision 74). */
+/* A dialog over the chat: the rewind picker and its confirmation, the
+   export (decisions 73 and 74). */
 .dialog-back {
   position: fixed;
   inset: 0;
@@ -1134,10 +1168,76 @@ details.thinking .md {
   gap: 6px;
   margin-top: 10px;
 }
+.dialog .warn {
+  color: var(--warn);
+  font-size: 0.9em;
+}
+.rewind-list {
+  list-style: none;
+  margin: 4px 0;
+  padding: 2px 0;
+  max-height: 50vh;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  outline: none;
+}
+.rewind-list:focus {
+  border-color: var(--focus);
+}
+.rewind-list li {
+  padding: 3px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rewind-list li.on {
+  background: var(--active);
+  color: var(--on-active);
+}
+.rewind-to q {
+  overflow-wrap: anywhere;
+}
+.choices {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0;
+}
+.choice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+  color: var(--vscode-foreground);
+  background: transparent;
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+}
+.choice.on {
+  border-color: var(--accent);
+  background: var(--selected);
+}
+.choice-desc {
+  font-size: 0.86em;
+  color: var(--muted);
+}
+.rewind-sum .del {
+  color: var(--err);
+}
+.rewind-sum .add {
+  color: var(--ok);
+}
+.rewind-files,
 .export-name {
   font-family: var(--vscode-editor-font-family);
   font-size: 0.88em;
   overflow-wrap: anywhere;
+}
+.rewind-files {
+  margin: 2px 0 6px;
+  padding-left: 18px;
 }
 .toast {
   position: fixed;

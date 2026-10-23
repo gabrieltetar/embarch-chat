@@ -10,7 +10,9 @@
 // then strips machine paths before a fixture is copied into test/fixtures/.
 
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { createInterface } from "node:readline";
 import { createRequire } from "node:module";
@@ -405,6 +407,56 @@ const scenarios = {
     q.control("ex-1", { subtype: "export_conversation" });
     await q.until(isResp("ex-1"));
     await q.close();
+  },
+  // Rewind (decision 73): with the SDK's file checkpointing on, as Claude Code's
+  // panel spawns it, `rewind_files` at the second message — first a dry run,
+  // then for real — puts a.txt back as the first turn left it. Then the
+  // session as a closed chat has it: resumed, and a dry run at the first
+  // message asked before any message.
+  async rewind() {
+    const env = { CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: "true" };
+    const r = new Rec("rewind", ["--tools", "Read,Write,Edit"], { persist: true, env });
+    r.user("Use the Write tool to create a.txt containing exactly the word: one. Then reply with just: done");
+    const first = await r.until((o) => o.type === "user" && o.isReplay);
+    await r.result();
+    r.user("Use the Edit tool to change one to two in a.txt. Then reply with just: done");
+    const second = await r.until((o) => o.type === "user" && o.isReplay);
+    await r.result();
+    fs.writeFileSync(path.join(scratch, "rewind.before"), fs.readFileSync(path.join(r.dir, "a.txt")));
+    r.control("rw-1", { subtype: "rewind_files", user_message_id: second.uuid, dry_run: true });
+    await r.until(isResp("rw-1"));
+    r.control("rw-2", { subtype: "rewind_files", user_message_id: second.uuid });
+    await r.until(isResp("rw-2"));
+    fs.writeFileSync(path.join(scratch, "rewind.after"), fs.readFileSync(path.join(r.dir, "a.txt")));
+    r.user("Reply with just: ok");
+    const res = await r.result();
+    await r.close();
+    const q = new Rec("rewindresume", ["--tools", "Read,Write,Edit", "--resume", res.session_id], { persist: true, env, dir: "rewind" });
+    q.control("rw-3", { subtype: "rewind_files", user_message_id: first.uuid, dry_run: true });
+    await q.until(isResp("rw-3"));
+    await q.close();
+  },
+  // Fork (decision 73): a new session from the parent's transcript up to the
+  // entry before its second message — `--resume <parent> --fork-session
+  // --session-id <new> --resume-session-at <entry>` — knows only the first.
+  async fork() {
+    const p = new Rec("forkparent", ["--tools", ""], { persist: true, dir: "fork" });
+    p.user("Remember the word PELICAN. Reply with just: noted");
+    await p.result();
+    p.user("Also remember the word OTTER. Reply with just: noted");
+    const second = await p.until((o) => o.type === "user" && o.isReplay);
+    const res = await p.result();
+    await p.close();
+    const sid = res.session_id;
+    const proj = path.join(os.homedir(), ".claude", "projects", p.dir.replace(/[^a-zA-Z0-9]/g, "-"));
+    const lines = fs.readFileSync(path.join(proj, `${sid}.jsonl`), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+    const at = lines.find((l) => l.uuid === second.uuid)?.parentUuid;
+    const fid = randomUUID();
+    fs.writeFileSync(path.join(scratch, "fork.ids"), JSON.stringify({ parent: sid, second: second.uuid, at, fork: fid }) + "\n");
+    const f = new Rec("fork", ["--tools", "", "--resume", sid, "--fork-session", "--session-id", fid, "--resume-session-at", at], { persist: true });
+    f.user("Which words did I ask you to remember? Reply with the words only.");
+    await f.result();
+    await f.close();
   },
   async persist() {
     const r = new Rec("persist", ["--tools", ""], { persist: true });

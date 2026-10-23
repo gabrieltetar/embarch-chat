@@ -1,9 +1,61 @@
-// A chat's history as the owner works with it (decisions 74 and 75):
-// the conversation as plain text, and a name given by hand, appended to the
-// transcript Claude writes — nothing new is stored (decision 12).
+// A chat's history as the owner works with it (decisions 73–75): where a fork from one of the owner's messages resumes and what it
+// shows, the conversation as plain text, and a name given by hand. Read
+// from — and, for a name, appended to — the transcript Claude writes:
+// nothing new is stored (decision 12).
 
 import * as fs from "fs";
 import type { ChatState, Entry } from "./reducer";
+import { transcriptEvents } from "./transcript";
+import type { WireMessage } from "./types";
+
+interface Line {
+  raw: string;
+  o: { type?: string; uuid?: string; parentUuid?: string | null; logicalParentUuid?: string | null };
+}
+
+function lines(file: string): Line[] {
+  const out: Line[] = [];
+  for (const raw of fs.readFileSync(file, "utf8").split("\n")) {
+    if (!raw.trim()) continue;
+    try {
+      out.push({ raw, o: JSON.parse(raw) });
+    } catch {
+      /* a line Claude is still writing */
+    }
+  }
+  return out;
+}
+
+/**
+ * Where a fork from the owner's message `uuid` resumes: the transcript
+ * entry before it — the CLI's `--resume-session-at` keeps up to and
+ * including it — or null when the message opened the session. Undefined
+ * when the transcript does not hold the message.
+ */
+export function forkPoint(file: string, uuid: string): { at: string | null } | undefined {
+  const hit = lines(file).find((l) => l.o.uuid === uuid && l.o.type === "user");
+  return hit ? { at: hit.o.parentUuid ?? null } : undefined;
+}
+
+/**
+ * The conversation a fork starts from, as events to fold: the chain that
+ * ends at `at`, walked back by parent — across a compaction by its logical
+ * parent, as the chat showed it — in the transcript's own order. A branch
+ * the chain does not run through stays out.
+ */
+export function historyUpTo(file: string, at: string): WireMessage[] {
+  const all = lines(file);
+  const byUuid = new Map<string, Line>();
+  for (const l of all) if (typeof l.o.uuid === "string") byUuid.set(l.o.uuid, l);
+  const keep = new Set<string>();
+  for (let id: string | null | undefined = at; id && !keep.has(id); ) {
+    const l = byUuid.get(id);
+    if (!l) break;
+    keep.add(id);
+    id = l.o.parentUuid ?? l.o.logicalParentUuid;
+  }
+  return transcriptEvents(all.filter((l) => l.o.uuid && keep.has(l.o.uuid)).map((l) => l.raw).join("\n")).events;
+}
 
 /**
  * Names a session Claude Code's own way when no process of it runs: the

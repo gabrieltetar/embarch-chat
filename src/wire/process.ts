@@ -18,6 +18,12 @@ export interface SpawnSpec {
   permissionMode: string;
   /** Omitted: the owner's default model (decision 22). */
   model?: string;
+  /**
+   * A new session that starts as a copy of `from`'s conversation up to and
+   * including its entry `at` — the CLI's own fork (decision 73). Only while the
+   * session is new: once it exists it resumes like any other.
+   */
+  fork?: { from: string; at: string };
   env?: NodeJS.ProcessEnv;
   extraArgs?: string[];
   /** What else the one `initialize` declares: the panel's own hooks and MCP servers (decisions 61, 65). */
@@ -41,7 +47,12 @@ export function claudeArgs(spec: SpawnSpec): string[] {
     // The CLI's own guess at the next prompt, one of the reply chips (decision 25).
     "--prompt-suggestions",
   ];
-  args.push(...(spec.resume ? [`--resume=${spec.sessionId}`] : ["--session-id", spec.sessionId]));
+  if (spec.fork && !spec.resume) {
+    // `--session-id` names the copy: the CLI takes it with --resume only beside --fork-session.
+    const { from, at } = spec.fork;
+    if (!isSessionId(from) || !isSessionId(at)) throw new Error(`not a fork point: ${JSON.stringify(spec.fork).slice(0, 120)}`);
+    args.push(`--resume=${from}`, "--fork-session", "--session-id", spec.sessionId, "--resume-session-at", at);
+  } else args.push(...(spec.resume ? [`--resume=${spec.sessionId}`] : ["--session-id", spec.sessionId]));
   if (spec.model) args.push("--model", spec.model);
   if (spec.extraArgs) args.push(...spec.extraArgs);
   return args;

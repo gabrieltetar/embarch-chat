@@ -51,6 +51,8 @@ export interface HostCtx {
   freshChat: (sid: string) => void;
   /** Makes a resumable thread this window's (32) for the owner's message; false when it may not be resumed here (the message then stays in the refusal's note). */
   resume: (sid: string, text: string) => Promise<boolean>;
+  /** A new chat on the same work item, forked from this one before the owner's message `uuid` (decision 73). */
+  fork: (sid: string, uuid: string) => Promise<void>;
   /** The owner names a chat (decision 75). */
   rename: (sid: string) => Promise<void>;
 }
@@ -255,6 +257,8 @@ export class ChatHost implements vscode.Disposable {
         return this.ctx.freshChat(chat.sessionId);
       case "rename":
         return this.ctx.rename(chat.sessionId);
+      case "rewindCheck":
+      case "rewind":
       case "export":
       case "exportSave":
         return historyMessage(this.ctx, rec, m, (x) => this.post(x));

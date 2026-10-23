@@ -1,21 +1,70 @@
-// The chat's history, host side (decision 74): the export dialog's
-// text — Claude Code's own /export, or the panel's for a chat it may not
-// run — and its save through VS Code's save dialog.
+// The chat's history, host side (decisions 73 and 74): a rewind
+// checked with a dry run, then done — the files only with the owner's
+// confirmation, the conversation always as a fork, as Claude Code's panel
+// does it — and the export dialog's text and its save.
 
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
 import type { ChatRecord } from "../chats";
+import type { RewindResult } from "../wire/chat";
 import { conversationText, exportFileName } from "../wire/history";
 import type { ChatToHost, HostToChat } from "../../webview/shared/protocol";
 import type { HostCtx } from "./chatHost";
 
-export type HistoryMessage = Extract<ChatToHost, { t: "export" | "exportSave" }>;
+export type HistoryMessage = Extract<ChatToHost, { t: "rewindCheck" | "rewind" | "export" | "exportSave" }>;
+
+/** The owner's message as a note quotes it: its first line, cut short. */
+function quote(text: string): string {
+  const l = text.trim().split("\n")[0];
+  return l.length > 60 ? `${l.slice(0, 59)}…` : l;
+}
+
+/** Why the files of this chat cannot be rewound now, or null. Only a chat this window runs has the process that holds its checkpoints. */
+function noFileRewind(rec: ChatRecord): string | null {
+  if (!rec.ours) return "Its files are rewound from where this chat runs; here only the conversation, as a fork.";
+  if (rec.chat.state.busy || rec.chat.state.compacting) return "Claude is working: stop the turn first.";
+  if (rec.chat.state.pending.length) return "Claude waits on your answer: answer or stop first.";
+  return null;
+}
 
 export async function historyMessage(ctx: HostCtx, rec: ChatRecord, m: HistoryMessage, post: (m: HostToChat) => void): Promise<void> {
   const chat = rec.chat;
   switch (m.t) {
+    case "rewindCheck": {
+      const no = noFileRewind(rec);
+      let result: RewindResult;
+      if (no) result = { canRewind: false, error: no };
+      else {
+        try {
+          result = await chat.rewindFiles(m.uuid, true);
+        } catch (e) {
+          result = { canRewind: false, error: (e as Error).message };
+        }
+      }
+      post({ t: "rewindCheck", uuid: m.uuid, result });
+      return;
+    }
+    case "rewind": {
+      const e = Object.values(chat.state.entries).find((x) => x.kind === "user" && x.uuid === m.uuid);
+      const what = e && e.kind === "user" ? `“${quote(e.text)}”` : "that message";
+      if (m.restore !== "conversation") {
+        // Files change on disk: only as confirmed, from the dry run the owner saw.
+        const no = noFileRewind(rec);
+        if (no) return chat.note(`Files not rewound: ${no}`, "error");
+        try {
+          const r = await chat.rewindFiles(m.uuid, false);
+          if (!r.canRewind) return chat.note(`Files not rewound: ${r.error ?? "Claude Code could not."}`, "error");
+          const skipped = r.skippedLinks ? ` ${r.skippedLinks} link${r.skippedLinks > 1 ? "s were" : " was"} left alone.` : "";
+          chat.note(`Files rewound to before ${what}.${skipped}`);
+        } catch (err) {
+          return chat.note(`Files not rewound: ${(err as Error).message}`, "error");
+        }
+      }
+      if (m.restore !== "code") await ctx.fork(chat.sessionId, m.uuid);
+      return;
+    }
     case "export": {
       // The CLI's own /export text for a chat this window runs (resumed for
       // it when closed); any other is rendered here from what the page shows.

@@ -1,0 +1,2 @@
+{"d":"in","o":{"type":"control_request","request_id":"rw-3","request":{"subtype":"rewind_files","user_message_id":"aa7dcc4f-1600-4d65-97d0-20c74a8755a6","dry_run":true}}}
+{"d":"out","o":{"type":"control_response","response":{"subtype":"success","request_id":"rw-3","response":{"canRewind":true,"filesChanged":["/work/rec/rewind/a.txt"],"insertions":0,"deletions":1}}}}

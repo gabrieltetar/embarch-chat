@@ -6,12 +6,19 @@
 // keeps only the session's state.
 //
 //   node test/sanitize.mjs <recording.jsonl> <fixture.jsonl> <scratch-dir>
+//   node test/sanitize.mjs --transcript <session.jsonl> <fixture.jsonl> <scratch-dir>
+//
+// With --transcript it scrubs a transcript Claude wrote instead (a fork's
+// parent, read by the panel): the conversation's chain and its titles stay,
+// an attachment keeps only its kind and its place in the chain — they
+// carry the account's email and organisation — and the CLI's bookkeeping lines go.
 
 import * as fs from "node:fs";
 
-const [, , src, dst, scratch] = process.argv;
+const asTranscript = process.argv[2] === "--transcript";
+const [src, dst, scratch] = process.argv.slice(asTranscript ? 3 : 2);
 if (!src || !dst || !scratch) {
-  console.error("usage: sanitize.mjs <recording.jsonl> <fixture.jsonl> <scratch-dir>");
+  console.error("usage: sanitize.mjs [--transcript] <recording.jsonl> <fixture.jsonl> <scratch-dir>");
   process.exit(2);
 }
 
@@ -50,6 +57,21 @@ const scrub = (s) => {
   }
   return s;
 };
+
+if (asTranscript) {
+  const KEEP = ["user", "assistant", "system", "attachment", "ai-title", "custom-title"];
+  const lines = [];
+  for (const line of fs.readFileSync(src, "utf8").split("\n")) {
+    if (!line.trim()) continue;
+    const o = JSON.parse(line);
+    if (!KEEP.includes(o.type)) continue;
+    const kept = o.type !== "attachment" ? o : { type: o.type, uuid: o.uuid, parentUuid: o.parentUuid, isSidechain: o.isSidechain, sessionId: o.sessionId, cwd: o.cwd, timestamp: o.timestamp, attachment: { type: o.attachment?.type } };
+    lines.push(scrub(JSON.stringify(kept)));
+  }
+  fs.writeFileSync(dst, lines.join("\n") + "\n");
+  console.log(`${dst}: ${lines.length} lines`);
+  process.exit(0);
+}
 
 // A tool's input and a reply's text stream as fragments that can split a
 // path anywhere. A tool's fragments are joined into a single delta, scrubbed

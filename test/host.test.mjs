@@ -580,7 +580,7 @@ test("with continueAfterReload off, a chat cut off mid-turn comes back saying no
   }
 });
 
-// ------------------------------------------------------------ history (decisions 74 and 75)
+// ------------------------------------------------------------ history (decisions 73–75)
 
 test("Rename from the list: the owner's name, given before the first turn, is the chat's — Haiku's never replaces it — and the list shows it", { skip }, async () => {
   const sid = await startUntracked("suggest");
@@ -647,4 +647,123 @@ test("Export: the conversation as plain text for the page; Save writes it where 
   assert.equal(fs.readFileSync(target, "utf8"), ex.text);
   assert.equal(path.basename(asked.defaultUri.fsPath), ex.filename);
   mock.state.saveDialog = async () => undefined;
+});
+
+const PARENT_FIXTURE = path.join(here, "fixtures", "fork", "6c563cde-6794-42ea-b651-dbbcb0946fdc.jsonl");
+
+test("Fork conversation from here: a new chat on the same item with the conversation up to the message and the message in its draft; its first message runs the CLI's own fork", { skip }, async () => {
+  const { id: item } = await client.call("POST", "/items", { title: "ABC-131 fork it", desk: "none" });
+  await mock.state.commands.get("embarchChat.refresh")();
+  process.env.FAKE_CLAUDE_FIXTURE = path.join(here, "fixtures", "wire", "forkparent.jsonl");
+  mock.state.quickPick = async (items) => items.find((i) => i.label.includes("ABC-131 fork it"));
+  await mock.state.commands.get("embarchChat.newChat")();
+  const parent = await waitFor(() => lastSnapshot()?.header?.itemId === item && lastSnapshot().state.sessionId, 5000, "the chat on the item");
+  const n0 = chatView.webview.posted.length;
+  const results = () => chatView.webview.posted.slice(n0).filter((m) => m.t === "event" && m.e.type === "result").length;
+  chatView.webview.fromPage({ t: "send", text: "Remember the word PELICAN. Reply with just: noted" });
+  await waitFor(() => results() >= 1, 5000, "the first turn");
+  chatView.webview.fromPage({ t: "send", text: "Also remember the word OTTER. Reply with just: noted" });
+  await waitFor(() => results() >= 2, 5000, "the second turn");
+  // Claude's transcript of it, as the CLI wrote it for the recording.
+  const text = fs.readFileSync(PARENT_FIXTURE, "utf8").replaceAll("6c563cde-6794-42ea-b651-dbbcb0946fdc", parent).replaceAll("/work/rec/fork", folder);
+  const file = path.join(process.env.CLAUDE_CONFIG_DIR, "projects", folder.replace(/[^a-zA-Z0-9]/g, "-"), `${parent}.jsonl`);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, text);
+  const second = text.trim().split("\n").map((l) => JSON.parse(l)).filter((l) => l.type === "user")[1];
+  process.env.FAKE_CLAUDE_FIXTURE = path.join(here, "fixtures", "wire", "fork.jsonl");
+  const n1 = chatView.webview.posted.length;
+  const since = (pred) => chatView.webview.posted.slice(n1).find(pred);
+  chatView.webview.fromPage({ t: "rewind", uuid: second.uuid, restore: "conversation" });
+  const snap = await waitFor(() => since((m) => m.t === "snapshot" && m.state.sessionId !== parent), 5000, "the fork");
+  const fork = snap.state.sessionId;
+  assert.equal(snap.header.itemId, item, "on the same work item");
+  assert.deepEqual(
+    snap.state.timeline.map((id) => snap.state.entries[id].text),
+    ["Remember the word PELICAN. Reply with just: noted", "noted"],
+    "the conversation up to the message",
+  );
+  const draft = await waitFor(() => since((m) => m.t === "draft" && m.sid === fork), 3000, "the message in the draft");
+  assert.equal(draft.text, "Also remember the word OTTER. Reply with just: noted");
+  await waitFor(() => since((m) => m.t === "event" && m.e.type === "_title" && / \(fork\)$/.test(m.e.title)), 3000, "the fork's name");
+  const row = (await client.view()).sessions.find((x) => x.session_id === fork);
+  assert.equal(row?.item_id, item, "the desk has it on the item, as any new chat (10)");
+  assert.equal(row?.client, "embarch-chat");
+  // Its first message: the CLI copies the parent up to the point.
+  chatView.webview.fromPage({ t: "send", text: "Which words did I ask you to remember? Reply with the words only." });
+  await waitFor(() => since((m) => m.t === "event" && m.e.type === "result"), 5000, "the fork's first turn");
+  const run = calls().filter((c) => c.argv.includes("--fork-session")).at(-1);
+  assert.ok(run.argv.includes(`--resume=${parent}`));
+  assert.equal(run.argv[run.argv.indexOf("--session-id") + 1], fork);
+  assert.equal(run.argv[run.argv.indexOf("--resume-session-at") + 1], second.parentUuid);
+  assert.equal(run.env.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING, "true");
+  // A fork keeps its name: Haiku names no fork (12).
+  await new Promise((r) => setTimeout(r, 300));
+  const haikuName = core.parseTurn(haikuAnswer("turn")).name;
+  assert.ok(!chatView.webview.posted.slice(n1).some((m) => m.t === "event" && m.e.type === "_title" && m.e.title === haikuName), "no Haiku name");
+});
+
+test("Rewind code: a dry run for the confirmation, then the files only on the owner's word, and a note says so", { skip }, async () => {
+  const sid = await startUntracked("rewind");
+  const n = chatView.webview.posted.length;
+  const evs = () => chatView.webview.posted.slice(n).filter((m) => m.t === "event").map((m) => m.e);
+  const allow = async (k) => {
+    const req = await waitFor(() => evs().filter((e) => e.type === "control_request")[k], 5000, "a permission prompt");
+    chatView.webview.fromPage({ t: "allow", requestId: req.request_id });
+  };
+  chatView.webview.fromPage({ t: "send", text: "Use the Write tool to create a.txt containing exactly the word: one. Then reply with just: done" });
+  await allow(0);
+  await waitFor(() => evs().filter((e) => e.type === "result").length >= 1, 5000, "the first turn");
+  chatView.webview.fromPage({ t: "send", text: "Use the Edit tool to change one to two in a.txt. Then reply with just: done" });
+  await allow(1);
+  await waitFor(() => evs().filter((e) => e.type === "result").length >= 2, 5000, "the second turn");
+  const second = evs().filter((e) => e.type === "user" && e.isReplay)[1].uuid;
+  chatView.webview.fromPage({ t: "rewindCheck", uuid: second });
+  const check = await waitFor(() => posted((m) => m.t === "rewindCheck" && m.uuid === second), 5000, "the dry run");
+  assert.deepEqual(check.result, { canRewind: true, filesChanged: ["/work/rec/rewind/a.txt"], insertions: 1, deletions: 1 });
+  chatView.webview.fromPage({ t: "rewind", uuid: second, restore: "code" });
+  await waitFor(() => evs().some((e) => e.type === "_note" && e.text === "Files rewound to before “Use the Edit tool to change one to two in a.txt. Then reply…”."), 5000, "the note");
+  assert.ok(!chatView.webview.posted.slice(n).some((m) => m.t === "snapshot" && m.state.sessionId !== sid), "the files only: no fork");
+});
+
+test("a fork no message was sent to comes back after a reload still a fork: what it starts from, its name, and its first message copies the parent (decisions 63, 73)", { skip }, async () => {
+  const { id: item } = await client.call("POST", "/items", { title: "ABC-132 fork, then reload", desk: "none" });
+  await mock.state.commands.get("embarchChat.refresh")();
+  process.env.FAKE_CLAUDE_FIXTURE = path.join(here, "fixtures", "wire", "forkparent.jsonl");
+  mock.state.quickPick = async (items) => items.find((i) => i.label.includes("ABC-132 fork, then reload"));
+  await mock.state.commands.get("embarchChat.newChat")();
+  const parent = await waitFor(() => lastSnapshot()?.header?.itemId === item && lastSnapshot().state.sessionId, 5000, "the chat on the item");
+  const n0 = chatView.webview.posted.length;
+  const results = () => chatView.webview.posted.slice(n0).filter((m) => m.t === "event" && m.e.type === "result").length;
+  chatView.webview.fromPage({ t: "send", text: "Remember the word PELICAN. Reply with just: noted" });
+  await waitFor(() => results() >= 1, 5000, "the first turn");
+  chatView.webview.fromPage({ t: "send", text: "Also remember the word OTTER. Reply with just: noted" });
+  await waitFor(() => results() >= 2, 5000, "the second turn");
+  const text = fs.readFileSync(PARENT_FIXTURE, "utf8").replaceAll("6c563cde-6794-42ea-b651-dbbcb0946fdc", parent).replaceAll("/work/rec/fork", folder);
+  const file = path.join(process.env.CLAUDE_CONFIG_DIR, "projects", folder.replace(/[^a-zA-Z0-9]/g, "-"), `${parent}.jsonl`);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, text);
+  const second = text.trim().split("\n").map((l) => JSON.parse(l)).filter((l) => l.type === "user")[1];
+  const n1 = chatView.webview.posted.length;
+  chatView.webview.fromPage({ t: "rewind", uuid: second.uuid, restore: "conversation" });
+  const fork = (await waitFor(() => chatView.webview.posted.slice(n1).find((m) => m.t === "snapshot" && m.state.sessionId !== parent), 5000, "the fork")).state.sessionId;
+  const name = (await waitFor(() => chatView.webview.posted.slice(n1).find((m) => m.t === "event" && m.e.type === "_title" && / \(fork\)$/.test(m.e.title)), 3000, "its name")).e.title;
+  // The window reloads before a message went to the fork.
+  await reload(() => (process.env.FAKE_CLAUDE_FIXTURE = path.join(here, "fixtures", "wire", "fork.jsonl")));
+  const back = await waitFor(() => {
+    const s = lastSnapshot();
+    return s?.state.sessionId === fork && s.view.ours && s.state.title === name && s;
+  }, 15000, "the fork back, with its name");
+  assert.deepEqual(
+    back.state.timeline.map((id) => back.state.entries[id].text),
+    ["Remember the word PELICAN. Reply with just: noted", "noted"],
+    "what it starts from",
+  );
+  const spawnsBefore = calls().length;
+  chatView.webview.fromPage({ t: "send", text: "Which words did I ask you to remember? Reply with the words only." });
+  await waitFor(() => chatView.webview.posted.some((m) => m.t === "event" && m.e.type === "result"), 5000, "its first turn");
+  const run = calls().slice(spawnsBefore).find((c) => c.argv.includes("--input-format"));
+  assert.ok(run.argv.includes(`--resume=${parent}`) && run.argv.includes("--fork-session"), run.argv.join(" "));
+  assert.equal(run.argv[run.argv.indexOf("--session-id") + 1], fork);
+  assert.equal(run.argv[run.argv.indexOf("--resume-session-at") + 1], second.parentUuid);
+  assert.equal(run.env.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING, "true");
 });

@@ -4,6 +4,7 @@
 // (decision 20).
 
 import type { ChatState } from "../../src/wire/reducer";
+import type { RewindResult } from "../../src/wire/chat";
 import type { WireMessage } from "../../src/wire/types";
 import type { PrRef } from "../../src/desk/client";
 import type { ThreadGroup } from "../../src/desk/threads";
@@ -58,8 +59,13 @@ export type HostToChat =
   | { t: "chips"; sid: string; chips: Chip[] }
   /** Text back into a chat's draft: a held message not sent, a start the desk refused. */
   | { t: "draft"; sid: string; text: string }
+  /** What rewinding the files to before message `uuid` would change: the dry run the confirmation shows (decision 73). */
+  | { t: "rewindCheck"; uuid: string; result: RewindResult }
   /** The conversation as plain text, for the export dialog (decision 74). */
   | { t: "export"; text: string; filename: string };
+
+/** What a rewind restores (decision 73), as Claude Code's panel offers it: the conversation always as a fork. */
+export type Restore = "both" | "conversation" | "code";
 
 export interface MentionItem {
   /** What goes after the @. */
@@ -99,6 +105,10 @@ export type ChatToHost =
   | { t: "assistCancel" }
   /** A chip that acts: a fresh chat with this chat's handoff (36). */
   | { t: "freshChat" }
+  /** A dry run of rewinding the files to before the owner's message `uuid` (decision 73). */
+  | { t: "rewindCheck"; uuid: string }
+  /** Rewinds to before the owner's message `uuid`: its files, and/or the conversation as a fork (decision 73). */
+  | { t: "rewind"; uuid: string; restore: Restore }
   /** The conversation as plain text, for the export dialog (decision 74). */
   | { t: "export" }
   /** Saves the export through VS Code's save dialog. */

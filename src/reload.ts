@@ -23,6 +23,7 @@ import type { ChatManager } from "./chats";
 import { agentPid } from "./jump";
 import { NO_REPLY_NOTE, RERUN_MAX_AGE_MS } from "./wire/chat";
 import { findTranscript } from "./wire/transcript";
+import { historyUpTo } from "./wire/history";
 
 const KEY = "embarchChat.openChats";
 /** A window back within this long of its last note is a reload. */
@@ -45,6 +46,8 @@ interface SavedChat {
   reruns: number;
   /** A name the owner gave before the chat's first message, not yet sent (decision 75). */
   title?: string;
+  /** A fork no message was sent to yet: where it starts from (decision 73). */
+  fork?: { from: string; at: string };
 }
 
 interface Saved {
@@ -100,6 +103,7 @@ export class ReloadMemory implements vscode.Disposable {
         tab: tabs.has(sid),
         reruns: this.rerunsOf(sid),
         ...(r.chat.pendingName ? { title: r.chat.pendingName } : {}),
+        ...(r.chat.pendingFork ? { fork: r.chat.pendingFork } : {}),
       });
     }
     const saved: Saved | undefined = chats.length ? { at: Date.now(), current: this.manager.current, chats } : undefined;
@@ -141,11 +145,14 @@ export async function restoreAfterReload(o: RestoreCtx): Promise<void> {
   o.log(`window reloaded: ${back.length} chat(s) back`);
   for (const c of back) {
     // A chat no message was sent to has no transcript to resume: it comes
-    // back new, with a name the owner gave it (decision 75). Any other is
-    // read-only until nothing else runs it (31); a reload's own process is gone by then.
+    // back new, with a name the owner gave it (decision 75) — a fork still
+    // a fork, showing what it starts from (73). Any other is read-only
+    // until nothing else runs it (31); a reload's own process is gone by then.
     const fresh = !findTranscript(c.sid, c.cwd || undefined);
-    const rec = fresh ? o.manager.create(c.sid, c.cwd, c.itemId, c.itemTitle, { untracked: c.untracked }) : o.manager.openViewer(c.sid, c.cwd, c.itemId, c.itemTitle, true);
+    const rec = fresh ? o.manager.create(c.sid, c.cwd, c.itemId, c.itemTitle, { untracked: c.untracked, fork: c.fork }) : o.manager.openViewer(c.sid, c.cwd, c.itemId, c.itemTitle, true);
     if (!rec) continue;
+    const parent = fresh && c.fork ? findTranscript(c.fork.from, c.cwd || undefined) : null;
+    if (parent) rec.chat.preload(historyUpTo(parent, c.fork!.at));
     if (fresh && c.title) void rec.chat.renameByHand(c.title);
     rec.untracked = c.untracked;
     o.memory.noteRerun(c.sid, c.reruns);

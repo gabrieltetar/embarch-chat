@@ -3,8 +3,8 @@
 // wire events, folded here by the same reducer the host runs; events are
 // folded as they come and rendered once per frame. The timeline is in turns,
 // one per message of the owner's (decision 51), and runs of quiet steps fold
-// into one row (decision 50). Its history — copy, export — is history.tsx's
-// (decision 74).
+// into one row (decision 50). Its history — fork, rewind, copy, export — is
+// history.tsx's (decisions 73 and 74).
 
 import "../shared/style.css";
 import { render } from "preact";
@@ -26,7 +26,7 @@ import { LimitBannerView } from "./limits";
 import { Stamp, useNow } from "./clock";
 import { dayKey, elapsedText, stalled } from "./time";
 import { cacheClock } from "../../src/wire/limits";
-import { CopyReply, ExportDialog, LOCAL_COMMANDS, Toast, localCommand, replies } from "./history";
+import { CopyReply, ExportDialog, LOCAL_COMMANDS, MessageActions, RewindDialog, Toast, localCommand, replies, useEscEsc } from "./history";
 
 let uiUrl = "";
 toolRenderers.push(benchRenderer(() => uiUrl));
@@ -171,6 +171,8 @@ function App() {
   const frame = useRef(0);
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
+  // Esc twice at an idle input opens the rewind picker (decision 73).
+  useEscEsc(!!model.view && !model.view.readOnly && !!model.state && !model.state.busy && !model.state.compacting);
 
   useEffect(() => {
     const flush = () => {
@@ -275,6 +277,7 @@ function App() {
             {e.text}
             {e.pending && e.held && <div class="held muted">after the compaction</div>}
             {e.unsent && <div class="held muted">not sent — it is back in the draft</div>}
+            <MessageActions e={e} view={view} />
           </div>
         );
       case "text": {
@@ -339,7 +342,7 @@ function App() {
       </details>
     ) : null;
   const busy = state.busy || state.compacting;
-  // The page's own /copy and /export join the session's commands once it has them: a chat with none yet has nothing to copy.
+  // The page's own /rewind, /copy and /export join the session's commands once it has them: a chat with none yet has nothing to rewind.
   const commands = state.slashCommands.length ? [...state.slashCommands, ...LOCAL_COMMANDS.filter((c) => !state.slashCommands.includes(c))] : state.slashCommands;
   let lastDay = "";
   const placeholder = view.readOnly ? "" : view.resumable ? "Message to resume this chat here" : busy ? "Queue a message…" : "Message Claude — @ for files, / for commands";
@@ -374,6 +377,7 @@ function App() {
           );
         })}
       </div>
+      <RewindDialog state={state} view={view} />
       <ExportDialog />
       <Toast />
       <PendingCards

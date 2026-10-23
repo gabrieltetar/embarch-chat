@@ -25,9 +25,22 @@ export interface ChatOptions {
   env?: NodeJS.ProcessEnv;
   /** Extra CLI flags, for tests (a stripped model, no MCP, ...). */
   extraArgs?: string[];
+  /** A fork (decision 73): the first process copies `from`'s conversation up to its entry `at`. */
+  fork?: { from: string; at: string };
   log?: (line: string) => void;
   /** What the panel does for the CLI (decisions 61, 65), read as each process starts: settings may have changed. */
   hooks?: () => HostHooks;
+}
+
+/** `rewind_files`' answer, as the CLI gives it. */
+export interface RewindResult {
+  canRewind: boolean;
+  error?: string;
+  filesChanged?: string[];
+  insertions?: number;
+  deletions?: number;
+  /** Paths left alone because they are links. */
+  skippedLinks?: number;
 }
 
 export interface Attachment {
@@ -93,6 +106,11 @@ export class Chat extends EventEmitter {
   /** The owner's name still waiting for the chat's first turn: what a reload must carry (decision 63). */
   get pendingName(): string | null {
     return this.pendingTitle;
+  }
+
+  /** A fork whose first process has not run yet (decision 73): where it starts from, for a reload to carry. */
+  get pendingFork(): { from: string; at: string } | null {
+    return this.hasSession ? null : (this.opts.fork ?? null);
   }
 
   constructor(readonly opts: ChatOptions) {
@@ -188,7 +206,10 @@ export class Chat extends EventEmitter {
 
   private ensureProcess(): ClaudeProcess {
     if (this.proc && !this.proc.exited) return this.proc;
-    let env = this.opts.env ?? chatEnv();
+    // File checkpoints, as Claude Code's panel runs the CLI
+    // (`enableFileCheckpointing`): what a rewind of a message's files needs
+    // (decision 73) — for every process, a rerun after a reload too (63).
+    let env: NodeJS.ProcessEnv = { ...(this.opts.env ?? chatEnv()), CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: "true" };
     this.settleSession(env);
     // The CLI's own rerun of an interrupted step, as Claude Code spawns it (63): this process only.
     const rerun = this.rerun;
@@ -208,6 +229,7 @@ export class Chat extends EventEmitter {
       env,
       extraArgs: this.opts.extraArgs,
       ...(init ? { initialize: init } : {}),
+      fork: this.hasSession ? undefined : this.opts.fork,
     };
     const proc = new ClaudeProcess(spec);
     // Their callbacks are answered in process.ts and never reach the refusal below (66).
@@ -513,8 +535,8 @@ export class Chat extends EventEmitter {
 
   /**
    * A control request of the owner's to this chat's own process, resumed
-   * for it when it has closed (decision 41) — an export. Only a chat
-   * whose session exists: a new one has nothing to ask about.
+   * for it when it has closed (decision 41) — a rewind, an export. Only a
+   * chat whose session exists: a new one has nothing to ask about.
    */
   private async control(subtype: string, fields: Record<string, unknown> = {}, timeoutMs?: number): Promise<Record<string, unknown>> {
     if (!this.hasSession) throw new Error("this chat has no conversation yet");
@@ -527,6 +549,18 @@ export class Chat extends EventEmitter {
       if (this.proc === proc && !proc.exited && this.state.process === "starting") this.dispatch({ type: "_process", state: "running" });
       this.touch();
     }
+  }
+
+  /**
+   * The CLI's `rewind_files` (decision 73): the files Claude changed since the
+   * owner's message `uuid` go back to how they were before it — or, as a
+   * dry run, what that would change. Edits made by hand or by Bash are not
+   * Claude's checkpoints and stay as they are.
+   */
+  async rewindFiles(uuid: string, dryRun: boolean): Promise<RewindResult> {
+    const r = (await this.control("rewind_files", { user_message_id: uuid, ...(dryRun ? { dry_run: true } : {}) }, 30000)) as unknown as RewindResult;
+    if (!dryRun && r.canRewind) this.log(`files rewound to before ${uuid.slice(0, 8)}`);
+    return r;
   }
 
   /** The conversation as the plain text Claude Code's `/export` writes, and the file name it offers (decision 74). */

@@ -1339,18 +1339,27 @@ await check("the 📚: one submenu per category; a click puts /<name> in the dra
   assert.deepEqual(await text(".popup div"), ["/embarch-chat:build-flash-verifyBench"]);
 });
 
-// ------------------------------------------------------------ history (decisions 74 and 75)
+// ------------------------------------------------------------ history (decisions 73–75)
 
+const ESC = "";
 /** What the page wrote to the clipboard: the browser's own is not the test's to read. */
 const stubClipboard = () =>
   exec("window.__clip = []; Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: (t) => (window.__clip.push(t), Promise.resolve()) } });");
 const clip = () => exec("return window.__clip");
+/** The ids the CLI gave the owner's two messages in the basic recording. */
+const BASIC_UUIDS = outLines("basic").filter((o) => o.type === "user" && o.isReplay).map((o) => o.uuid);
 const basicChat = async (view) => {
   const sid = await fresh();
   await send([...(view ? [snapshot({ sessionId: sid }, view)] : []), sent("Run the bash command `echo hello-from-bash` and then reply with just: done"), ...events(outLines("basic"))]);
   await stubClipboard();
   await clearPosts();
 };
+/** Opens the menu on the owner's message that holds `t`. */
+const messageMenu = async (t) => {
+  await exec("const u=[...document.querySelectorAll('.user')].find(x => x.textContent.includes(arguments[0])); u.querySelector('.msg-act').click(); return true;", [t]);
+  await settle();
+};
+const keyOn = (sel, key) => exec("document.querySelector(arguments[0]).dispatchEvent(new KeyboardEvent('keydown', { key: arguments[1], bubbles: true, cancelable: true })); return true;", [sel, key]).then(settle);
 
 await check("a reply's Copy takes the whole reply as Markdown; /copy the latest, /copy 2 the one before — nothing goes to Claude", async () => {
   await basicChat();
@@ -1399,6 +1408,108 @@ await check("/export: the whole conversation as plain text, copied or saved thro
   await exec("document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
   await settle();
   assert.equal((await text(".dialog")).length, 0, "Escape closed it");
+});
+
+await check("each of the owner's messages has a menu: fork from it, and with its files in a chat this window runs", async () => {
+  await basicChat();
+  assert.equal((await text(".user .msg-act")).length, 2);
+  await hover(".user", "Reply with just: ok");
+  await messageMenu("Reply with just: ok");
+  assert.deepEqual(await text(".msg-menu .menu-item"), ["Fork conversation from here", "Rewind code to here", "Fork conversation and rewind code"]);
+  await shot("history-message-menu");
+  await click(".msg-menu .menu-item", "Fork conversation from here");
+  assert.deepEqual((await posts()).filter((p) => p.t === "rewind"), [{ t: "rewind", uuid: BASIC_UUIDS[1], restore: "conversation" }], "a fork changes no file: no confirmation");
+  assert.equal((await text(".msg-menu")).length, 0);
+  await mouseAway();
+});
+
+await check("a past chat nothing runs offers the fork alone; a thread run elsewhere, nothing", async () => {
+  await basicChat({ ...OURS, ours: false, resumable: true });
+  await messageMenu("Reply with just: ok");
+  assert.deepEqual(await text(".msg-menu .menu-item"), ["Fork conversation from here"]);
+  await basicChat({ ...OURS, ours: false, readOnly: true });
+  assert.equal((await text(".user .msg-act")).length, 0);
+});
+
+await check("Rewind code to here: a dry run's files and lines first; the files change only on the owner's click", async () => {
+  await basicChat();
+  await messageMenu("Reply with just: ok");
+  await click(".msg-menu .menu-item", "Rewind code to here");
+  assert.deepEqual((await posts()).filter((p) => p.t.startsWith("rewind")), [{ t: "rewindCheck", uuid: BASIC_UUIDS[1] }], "a dry run, nothing else");
+  assert.match((await text(".dialog.rewind"))[0], /Checking what the files would lose/);
+  assert.equal(await exec("return document.querySelector('.dialog.rewind button.primary').disabled"), true);
+  await send([{ t: "rewindCheck", uuid: BASIC_UUIDS[1], result: { canRewind: true, filesChanged: ["/work/rec/basic/a.txt", "/work/rec/basic/src/b.c"], insertions: 3, deletions: 5 } }]);
+  assert.equal((await text(".dialog-title"))[0], "Rewind code");
+  assert.equal((await text(".rewind-sum"))[0], "5 lines will be removed and 3 lines added, across 2 files:");
+  assert.deepEqual(await text(".rewind-files li"), ["a.txt", "src/b.c"]);
+  assert.deepEqual(await text(".dialog .warn"), ["Files edited by hand or by Bash are not rewound."]);
+  assert.equal((await text(".choice")).length, 0, "the menu said what to restore");
+  await shot("history-rewind-code");
+  assert.ok(!(await posts()).some((p) => p.t === "rewind"), "nothing changes before the click");
+  await click(".dialog.rewind button", "Never mind");
+  assert.equal((await text(".dialog")).length, 0);
+  assert.ok(!(await posts()).some((p) => p.t === "rewind"), "Never mind changes nothing");
+  await messageMenu("Reply with just: ok");
+  await click(".msg-menu .menu-item", "Fork conversation and rewind code");
+  await send([{ t: "rewindCheck", uuid: BASIC_UUIDS[1], result: { canRewind: true, filesChanged: ["/work/rec/basic/a.txt"], insertions: 0, deletions: 1 } }]);
+  assert.equal((await text(".dialog-title"))[0], "Fork and rewind");
+  assert.equal(await exec("return document.activeElement.classList.contains('dialog')"), true, "the confirmation takes the keys");
+  await click(".dialog.rewind button.primary");
+  assert.deepEqual((await posts()).filter((p) => p.t === "rewind"), [{ t: "rewind", uuid: BASIC_UUIDS[1], restore: "both" }]);
+});
+
+await check("a file rewind Claude Code refuses says why, and its button stays off", async () => {
+  await basicChat();
+  await messageMenu("Run the bash command");
+  await click(".msg-menu .menu-item", "Rewind code to here");
+  await send([{ t: "rewindCheck", uuid: BASIC_UUIDS[0], result: { canRewind: false, error: "No file checkpoint found for this message." } }]);
+  assert.deepEqual(await text(".dialog .err"), ["No file checkpoint found for this message."]);
+  assert.equal(await exec("return document.querySelector('.dialog.rewind button.primary').disabled"), true);
+  await click(".dialog.rewind button", "Never mind");
+});
+
+await check("/rewind opens a picker of the owner's messages, newest first, by keyboard; its confirmation offers what applies", async () => {
+  await basicChat();
+  await type("/rewind " + ENTER);
+  assert.ok(!(await posts()).some((p) => p.t === "send"));
+  assert.deepEqual(await text(".rewind-list li"), ["Reply with just: ok", "Run the bash command `echo hello-from-bash` and then reply with just: done"]);
+  await shot("history-rewind-picker");
+  await keyOn(".rewind-list", "ArrowDown");
+  assert.deepEqual(await text(".rewind-list li.on"), ["Run the bash command `echo hello-from-bash` and then reply with just: done"]);
+  await keyOn(".rewind-list", "Enter");
+  assert.deepEqual((await posts()).filter((p) => p.t === "rewindCheck"), [{ t: "rewindCheck", uuid: BASIC_UUIDS[0] }]);
+  await send([{ t: "rewindCheck", uuid: BASIC_UUIDS[0], result: { canRewind: true, filesChanged: ["/work/rec/basic/a.txt"], insertions: 0, deletions: 1 } }]);
+  assert.deepEqual(
+    (await text(".choice .choice-label")),
+    ["Restore code and conversation", "Restore conversation", "Restore code"],
+  );
+  assert.deepEqual(await text(".choice.on .choice-label"), ["Restore code and conversation"]);
+  assert.equal((await text(".rewind-sum")).length, 1);
+  await shot("history-rewind-confirm");
+  await click(".choice", "Restore conversation");
+  assert.equal((await text(".rewind-sum")).length, 0, "the conversation alone touches no file");
+  await click(".dialog.rewind button.primary");
+  assert.deepEqual((await posts()).filter((p) => p.t === "rewind"), [{ t: "rewind", uuid: BASIC_UUIDS[0], restore: "conversation" }]);
+  // Files unchanged since: the conversation alone is offered.
+  await type("/rewind " + ENTER);
+  await keyOn(".rewind-list", "Enter");
+  await send([{ t: "rewindCheck", uuid: BASIC_UUIDS[1], result: { canRewind: true, filesChanged: [], insertions: 0, deletions: 0 } }]);
+  assert.deepEqual(await text(".choice .choice-label"), ["Restore conversation"]);
+  await click(".dialog.rewind button", "Never mind");
+});
+
+await check("Esc twice at an idle, empty input opens the picker; once, or with a draft, it does not", async () => {
+  await basicChat();
+  await type(ESC);
+  await sleep(700);
+  await type(ESC);
+  assert.equal((await text(".dialog.rewind")).length, 0, "two slow ones are not a double");
+  await type(ESC + ESC);
+  assert.equal((await text(".dialog.rewind")).length, 1);
+  await click(".dialog.rewind button", "Close");
+  await type("half a thought");
+  await type(ESC + ESC);
+  assert.equal((await text(".dialog.rewind")).length, 0);
 });
 
 await check("the header's ✎ asks the host to rename the chat; a thread run elsewhere has none", async () => {

@@ -25,7 +25,8 @@ import { HostCtx, assistInput } from "./views/chatHost";
 import { CHAT_VIEW, ChatPanels, ChatViewProvider, THREADS_VIEW, ThreadsViewProvider } from "./views/views";
 import { claudeVersion, versionWarning } from "./wire/version";
 import { findTranscript, isSessionId } from "./wire/transcript";
-import { appendTitle } from "./wire/history";
+import { appendTitle, forkPoint, historyUpTo } from "./wire/history";
+import type { WireMessage } from "./wire/types";
 
 let chats: ChatManager | undefined;
 let deskService: DeskService | undefined;
@@ -151,6 +152,7 @@ export function activate(context: vscode.ExtensionContext): void {
     library,
     freshChat: (sid) => void freshChat(sid),
     resume: (sid, text) => resume(sid, text),
+    fork: (sid, uuid) => forkChat(sid, uuid),
     rename: (sid) => renameChat(sid),
   };
 
@@ -389,7 +391,12 @@ export function activate(context: vscode.ExtensionContext): void {
    * one whose item is not known) — the desk only hears this panel runs it,
    * and asks for its item when it sees it.
    */
-  async function startChat(body: AssignBody | null, cwd: string, label: string | null, opts: { onRefusal?: (why: string) => void } = {}): Promise<ChatRecord | null> {
+  async function startChat(
+    body: AssignBody | null,
+    cwd: string,
+    label: string | null,
+    opts: { onRefusal?: (why: string) => void; fork?: { from: string; at: string; events: WireMessage[] } } = {},
+  ): Promise<ChatRecord | null> {
     const sid = crypto.randomUUID();
     let itemId: string | null = null;
     let itemTitle = label;
@@ -419,7 +426,10 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }
     log(`new chat ${sid} on ${itemId ?? (body && "untracked" in body ? "untracked" : "no item yet")} in ${cwd}`);
-    const rec = manager.create(sid, cwd, itemId, itemTitle, { untracked: !!body && "untracked" in body, deskDue: due });
+    const fork = opts.fork;
+    const rec = manager.create(sid, cwd, itemId, itemTitle, { untracked: !!body && "untracked" in body, deskDue: due, fork: fork && { from: fork.from, at: fork.at } });
+    // A fork shows the conversation it starts from (decision 73).
+    if (fork) rec.chat.preload(fork.events);
     if (refused !== null) opts.onRefusal!(refused);
     desk.rebuild();
     await show(sid);
@@ -524,7 +534,7 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!rec?.ours) return;
     void haiku.turnEnded(sid, () => assistInput(ctx, rec, ""), {
       onScreen: onScreen(sid),
-      // A name the owner gave is not Haiku's to replace (decision 75).
+      // A name the owner gave, or a fork's, is not Haiku's to replace (decision 75).
       firstTurn: n === 1 && !rec.chat.opts.existing && !rec.chat.handNamed,
       rename: async (name) => {
         if (rec.chat.handNamed) return;
@@ -548,6 +558,51 @@ export function activate(context: vscode.ExtensionContext): void {
     haiku.handoffTaken(sid);
     haiku.sent(fresh.chat.sessionId);
     fresh.chat.send(text);
+  }
+
+  // ------------------------------------------------------------ forks
+
+  /**
+   * "Fork conversation from here" (decision 73), as Claude Code's panel forks: a
+   * new chat on the same work item that starts as this one's conversation
+   * up to the owner's message `uuid` — the CLI's own `--fork-session`, from
+   * the transcript — with that message back in its draft, to edit and send.
+   * From the first message there is nothing to copy: a new chat with it in
+   * the draft. A fork is named as Claude Code names one, this chat's name
+   * and "(fork)"; the desk hears of it as of any new chat (decision 10).
+   */
+  async function forkChat(sid: string, uuid: string): Promise<void> {
+    const rec = manager.get(sid);
+    if (!rec || !isSessionId(uuid)) return;
+    const entry = Object.values(rec.chat.state.entries).find((e) => e.kind === "user" && e.uuid === uuid);
+    const text = entry?.kind === "user" ? entry.text : "";
+    // `--resume` finds the session by its folder, and a chat runs in the window's (decisions 5, 10).
+    const cwd = rec.chat.opts.cwd || rec.chat.state.cwd || "";
+    if (!desk.isWindowFolder(cwd)) {
+      void vscode.window.showErrorMessage("Not forked: this chat worked in a folder that is not this window's.");
+      return;
+    }
+    const file = findTranscript(sid, cwd);
+    const point = file ? forkPoint(file, uuid) : undefined;
+    if (!file || !point) {
+      void vscode.window.showErrorMessage("Not forked: the message is not in this chat's transcript yet.");
+      return;
+    }
+    // The same item as the desk has it; untracked only when the owner chose that.
+    const item = desk.itemFor(sid)?.id ?? rec.itemId;
+    const body: AssignBody | null = item ? { item_id: item } : rec.untracked ? { untracked: true } : null;
+    const fork = point.at ? { from: sid, at: point.at, events: historyUpTo(file, point.at) } : undefined;
+    const fresh = await startChat(body, cwd, rec.itemTitle, { fork });
+    if (!fresh) return;
+    log(`[${sid.slice(0, 8)}] forked before ${uuid.slice(0, 8)}: ${fresh.chat.sessionId}`);
+    if (fork) {
+      const name = rec.chat.state.title ?? "Chat";
+      fresh.chat.note(`Forked from “${name}”. Your message from there is in the draft.`);
+      await fresh.chat.renameByHand(`${name} (fork)`);
+      panels.retitle(fresh.chat.sessionId, titleOf(fresh));
+      desk.rebuild();
+    }
+    if (text) manager.setDraft(fresh.chat.sessionId, text);
   }
 
   // ------------------------------------------------------------ names

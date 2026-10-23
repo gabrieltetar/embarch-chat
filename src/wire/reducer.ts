@@ -25,6 +25,8 @@ export interface UserEntry {
   unsent?: boolean;
   /** When it was sent, ms since the epoch (decision 68): the panel's clock, else the CLI's. */
   at?: number;
+  /** The message's id in the transcript, once the CLI has it: what a rewind or a fork names (decision 73). */
+  uuid?: string;
 }
 export interface TextEntry {
   kind: "text";
@@ -411,8 +413,9 @@ function foldUser(s: ChatState, o: WireMessage): ChatState {
     const e = s.entries[id];
     return e?.kind === "user" && e.pending && e.text.trim() === text.trim();
   });
-  if (mine) return confirm(s, mine);
-  return put(s, { kind: "user", id: (o.uuid as string) ?? `u:${s.seq}`, text, images, at: stamp(o) }, null);
+  const uuid = typeof o.uuid === "string" ? o.uuid : undefined;
+  if (mine) return confirm(s, mine, uuid ? { uuid } : {});
+  return put(s, { kind: "user", id: uuid ?? `u:${s.seq}`, text, images, at: stamp(o), ...(uuid ? { uuid } : {}) }, null);
 }
 
 function foldSystem(s: ChatState, o: WireMessage): ChatState {
