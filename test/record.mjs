@@ -144,6 +144,26 @@ const scenarios = {
     });
     await r.close();
   },
+  // A message sent while Claude's question waits (decision 55): the CLI
+  // queues it, the question stays open, and the message goes in after the answer.
+  async askqueued() {
+    const r = new Rec("askqueued", ["--tools", "AskUserQuestion"]);
+    r.user("Use the AskUserQuestion tool to ask me whether I prefer tea or coffee (two options, each with a short description), then tell me in one line what I picked.");
+    const ask = await r.until((o) => o.type === "control_request" && o.request?.subtype === "can_use_tool", () => {});
+    r.user("Also end your reply with the word: kiwi");
+    // Whatever the CLI does with it while the question is open.
+    const cancelled = await r.until((o) => o.type === "control_cancel_request", () => {}, 5000).catch(() => null);
+    if (!cancelled) {
+      const inp = { ...ask.request.input };
+      const q = inp.questions?.[0];
+      inp.answers = q ? { [q.question]: q.options[1].label } : {};
+      r.respond(ask, { behavior: "allow", updatedInput: inp });
+    }
+    await r.result();
+    // A turn of its own for the queued message, if the CLI makes one.
+    await r.until((o) => o.type === "result", undefined, 30000).catch(() => null);
+    await r.close();
+  },
   async plan() {
     const r = new Rec("plan", ["--permission-mode", "plan", "--tools", "Read,Write,ExitPlanMode"]);
     r.user("Plan how to create hello.txt containing hi, then present the plan for approval with ExitPlanMode. Keep the plan to two lines. After approval, create the file.");

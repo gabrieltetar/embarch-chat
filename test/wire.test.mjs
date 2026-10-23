@@ -132,6 +132,27 @@ test("Claude's question is a form answered with `answers`", async () => {
   chat.dispose();
 });
 
+test("a message sent while Claude's question waits is queued: the question stays open, and Claude takes the message after the answer (decision 55)", async () => {
+  const { chat } = makeChat("askqueued");
+  chat.send("Use the AskUserQuestion tool to ask me whether I prefer tea or coffee (two options, each with a short description), then tell me in one line what I picked.");
+  await waitFor(() => chat.state.pending.length === 1);
+  const p = chat.state.pending[0];
+  chat.send("Also end your reply with the word: kiwi");
+  await new Promise((r) => setTimeout(r, 100));
+  assert.deepEqual(chat.state.pending.map((x) => x.requestId), [p.requestId], "still asking: the message answered nothing");
+  const kiwi = () => entries(chat.state, "user").find((e) => e.text.includes("kiwi"));
+  assert.equal(kiwi().pending, true, "the CLI holds it");
+  const q = p.input.questions[0];
+  chat.answerQuestion(p, { [q.question]: q.options[1].label });
+  await turns(chat, 1);
+  assert.equal(kiwi().pending, false, "taken after the answer");
+  const t = top(chat.state);
+  assert.deepEqual(t.map((e) => e.kind), ["user", "tool", "user", "text"]);
+  assert.equal(t[1].status, "done");
+  assert.match(t[3].text, /tea[\s\S]*kiwi/i, "one reply to both, in the same turn");
+  chat.dispose();
+});
+
 test("a plan is approved, and the work goes on", async () => {
   const { chat } = makeChat("plan", { mode: "plan" });
   assert.ok(true);
