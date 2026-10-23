@@ -1,7 +1,7 @@
 // The wire layer against recorded real sessions, replayed by fake-claude.mjs.
 // Run with `npm test` (builds test-out/core.js first).
 
-import { test } from "node:test";
+import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import * as fs from "node:fs";
@@ -15,9 +15,13 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const FAKE = path.join(here, "fake-claude.mjs");
 const fixture = (n) => path.join(here, "fixtures", "wire", `${n}.jsonl`);
 fs.chmodSync(FAKE, 0o755);
+// Every scratch folder of this run, under one root removed at the end.
+const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "embarch-chat-wire-"));
+const tmp = (prefix) => fs.mkdtempSync(path.join(ROOT, prefix));
+after(() => fs.rmSync(ROOT, { recursive: true, force: true }));
 
 function makeChat(name, opts = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "embarch-chat-test-"));
+  const dir = tmp("chat-");
   const argsLog = path.join(dir, "args.jsonl");
   const sessionId = opts.sessionId ?? "11111111-2222-4333-8444-555555555555";
   const chat = new core.Chat({
@@ -318,7 +322,7 @@ test("only a UUID is a session id: none other reaches a path or claude's command
   assert.ok(core.isSessionId("11111111-2222-4333-8444-555555555555"));
   for (const bad of ["../../x", "S", "11111111-2222-4333-8444-55555555555/", "--model=opus", "", null]) assert.equal(core.isSessionId(bad), false, String(bad));
   assert.throws(() => core.claudeArgs({ claudePath: "claude", cwd: "/w", sessionId: "../../x", resume: true, permissionMode: "auto" }), /not a session id/);
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "embarch-chat-sid-"));
+  const root = tmp("sid-");
   fs.mkdirSync(path.join(root, "p"));
   fs.writeFileSync(path.join(root, "x.jsonl"), "{}\n");
   assert.equal(core.findTranscript("../x", undefined, path.join(root, "p")), null, "no path out of the projects folder");
@@ -408,7 +412,7 @@ test("a transcript folds in linear time, to the same state as line by line", () 
 });
 
 test("a live foreign thread follows its transcript by what was added, as events", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "embarch-chat-follow-"));
+  const root = tmp("follow-");
   const prev = process.env.CLAUDE_CONFIG_DIR;
   process.env.CLAUDE_CONFIG_DIR = root;
   try {
@@ -448,7 +452,7 @@ test("a live foreign thread follows its transcript by what was added, as events"
 
 // A stopped or failed compaction, through a scripted CLI (test/fake-compact.mjs).
 function compactChat(env = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "embarch-chat-compact-"));
+  const dir = tmp("compact-");
   const logFile = path.join(dir, "in.jsonl");
   const FC = path.join(here, "fake-compact.mjs");
   fs.chmodSync(FC, 0o755);

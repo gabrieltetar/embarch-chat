@@ -4,7 +4,7 @@
 // history on synthetic transcripts (never the owner's own), and the plugin's
 // entries.
 
-import { test } from "node:test";
+import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import * as fs from "node:fs";
@@ -19,7 +19,10 @@ const root = path.dirname(here);
 const FAKE = path.join(here, "fake-claude.mjs");
 fs.chmodSync(FAKE, 0o755);
 
-const scratch = () => fs.mkdtempSync(path.join(os.tmpdir(), "embarch-chat-assist-"));
+// Every scratch folder of this run, under one root removed at the end.
+const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "embarch-chat-assist-"));
+after(() => fs.rmSync(ROOT, { recursive: true, force: true }));
+const scratch = () => fs.mkdtempSync(path.join(ROOT, "s-"));
 const recorded = (name) =>
   fs
     .readFileSync(path.join(here, "fixtures", "haiku", `${name}.jsonl`), "utf8")

@@ -120,7 +120,8 @@ test("the desk is this machine's: only http on a loopback address is ever called
 });
 
 test("a desk URL off this machine is refused before anything is sent, the token included", async () => {
-  const secret = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "embarch-chat-refuse-")), "secret");
+  const secretDir = fs.mkdtempSync(path.join(os.tmpdir(), "embarch-chat-refuse-"));
+  const secret = path.join(secretDir, "secret");
   fs.writeFileSync(secret, "sk-FAKE-not-real");
   // A listener on this machine's own non-loopback address, where a reachable host would be.
   const addr = Object.values(os.networkInterfaces())
@@ -140,6 +141,7 @@ test("a desk URL off this machine is refused before anything is sent, the token 
     assert.deepEqual(seen, [], "nothing reached the other host");
   } finally {
     if (srv) await new Promise((r) => srv.close(r));
+    fs.rmSync(secretDir, { recursive: true, force: true });
   }
 });
 

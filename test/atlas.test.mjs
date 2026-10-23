@@ -1,6 +1,6 @@
 // Atlas citation targets (decision 16) on a scratch atlas.
 
-import { test } from "node:test";
+import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import * as fs from "node:fs";
@@ -9,9 +9,11 @@ import * as path from "node:path";
 
 const require = createRequire(import.meta.url);
 const core = require("../test-out/core.js");
+const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "embarch-chat-atlas-"));
+after(() => fs.rmSync(ROOT, { recursive: true, force: true }));
 
 function scratchAtlas() {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "embarch-chat-atlas-"));
+  const repo = fs.mkdtempSync(path.join(ROOT, "repo-"));
   const a = path.join(repo, "embarch", "atlas");
   fs.mkdirSync(path.join(a, "docs", "abc123@A", "pages"), { recursive: true });
   fs.writeFileSync(path.join(a, "docs", "abc123@A", "card.md"), "# abc123\n");

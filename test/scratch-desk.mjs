@@ -14,9 +14,11 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const core = require("../test-out/core.js");
+const FAKE = path.join(path.dirname(fileURLToPath(import.meta.url)), "fake-claude.mjs");
 
 export const BIN = process.env.EMBARCH_DESK_BIN;
 export const haveDesk = !!BIN && fs.existsSync(BIN);
@@ -41,9 +43,16 @@ export class ScratchDesk {
   }
 
   async start() {
+    // The desk runs `claude agents --json` from PATH every 30 s: it gets the
+    // fake (which lists nothing), never the real CLI.
+    const bin = path.join(this.dir, "bin");
+    fs.mkdirSync(bin, { recursive: true });
+    if (!fs.existsSync(path.join(bin, "claude"))) fs.symlinkSync(FAKE, path.join(bin, "claude"));
+    const { FAKE_CLAUDE_ARGS_LOG: _log, FAKE_CLAUDE_AGENTS: _agents, ...env } = process.env;
     this.proc = spawn(BIN, ["serve"], {
       env: {
-        ...process.env,
+        ...env,
+        PATH: `${bin}:${process.env.PATH}`,
         EMBARCH_DESK_DATA_DIR: path.join(this.dir, "data"),
         EMBARCH_DESK_CONFIG_DIR: path.join(this.dir, "config"),
         EMBARCH_DESK_PORT: String(this.port),
