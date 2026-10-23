@@ -16,8 +16,12 @@ const HIDDEN_MS = 15000;
 const MAIL_MS = 3000;
 const MAIL_BACKOFF_MS = 60000;
 const TRANSCRIPT_MS = 30000;
-/** How often a desk found too old is asked again: an update clears the notice without a reload. */
-const RECHECK_MS = 10 * 60_000;
+/**
+ * How often a desk found too old is asked again: an update clears the notice
+ * without a reload. Most updates are seen sooner — a kept mark, or a view
+ * whose fields moved — this is for the one that changes neither.
+ */
+const RECHECK_MS = 60_000;
 const DAY = 86_400_000;
 
 function git(dir: string, args: string[]): Promise<string> {
@@ -62,6 +66,8 @@ export class DeskService extends EventEmitter {
   private deskParamAt = 0;
   /** Whether the desk kept the last `client` mark read back (null: none read yet). */
   private marks: boolean | null = null;
+  /** The view's top-level fields at the last poll: another set is another build of the desk. */
+  private shape: string | null = null;
   private timer: NodeJS.Timeout | undefined;
   private mailTimer: NodeJS.Timeout | undefined;
   private mailBackoffUntil = 0;
@@ -141,14 +147,39 @@ export class DeskService extends EventEmitter {
     return `Update embarch-desk: the running one predates this panel${foreign ? " — only chats in this window's repos show" : ""}.`;
   }
 
-  /** What a read-back of a session's `client` said (after an assign or a mark). */
+  /**
+   * What a read-back of a session's `client` said (after an assign or a
+   * mark). A desk that keeps it is new enough to be asked about `?desk=`
+   * again: on the next poll, not at the next recheck.
+   */
   noteMark(kept: boolean): void {
-    if (this.marks === kept) return;
+    const recheck = kept && this.deskParam === false;
+    if (this.marks === kept && !recheck) return;
     this.marks = kept;
+    if (recheck) {
+      this.log("the desk keeps this panel's mark now: asked again whether it reads ?desk=");
+      this.deskParam = null;
+    }
     this.emit("changed");
   }
 
-  /** Whether `/view?desk=` may be used: asked once, again after an outage, and every few minutes while it may not. */
+  /**
+   * A desk restarted as another build between two polls — an update, so no
+   * poll saw it down — answers with other top-level fields: what was asked
+   * of the old one is asked again. True when that happened.
+   */
+  private reshaped(v: DeskView): boolean {
+    const shape = Object.keys(v ?? {}).sort().join(",");
+    const moved = this.shape !== null && shape !== this.shape;
+    this.shape = shape;
+    if (!moved || (this.deskParam === null && this.marks === null)) return false;
+    this.log("the desk's view has other fields (another build?): asked again whether it reads ?desk=");
+    this.deskParam = null;
+    this.marks = null;
+    return true;
+  }
+
+  /** Whether `/view?desk=` may be used: asked once, again after an outage or an update, and every minute while it may not. */
   private async scopedViews(): Promise<boolean> {
     if (this.deskParam === null || (!this.deskParam && Date.now() - this.deskParamAt > RECHECK_MS)) {
       const was = this.deskParam;
@@ -172,11 +203,13 @@ export class DeskService extends EventEmitter {
    * the open desk's, and buildThreads keeps only those in this window's
    * repos.
    */
-  private async fetchView(): Promise<DeskView> {
+  private async fetchView(again = false): Promise<DeskView> {
     if (this.ownDeskId && (await this.scopedViews())) {
       try {
         const v = await this.client.view(this.ownDeskId);
         this.scopedTo = this.ownDeskId;
+        // Another build since it was asked: its answer to `?desk=` may have changed too.
+        if (this.reshaped(v) && !again) return this.fetchView(true);
         return v;
       } catch (e) {
         if (!(e instanceof DeskError && e.status === 404)) throw e;
@@ -186,6 +219,7 @@ export class DeskService extends EventEmitter {
     }
     this.scopedTo = null;
     let v = await this.client.view();
+    if (this.reshaped(v) && !again) return this.fetchView(true);
     const own = ownDesk([...this.folders(), ...this.mains], v.desks ?? []);
     this.ownDeskId = own?.id ?? null;
     if (own && own.id !== v.open_desk?.id && (await this.scopedViews())) {

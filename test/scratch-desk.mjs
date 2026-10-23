@@ -80,12 +80,12 @@ export class ScratchDesk {
     throw new Error(`the scratch desk did not start on ${this.port}`);
   }
 
-  /** SIGTERM: the desk saves its state on the way out. */
-  async stop() {
+  /** SIGTERM: the desk saves its state on the way out. An older desk (80368bf) saves it only on SIGINT. */
+  async stop(signal = "SIGTERM") {
     const p = this.proc;
     if (!p || p.exitCode !== null) return;
     const done = new Promise((r) => p.once("exit", r));
-    p.kill("SIGTERM");
+    p.kill(signal);
     await done;
     this.proc = null;
   }

@@ -250,6 +250,77 @@ test("on a desk older than the panel: not another desk's cards, and a line to up
   }
 });
 
+test("a desk updated in place between two polls, from the old build to the new: the next poll shows the window's desk, with no notice", { skip: haveDesk && haveOldDesk ? false : "EMBARCH_DESK_BIN and EMBARCH_DESK_OLD_BIN not both set" }, async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "embarch-chat-upgrade-"));
+  const old = await new ScratchDesk(path.join(root, "desk"), PROBE_PORT, path.join(root, "claude"), OLD_BIN).start();
+  let fresh = null;
+  try {
+    const c = old.client;
+    const { svc, onA, onB, items } = await twoDesks(c, root);
+    try {
+      assert.match(svc.notice, /Update embarch-desk/);
+      svc.noteMark(false);
+      // Restarted as the new build on the same data, between two polls: no poll sees it down.
+      await old.stop("SIGINT");
+      fresh = await new ScratchDesk(path.join(root, "desk"), PROBE_PORT, path.join(root, "claude")).start();
+      await svc.poll();
+      assert.equal(svc.notice, null, "the notice goes on the first poll");
+      assert.ok(items().includes(onB) && !items().includes(onA), `the window's desk's cards: ${JSON.stringify(items())}`);
+    } finally {
+      svc.dispose();
+    }
+  } finally {
+    await fresh?.stop();
+    await old.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a desk updated in place that looks the same: a mark it keeps clears the notice, and the next poll asks again", async () => {
+  // A desk on the probe port whose view never changes shape; `reads` flips it to the new build.
+  let reads = false;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "embarch-chat-sameshape-"));
+  const fw = (n) => (fs.mkdirSync(path.join(root, n), { recursive: true }), path.join(root, n));
+  const A = { id: "da", name: "Desk A", firmware_repos: [fw("fw-a")] };
+  const B = { id: "db", name: "Desk B", firmware_repos: [fw("fw-b")] };
+  const onA = card("wa", "ABC-211", [], { repo_path: A.firmware_repos[0], desk_id: A.id });
+  const onB = card("wb", "ABC-210", [], { repo_path: B.firmware_repos[0], desk_id: B.id });
+  const viewOf = (cards) => ({ now_ms: Date.now(), today: "2026-10-23", cards, desks: [A, B], open_desk: A, sessions: [] });
+  const srv = http.createServer((req, res) => {
+    const u = new URL(req.url, "http://x");
+    const json = (status, body) => (res.writeHead(status, { "content-type": "application/json" }), res.end(JSON.stringify(body)));
+    if (u.pathname === "/view") {
+      const d = u.searchParams.get("desk");
+      if (d && reads) return d === B.id ? json(200, viewOf([onB])) : json(404, { error: `no desk ${d}` });
+      return json(200, viewOf([onA]));
+    }
+    if (u.pathname.startsWith("/sessions/")) return json(200, { session_id: "x", client: reads ? "embarch-chat" : null, work_item: null });
+    json(404, { error: "no route" });
+  });
+  await new Promise((r) => srv.listen(PROBE_PORT, "127.0.0.1", r));
+  const chats = new core.ChatManager(() => ({ claudePath: "/bin/false", idleMs: 60000, log: () => {} }));
+  const c = new core.DeskClient({ baseUrl: `http://127.0.0.1:${PROBE_PORT}`, tokenPath: "/nonexistent" });
+  const svc = new core.DeskService(() => c, chats, () => [B.firmware_repos[0]], () => {});
+  const items = () => svc.groups.map((g) => g.item?.id).filter(Boolean);
+  try {
+    await svc.poll();
+    svc.noteMark(await c.isMarked("0b0e1a1e-0000-4000-8000-0000000000e1"));
+    assert.match(svc.notice, /Update embarch-desk/);
+    assert.deepEqual(items(), []);
+    reads = true;
+    // A resume's mark read back from the new build: a desk that keeps `client` is new enough.
+    svc.noteMark(await c.isMarked("0b0e1a1e-0000-4000-8000-0000000000e1"));
+    assert.equal(svc.notice, null, "at once, not after the ten-minute recheck");
+    await svc.poll();
+    assert.deepEqual(items(), [onB.id], "asked again on the next poll: the window's desk's cards");
+    assert.equal(svc.notice, null);
+  } finally {
+    svc.dispose();
+    await new Promise((r) => srv.close(r));
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 // ------------------------------------------------------------ the list
 
 const DESK = { id: "k1", name: "Example", firmware_repos: ["/work/fw"] };
