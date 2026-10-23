@@ -102,7 +102,7 @@ before(async () => {
   // The window starts while the desk is down (VS Code before the desk, or a desk restart).
   await desk.stop();
   ext = require("../dist/extension.js");
-  context = { subscriptions: [], extensionUri: mock.vscode.Uri.file(root), workspaceState: new mock.Memento() };
+  context = { subscriptions: [], extensionUri: mock.vscode.Uri.file(root), workspaceState: new mock.Memento(), globalState: new mock.Memento() };
   ext.activate(context);
   threadsView = new mock.FakeView();
   chatView = new mock.FakeView();

@@ -149,6 +149,7 @@ export function activate(context: vscode.ExtensionContext): void {
     proposals,
     content,
     plans,
+    remembered: context.globalState,
     log,
     claudePath: () => cfg().claudePath,
     deskUrl,

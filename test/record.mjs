@@ -152,6 +152,25 @@ const scenarios = {
     await r.result((o) => r.respond(o, { behavior: "deny", message: "The owner declined this tool call." }));
     await r.close();
   },
+  // Where an "always allow" goes (decision 78): a Bash rule saved to the
+  // project's shared settings — the scratch folder's .claude/settings.json,
+  // never the owner's own — and to the session, then the same command
+  // again, asking nothing (a file rule alone is asked again, measured).
+  async permdest() {
+    const r = new Rec("permdest", ["--tools", "Bash"]);
+    r.user("Run the bash command `node -e 1+1` and then reply with just: done");
+    await r.result((o) => r.respond(o, { behavior: "allow", updatedInput: o.request.input, updatedPermissions: core.alwaysPermissions(o.request.permission_suggestions, undefined, "projectSettings") }));
+    let asked = false;
+    r.user("Run the bash command `node -e 1+1` once more and then reply with just: done");
+    await r.result((o) => {
+      asked = true;
+      r.respond(o, { behavior: "allow", updatedInput: o.request.input });
+    });
+    await r.close();
+    const file = path.join(r.dir, ".claude", "settings.json");
+    const saved = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "none";
+    fs.writeFileSync(path.join(scratch, "permdest.probe.txt"), `asked again: ${asked}\n.claude/settings.json: ${saved}\n`);
+  },
   async question() {
     const r = new Rec("question", ["--tools", "AskUserQuestion"]);
     r.user("Use the AskUserQuestion tool to ask me whether I prefer tea or coffee (two options, each with a short description), then tell me in one line what I picked.");

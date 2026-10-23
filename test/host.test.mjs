@@ -69,7 +69,7 @@ before(async () => {
   });
   mock.state.folders = [folder];
   ext = require("../dist/extension.js");
-  context = { subscriptions: [], extensionUri: mock.vscode.Uri.file(root), workspaceState: new mock.Memento() };
+  context = { subscriptions: [], extensionUri: mock.vscode.Uri.file(root), workspaceState: new mock.Memento(), globalState: new mock.Memento() };
   ext.activate(context);
 
   threadsView = new mock.FakeView();
@@ -554,6 +554,35 @@ test("a plan opens as a Markdown tab whose lines take comments; they reach its c
   }
 });
 
+test("Always allow from the card: the suggestions kept go where the owner picked, and the pick is remembered for every chat; nothing outside Claude Code's four places is taken (decision 78)", { skip }, async () => {
+  const input = path.join(dir, "input-permdest.jsonl");
+  process.env.FAKE_CLAUDE_INPUT_LOG = input;
+  const sent = () => (fs.existsSync(input) ? fs.readFileSync(input, "utf8").trim().split("\n").map((l) => JSON.parse(l).o) : []);
+  const KEY = "embarchChat.permissionDestination";
+  try {
+    await startUntracked("basic");
+    process.env.FAKE_CLAUDE_FIXTURE = path.join(here, "fixtures", "wire", "permdest.jsonl");
+    const n = chatView.webview.posted.length;
+    chatView.webview.fromPage({ t: "send", text: "Run the bash command `node -e 1+1` and then reply with just: done" });
+    const ask = await waitFor(() => chatView.webview.posted.slice(n).find((m) => m.t === "event" && m.e.type === "control_request"), 5000, "the prompt");
+    chatView.webview.fromPage({ t: "permDestination", destination: "../../.bashrc" });
+    chatView.webview.fromPage({ t: "permDestination", destination: "userSettings" });
+    await waitFor(() => context.globalState.get(KEY) === "userSettings", 3000, "remembered");
+    chatView.webview.fromPage({ t: "ready" });
+    assert.equal(lastSnapshot().view.permDestination, "userSettings", "every page starts there");
+    chatView.webview.fromPage({ t: "allow", requestId: ask.e.request_id, always: true, picks: [0], destination: "projectSettings" });
+    const allow = await waitFor(() => sent().find((o) => o.type === "control_response"), 3000, "the answer");
+    assert.deepEqual(allow.response.response.updatedPermissions.map((x) => [x.type, x.destination]), [
+      ["addRules", "projectSettings"],
+      ["addRules", "session"],
+    ]);
+    await waitFor(() => chatView.webview.posted.slice(n).some((m) => m.t === "event" && m.e.type === "result"), 5000, "the turn's end");
+  } finally {
+    delete process.env.FAKE_CLAUDE_INPUT_LOG;
+    await context.globalState.update(KEY, undefined);
+  }
+});
+
 // ------------------------------------------------------------ a window reload (decision 63)
 
 /** The window reloads: this extension host deactivates and a new one activates, with the same workspace state. */
@@ -561,7 +590,7 @@ async function reload(before = () => {}) {
   await ext.deactivate();
   for (const d of context.subscriptions) d.dispose?.();
   before();
-  context = { subscriptions: [], extensionUri: mock.vscode.Uri.file(root), workspaceState: context.workspaceState };
+  context = { subscriptions: [], extensionUri: mock.vscode.Uri.file(root), workspaceState: context.workspaceState, globalState: context.globalState };
   ext.activate(context);
   threadsView = new mock.FakeView();
   chatView = new mock.FakeView();

@@ -287,7 +287,7 @@ await check("a permission prompt: Allow, Always allow, Deny with a message", asy
   await send([snapshot(), sent("touch"), ...events(upTo(lines, (o) => o.type === "control_request"))]);
   const card = (await text(".card"))[0];
   assert.ok(card.includes("Allow Bash?") && card.includes("touch should-not-exist.txt"), card);
-  assert.ok(card.includes("Always allow Bash(touch should-not-exist.txt)"), "the CLI's own suggestion");
+  assert.deepEqual(await text(".card .always-what .grant"), ["Bash(touch should-not-exist.txt)", "access to deny/", "accept edits for this session"], "every one of the CLI's suggestions");
   await clearPosts();
   await exec("const i=document.querySelector('.card .actions input'); i.value='use echo instead'; i.dispatchEvent(new Event('input', {bubbles:true}))");
   await settle();
@@ -295,6 +295,37 @@ await check("a permission prompt: Allow, Always allow, Deny with a message", asy
   const p = (await posts()).find((x) => x.t === "deny");
   assert.equal(p.message, "use echo instead");
   assert.match(p.requestId, /-/);
+});
+
+await check("Always allow: every suggestion to keep or drop, saved to one of Claude Code's four places — the owner's last, else the CLI's own; a change is remembered (decision 78)", async () => {
+  const lines = outLines("deny");
+  const prompt = upTo(lines, (o) => o.type === "control_request");
+  const place = () => exec("return document.querySelector('.card .dest select').value");
+  await send([snapshot({}, { ...OURS, permDestination: "projectSettings" }), sent("touch"), ...events(prompt)]);
+  assert.equal(await place(), "projectSettings", "where the owner last saved one");
+  await send([snapshot(), sent("touch"), ...events(prompt)]);
+  assert.equal(await place(), "localSettings", "else the most lasting place the CLI named");
+  assert.deepEqual(await text(".card .dest option"), ["this project (just you)", "all projects", "this project (shared)", "this session"]);
+  await clearPosts();
+  await exec("const s=document.querySelector('.card .dest select'); s.value='userSettings'; s.dispatchEvent(new Event('change', {bubbles:true}))");
+  await settle();
+  // The mode change dropped: only the rule and the directory are saved.
+  await exec("[...document.querySelectorAll('.card .always-what .grant')].find((e) => e.textContent.includes('accept edits')).querySelector('input').click()");
+  await settle();
+  await shot("permission-always");
+  await click(".card .actions button", "Always allow");
+  const ps = await posts();
+  assert.deepEqual(ps.find((p) => p.t === "permDestination"), { t: "permDestination", destination: "userSettings" }, "remembered");
+  const a = ps.find((p) => p.t === "allow");
+  assert.deepEqual([a.always, a.picks, a.destination], [true, [0, 1], "userSettings"]);
+  await send([snapshot(), sent("touch"), ...events(prompt)]);
+  assert.equal(await place(), "userSettings", "the next card starts at the owner's pick");
+  // A mode change alone: one button that says what it does, and no place.
+  const write = outLines("planmanual");
+  const plan = write.find((o) => o.type === "control_request").request_id;
+  await send([snapshot(), sent("p"), ...events(upTo(write, (o) => o.type === "control_request" && o.request?.tool_name === "Write")), { t: "event", e: { type: "_answered", requestId: plan, behavior: "allow" } }]);
+  assert.deepEqual(await text(".card .actions button"), ["Allow", "Allow, and accept edits for this session", "Deny"]);
+  assert.deepEqual(await text(".card .dest"), []);
 });
 
 await check("Claude's question: options with descriptions, answered", async () => {

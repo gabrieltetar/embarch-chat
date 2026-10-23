@@ -14,27 +14,32 @@ import { Markdown, MdCtx } from "../shared/markdown";
 import { vscodeApi } from "../shared/vscode";
 import { ownerTyping } from "./composer";
 import { DialogCard, dialogLine } from "./dialogs";
+import { DESTINATIONS, DESTINATION_FILE, DESTINATION_LABEL, Destination, defaultDestination, grantOf } from "../../src/wire/cards";
 import { DiffView, ToolCtx, toolLabel, toolSummary } from "./tools";
 
 const post = (m: unknown) => vscodeApi.postMessage(m);
 
-/** What "always allow" would add, from the CLI's own permission suggestions. */
-function alwaysLabel(s: unknown[] | undefined): string | null {
-  if (!Array.isArray(s) || !s.length) return null;
-  const x = s[0] as { type?: string; mode?: string; rules?: Array<{ toolName?: string; ruleContent?: string }> };
-  if (x.type === "setMode" && x.mode === "acceptEdits") return "Allow, and accept edits from now on";
-  if (x.type === "addRules" && x.rules?.length) {
-    const r = x.rules[0];
-    return `Always allow ${r.toolName}${r.ruleContent ? `(${r.ruleContent.length > 40 ? r.ruleContent.slice(0, 40) + "…" : r.ruleContent})` : ""}`;
-  }
-  if (x.type === "addDirectories") return "Allow, and add the directory";
-  return "Always allow";
-}
+/** Where the owner last chose to save an "always allow" on this page: the next card starts there (78). */
+let lastDestination: string | undefined;
 
-function PermissionCard({ p, ctx }: { p: Pending; ctx: ToolCtx }) {
+/**
+ * A permission prompt. "Always allow" lists every one of the CLI's
+ * suggestions — a rule, a directory, a mode change — each to keep or drop
+ * when there are several, and the place a rule or directory is saved, one of
+ * Claude Code's four (decision 78): it starts at the owner's last pick, else
+ * the most lasting place the CLI named, and a change is remembered.
+ */
+function PermissionCard({ p, ctx, remembered }: { p: Pending; ctx: ToolCtx; remembered?: string }) {
   const [msg, setMsg] = useState("");
   const editLike = ["Edit", "Write", "MultiEdit"].includes(p.toolName);
-  const always = alwaysLabel(p.suggestions);
+  const grants = (p.suggestions ?? []).map(grantOf);
+  const [keep, setKeep] = useState<boolean[]>(() => grants.map(() => true));
+  const [dest, setDest] = useState<Destination>(() => defaultDestination(p.suggestions, lastDestination ?? remembered));
+  const picks = grants.flatMap((_, i) => (keep[i] ? [i] : []));
+  const placed = picks.some((i) => grants[i].placed);
+  // A mode change alone reads as what it does, as in Claude Code ("Yes, allow all edits this session").
+  const modeOnly = grants.length === 1 && !grants[0].placed;
+  const always = () => post({ t: "allow", requestId: p.requestId, always: true, picks, ...(placed ? { destination: dest } : {}) });
   return (
     <div class="card">
       <div class="card-title">
@@ -51,7 +56,32 @@ function PermissionCard({ p, ctx }: { p: Pending; ctx: ToolCtx }) {
         <button class="primary" onClick={() => post({ t: "allow", requestId: p.requestId })}>
           Allow
         </button>
-        {always && <button onClick={() => post({ t: "allow", requestId: p.requestId, always: true })}>{always}</button>}
+        {grants.length > 0 && (
+          <button disabled={!picks.length} onClick={always}>
+            {modeOnly ? `Allow, and ${grants[0].text}` : "Always allow"}
+          </button>
+        )}
+        {grants.length > 0 && placed && (
+          <label class="dest">
+            for{" "}
+            <select
+              value={dest}
+              title={DESTINATION_FILE[dest]}
+              onChange={(e) => {
+                const d = (e.target as HTMLSelectElement).value as Destination;
+                setDest(d);
+                lastDestination = d;
+                post({ t: "permDestination", destination: d });
+              }}
+            >
+              {DESTINATIONS.map((d) => (
+                <option key={d} value={d} title={DESTINATION_FILE[d]}>
+                  {DESTINATION_LABEL[d]}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <button onClick={() => post({ t: "deny", requestId: p.requestId, message: msg })}>Deny</button>
         <input
           placeholder="or tell Claude what to do instead"
@@ -62,6 +92,23 @@ function PermissionCard({ p, ctx }: { p: Pending; ctx: ToolCtx }) {
           }}
         />
       </div>
+      {!modeOnly && grants.length > 0 && (
+        <div class="always-what">
+          <span class="muted">Always allow saves</span>
+          {grants.map((g, i) =>
+            grants.length > 1 ? (
+              <label key={i} class="grant" title={g.full}>
+                <input type="checkbox" checked={keep[i]} onChange={() => setKeep(keep.map((k, j) => (j === i ? !k : k)))} />
+                {g.text}
+              </label>
+            ) : (
+              <span key={i} class="grant" title={g.full}>
+                {g.text}
+              </span>
+            ),
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -220,7 +267,20 @@ function HeldCard({ p, ctx, onShow }: { p: Pending; ctx: ToolCtx; onShow: () => 
   );
 }
 
-export function PendingCards({ pending, ctx, readOnly, recall = () => {} }: { pending: Pending[]; ctx: ToolCtx; readOnly: boolean; recall?: () => void }) {
+export function PendingCards({
+  pending,
+  ctx,
+  readOnly,
+  recall = () => {},
+  permDestination,
+}: {
+  pending: Pending[];
+  ctx: ToolCtx;
+  readOnly: boolean;
+  recall?: () => void;
+  /** Where the owner last saved an "always allow" (78). */
+  permDestination?: string;
+}) {
   // The owner's typing, read as each card first shows (55): it re-renders when that ends.
   const [, bump] = useState(0);
   useEffect(() => {
@@ -257,7 +317,7 @@ export function PendingCards({ pending, ctx, readOnly, recall = () => {} }: { pe
         ) : p.form === "dialog" || p.form === "elicitation" ? (
           <DialogCard key={p.requestId} p={p} ctx={ctx} recall={recall} />
         ) : (
-          <PermissionCard key={p.requestId} p={p} ctx={ctx} />
+          <PermissionCard key={p.requestId} p={p} ctx={ctx} remembered={permDestination} />
         ),
       )}
     </div>

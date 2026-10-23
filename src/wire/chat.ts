@@ -16,7 +16,7 @@ import { anyMovable, soonMovable } from "./tasks";
 import { Attachment, ContextItem, Outgoing, outgoing } from "./message";
 import type { ContextUsage, PermissionDecision, WireMessage } from "./types";
 import { DIALOG_CANCELLED, answerable, unansweredNote } from "./dialogs";
-import { PlanComment, planFeedback } from "./cards";
+import { Destination, PlanComment, alwaysPermissions, planFeedback } from "./cards";
 
 export interface ChatOptions {
   sessionId: string;
@@ -448,10 +448,19 @@ export class Chat extends EventEmitter {
     this.answer(p.requestId, response as unknown as PermissionDecision);
   }
 
-  /** Allow as asked, or with the CLI's own "don't ask again" suggestions. */
-  allow(p: Pending, always = false, input?: Record<string, unknown>): void {
+  /**
+   * Allow as asked, or with the CLI's own "don't ask again" suggestions:
+   * those the owner kept (`picks`, by index; all when not named), each rule
+   * and directory saved where the owner picked (decision 78) — the CLI
+   * writes that settings file itself.
+   */
+  allow(p: Pending, always: boolean | { picks?: number[]; destination?: Destination } = false, input?: Record<string, unknown>): void {
     const d: PermissionDecision = { behavior: "allow", updatedInput: input ?? p.input };
-    if (always && Array.isArray(p.suggestions) && p.suggestions.length) d.updatedPermissions = p.suggestions;
+    if (always && Array.isArray(p.suggestions) && p.suggestions.length) {
+      const o = always === true ? {} : always;
+      const kept = alwaysPermissions(p.suggestions, o.picks, o.destination);
+      if (kept.length) d.updatedPermissions = kept;
+    }
     this.answer(p.requestId, d);
   }
 

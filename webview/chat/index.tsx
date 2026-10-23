@@ -407,6 +407,7 @@ function App() {
         pending={state.pending}
         ctx={ctx}
         readOnly={view.readOnly}
+        permDestination={view.permDestination}
         recall={() => {
           // A flagged message back into the draft, to edit and retry (66).
           const last = [...state.timeline].reverse().find((id) => entries[id]?.kind === "user");

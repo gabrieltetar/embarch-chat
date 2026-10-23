@@ -9,6 +9,7 @@ import type { DeskService } from "../deskService";
 import type { ContentDocs } from "../content";
 import type { DiffContent, Proposals } from "../diff";
 import type { PlanDocs } from "../plans";
+import { isDestination } from "../wire/cards";
 import { diffSides } from "../diff";
 import { atlasInfo, citationTarget } from "../atlas";
 import { jump } from "../jump";
@@ -41,6 +42,8 @@ export interface HostCtx {
   content: ContentDocs;
   /** A pending plan as a tab to comment on, line by line (decision 77). */
   plans: PlanDocs;
+  /** The extension's global state: where the owner last chose to save an "always allow" (78). */
+  remembered: vscode.Memento;
   log: (s: string) => void;
   claudePath: () => string;
   deskUrl: (itemId: string | null) => string;
@@ -66,6 +69,9 @@ export interface HostCtx {
   /** The editor's open file or selection, which goes with a message by default (60). */
   editor: EditorContext;
 }
+
+/** Where an "always allow" was last saved, in the extension's global state (78). */
+const DESTINATION_KEY = "embarchChat.permissionDestination";
 
 /** The chat's card in two lines (decision 18), from the desk's view. */
 export function headerFor(ctx: HostCtx, rec: ChatRecord): Header {
@@ -208,6 +214,7 @@ export class ChatHost implements vscode.Disposable {
           return a ? { docs: a.docs, boards: a.boards } : null;
         })(),
         timestamps: vscode.workspace.getConfiguration("embarchChat").get<boolean>("showMessageTimestamps", false),
+        permDestination: this.ctx.remembered.get<string>(DESTINATION_KEY),
       },
       header: this.header(),
       warning: this.ctx.warning(),
@@ -313,7 +320,15 @@ export class ChatHost implements vscode.Disposable {
         }
         // Every change rejected in the diff tab: Allow has nothing left to allow (64).
         if (p && this.ctx.proposals.rejectsAll(p.requestId)) chat.deny(p, "The user rejected every change of this edit.");
-        else if (p) chat.allow(p, m.always);
+        // Always: the suggestions the owner kept, where the owner picked — one of Claude Code's four places, never anything else (78).
+        else if (p)
+          chat.allow(
+            p,
+            !!m.always && {
+              picks: Array.isArray(m.picks) ? m.picks.filter((i) => Number.isInteger(i)) : undefined,
+              destination: isDestination(m.destination) ? m.destination : undefined,
+            },
+          );
         this.ctx.proposals.done(m.requestId);
         return;
       }
@@ -333,6 +348,10 @@ export class ChatHost implements vscode.Disposable {
       }
       case "removePlanComment":
         return this.ctx.plans.remove(m.requestId, m.id);
+      case "permDestination":
+        // Remembered for every chat and window, as Claude Code remembers it (78).
+        if (isDestination(m.destination)) await this.ctx.remembered.update(DESTINATION_KEY, m.destination);
+        return;
       case "answer": {
         const p = pending(m.requestId);
         if (p) chat.answerQuestion(p, m.answers);

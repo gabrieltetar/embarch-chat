@@ -77,7 +77,7 @@ before(async () => {
   });
   mock.state.folders = [folder];
   ext = require("../dist/extension.js");
-  context = { subscriptions: [], extensionUri: mock.vscode.Uri.file(root), workspaceState: new mock.Memento() };
+  context = { subscriptions: [], extensionUri: mock.vscode.Uri.file(root), workspaceState: new mock.Memento(), globalState: new mock.Memento() };
   ext.activate(context);
   chat = new mock.FakeView();
   mock.state.providers.get("embarchChat.chat").provider.resolveWebviewView(chat);

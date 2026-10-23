@@ -53,6 +53,10 @@ whose decision numbers the code cites.
   comment" opens the plan as a read-only Markdown tab whose lines take VS
   Code comments; they show on the card and go back with "keep planning", in
   Claude Code's words.
+- **Always allow lists every suggestion** the CLI makes — a rule, a
+  directory, a mode change — to keep or drop, and where rules and
+  directories are saved: this project (just you), all projects, this
+  project (shared) or this session; the last place picked is remembered.
 - **An open file's unsaved changes are saved before Claude reads, edits or
   writes it**, as Claude Code's own panel does: a PreToolUse hook declared
   in the CLI's `initialize`, which the CLI calls back over stdio and waits

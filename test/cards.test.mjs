@@ -193,3 +193,55 @@ test("keep planning's words: typed text after the rejection's own, comments list
   ];
   assert.equal(core.planFeedback("wait", c).message, `${core.REJECTED_BECAUSE}wait\n\nComments on the plan:\n[Re: "1. Flash"] build first\n[Re: "3. Run\n4. Read"] on COM17`);
 });
+
+// ---- where an "always allow" goes (decision 78)
+
+test("Always allow saves the rule where the owner picked, and to this session; the same command then asks nothing", async () => {
+  const { chat, inputs } = makeChat("permdest");
+  chat.send("Run the bash command `node -e 1+1` and then reply with just: done");
+  await waitFor(() => chat.state.pending.length === 1);
+  const p = chat.state.pending[0];
+  assert.deepEqual(p.suggestions.map((x) => [x.type, x.destination]), [["addRules", "localSettings"]]);
+  chat.allow(p, { destination: "projectSettings" });
+  await turns(chat, 1);
+  const allow = inputs().find((o) => o.type === "control_response").response.response;
+  assert.deepEqual(allow.updatedPermissions.map((x) => [x.type, x.rules[0].ruleContent, x.destination]), [
+    ["addRules", "node -e 1+1", "projectSettings"],
+    ["addRules", "node -e 1+1", "session"],
+  ]);
+  assert.equal(chat.state.mode, "default", "nothing else came with it");
+  chat.send("Run the bash command `node -e 1+1` once more and then reply with just: done");
+  await turns(chat, 1);
+  assert.equal(chat.state.pending.length, 0, "the rule answered in this session");
+  assert.ok(entries(chat.state, "tool").filter((t) => t.name === "Bash").every((t) => t.status === "done"));
+  chat.dispose();
+});
+
+test("the suggestions as the card lists them, where it starts, and what the owner's picks send", () => {
+  const s = [
+    { type: "addRules", rules: [{ toolName: "Bash", ruleContent: "touch marker.txt" }], behavior: "allow", destination: "localSettings" },
+    { type: "addDirectories", directories: ["/work/rec/permdest"], destination: "session" },
+    { type: "setMode", mode: "acceptEdits", destination: "session" },
+  ];
+  assert.deepEqual(
+    s.map(core.grantOf).map((g) => [g.text, g.placed]),
+    [
+      ["Bash(touch marker.txt)", true],
+      ["access to permdest/", true],
+      ["accept edits for this session", false],
+    ],
+  );
+  assert.equal(core.grantOf({ type: "addRules", rules: [{ toolName: "mcp__embarch-api__flash" }] }).text, "mcp__embarch-api__flash");
+  assert.equal(core.defaultDestination(s, undefined), "localSettings", "the most lasting place the CLI named");
+  assert.equal(core.defaultDestination(s, "userSettings"), "userSettings", "the owner's last pick");
+  assert.equal(core.defaultDestination(s, "../../etc"), "localSettings", "never a place outside Claude Code's four");
+  assert.equal(core.defaultDestination([s[2]], undefined), "session");
+  assert.deepEqual(core.alwaysPermissions(s, [0], "userSettings"), [
+    { ...s[0], destination: "userSettings" },
+    { ...s[0], destination: "session" },
+  ], "saved, and given to this session");
+  assert.deepEqual(core.alwaysPermissions(s, [1], "session"), [{ ...s[1], destination: "session" }]);
+  assert.deepEqual(core.alwaysPermissions(s, [2], "userSettings"), [s[2]], "a mode change keeps the CLI's place");
+  assert.deepEqual(core.alwaysPermissions(s, [], "userSettings"), []);
+  assert.deepEqual(core.alwaysPermissions(s, undefined, undefined), s, "as the CLI suggested");
+});

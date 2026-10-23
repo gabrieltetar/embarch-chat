@@ -40,6 +40,8 @@ export interface ChatView {
   atlas: { docs: string[]; boards: string[] } | null;
   /** The time above each message, with a date line where the day changes (decision 68): embarchChat.showMessageTimestamps. */
   timestamps?: boolean;
+  /** Where the owner last chose to save an "always allow" (78). */
+  permDestination?: string;
 }
 
 export type HostToChat =
@@ -90,8 +92,10 @@ export type ChatToHost =
   | { t: "ready" }
   /** A message: pasted images go with it, and the long pastes it holds, for the CLI to mark (56). */
   | { t: "send"; text: string; handoff?: boolean; images?: Attachment[]; pastes?: string[]; editor?: EditorItem; terminals?: string[] }
-  /** `mode`: a plan approved into auto mode, or into ask mode (77). */
-  | { t: "allow"; requestId: string; always?: boolean; mode?: "auto" | "default" }
+  /** `mode`: a plan approved into auto mode, or into ask mode (77); `always`: the suggestions kept (`picks`), saved to `destination` (78). */
+  | { t: "allow"; requestId: string; always?: boolean; picks?: number[]; destination?: string; mode?: "auto" | "default" }
+  /** Where the owner chose to save an "always allow", remembered (78). */
+  | { t: "permDestination"; destination: string }
   | { t: "deny"; requestId: string; message?: string }
   | { t: "answer"; requestId: string; answers: Record<string, string> }
   /** A dialog's or an MCP elicitation's answer, as the CLI's schema has it (decision 66). */
