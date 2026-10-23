@@ -235,6 +235,11 @@ export class Chat extends EventEmitter {
     }
   }
 
+  /** Claude's own ai-title, read from the transcript, until the assistant names chats (decision 12). */
+  noteTitle(title: string): void {
+    if (title && title !== this.state.title) this.dispatch({ type: "_title", title });
+  }
+
   compact(focus?: string): void {
     this.send(focus ? `/compact ${focus}` : "/compact");
   }

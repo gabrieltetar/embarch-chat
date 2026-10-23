@@ -246,7 +246,15 @@ function foldUser(s: ChatState, o: WireMessage): ChatState {
   const raw = textOf(content);
   if (raw.startsWith("[Request interrupted by user")) return note(s, "Interrupted", "interrupt");
   const stdout = /^<local-command-stdout>([\s\S]*)<\/local-command-stdout>$/.exec(raw.trim());
-  if (stdout) return stdout[1].trim() ? note(s, stdout[1].trim(), "info") : s;
+  if (stdout) {
+    // A local command (/compact, /cost, ...) echoes its output, not itself.
+    const cmd = s.timeline.find((id) => {
+      const e = s.entries[id];
+      return e.kind === "user" && e.pending && e.text.startsWith("/");
+    });
+    if (cmd) s = patch(s, cmd, "user", () => ({ pending: false }));
+    return stdout[1].trim() ? note(s, stdout[1].trim(), "info") : s;
+  }
   if (/^<local-command-stderr>/.test(raw.trim())) return note(s, raw.replace(/<\/?local-command-stderr>/g, "").trim(), "error");
   const text = commandText(raw) ?? raw;
   const images = imagesOf(content);

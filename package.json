@@ -159,7 +159,7 @@
           "embarchUi.binaryPath": {
             "type": "string",
             "default": "embarch-ui",
-            "description": "Path to the embarch-ui binary. Defaults to 'embarch-ui' on PATH — set an absolute path if it isn't installed there."
+            "description": "Path to the embarch-ui binary. Defaults to 'embarch-ui' on PATH \u2014 set an absolute path if it isn't installed there."
           },
           "embarchUi.host": {
             "type": "string",
@@ -189,8 +189,9 @@
     "build": "node build.mjs",
     "watch": "node build.mjs --watch",
     "typecheck": "tsc -p . --noEmit",
-    "test": "node build.mjs --tests && node --test test/",
-    "package": "./reinstall.sh --package-only"
+    "test": "node build.mjs --tests && node --test test/*.test.mjs",
+    "package": "./reinstall.sh --package-only",
+    "test:webview": "node build.mjs && node test/webview.e2e.mjs"
   },
   "devDependencies": {
     "@types/node": "20.17.6",
