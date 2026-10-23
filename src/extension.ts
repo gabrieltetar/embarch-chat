@@ -704,6 +704,48 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("embarchChat.showLog", () => output.show()),
   );
 
+  // ------------------------------------------------------------ keys (decision 59)
+
+  // Claude Code's own keys, on chords of their own where both extensions
+  // would answer: its Ctrl+Esc and Alt+K are bound wherever an editor has
+  // focus, so the chat's are Ctrl+Alt+Esc and Alt+Shift+K; Ctrl+Shift+T
+  // stays, each extension's context key being set only when its own tab
+  // was the last one closed.
+  /** Where a key goes: the chat tab last focused while it shows, else the sidebar's chat. */
+  const keyTarget = async () => {
+    const tab = panels.shownHost();
+    if (tab) return tab;
+    await reveal();
+    return chatView.host;
+  };
+  const lastClosed = (v: boolean) => void vscode.commands.executeCommand("setContext", "embarchChat.lastClosedWasChat", v);
+  panels.onClosed = () => lastClosed(true);
+  context.subscriptions.push(
+    vscode.window.tabGroups.onDidChangeTabs((e) => {
+      if (e.closed.some((t) => !(t.input instanceof vscode.TabInputWebview && t.input.viewType.includes("embarchChat.chatTab")))) lastClosed(false);
+    }),
+    vscode.commands.registerCommand("embarchChat.focus", async () => {
+      // As Claude Code's: selected lines come along as an @-mention.
+      const ed = vscode.window.activeTextEditor;
+      const host = await keyTarget();
+      if (ed && !ed.selection.isEmpty && ed.document.uri.scheme === "file") host?.insertMention(ed);
+      host?.focusInput();
+    }),
+    vscode.commands.registerCommand("embarchChat.blur", () => vscode.commands.executeCommand("workbench.action.focusFirstEditorGroup")),
+    vscode.commands.registerCommand("embarchChat.insertAtMention", async () => {
+      const ed = vscode.window.activeTextEditor;
+      if (!ed || ed.document.uri.scheme !== "file") return;
+      (await keyTarget())?.insertMention(ed);
+    }),
+    vscode.commands.registerCommand("embarchChat.reopenClosedChat", async () => {
+      const sid = panels.reopen();
+      // Nothing of ours to reopen: VS Code's own Reopen Closed Editor, as Claude Code falls through to it.
+      if (!sid) return vscode.commands.executeCommand("workbench.action.reopenClosedEditor");
+      openInEditor(sid);
+      lastClosed(panels.canReopen);
+    }),
+  );
+
   desk.start();
 }
 

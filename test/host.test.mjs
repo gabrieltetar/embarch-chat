@@ -872,3 +872,56 @@ test("a terminal picked from @ goes with the message as its last 100 lines, read
     for (const c of ["selectAll", "copySelection", "clearSelection"]) mock.state.commands.delete(`workbench.action.terminal.${c}`);
   }
 });
+
+test("keys: focus the chat's input, an @-mention of the selection, reopen the last closed chat tab — on chords Claude Code's own leave free (decision 59)", { skip }, async () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+  const keys = Object.fromEntries(pkg.contributes.keybindings.map((k) => [`${k.command} ${k.when}`, k.key]));
+  assert.deepEqual(keys, {
+    "embarchChat.focus editorTextFocus": "ctrl+alt+escape",
+    "embarchChat.blur !editorTextFocus": "ctrl+alt+escape",
+    "embarchChat.insertAtMention editorTextFocus": "alt+shift+k",
+    "embarchChat.reopenClosedChat embarchChat.lastClosedWasChat": "ctrl+shift+t",
+  });
+  const sid = await startUntracked("basic");
+  const n = chatView.webview.posted.length;
+  mock.state.executed.length = 0;
+  await mock.state.commands.get("embarchChat.focus")();
+  assert.ok(mock.state.executed.includes("embarchChat.chat.focus"), "the sidebar's chat comes forward");
+  assert.ok(chatView.webview.posted.slice(n).some((m) => m.t === "focus"), "and its input takes focus");
+  await mock.state.commands.get("embarchChat.blur")();
+  assert.ok(mock.state.executed.includes("workbench.action.focusFirstEditorGroup"), "the same keys again leave it, as Claude Code's");
+  const ed = fakeEditor("src/main.c", Array.from({ length: 30 }, (_, i) => `line ${i + 1}`));
+  select(ed, 9, 24);
+  mock.vscode.window.activeTextEditor = ed;
+  try {
+    await mock.state.commands.get("embarchChat.insertAtMention")();
+    assert.equal(posted((m) => m.t === "insert")?.text, "@src/main.c#L10-24 ");
+  } finally {
+    mock.vscode.window.activeTextEditor = undefined;
+  }
+  // Ctrl+Shift+T: only while a chat tab was the last tab closed.
+  await mock.state.commands.get("embarchChat.openInEditor")();
+  const panels = mock.state.panels.length;
+  mock.state.panels.at(-1).dispose();
+  assert.equal(mock.state.context["embarchChat.lastClosedWasChat"], true);
+  mock.bus.emit("tabs", { closed: [{ input: new mock.vscode.TabInputWebview("mainThreadWebview-embarchChat.chatTab") }], opened: [], changed: [] });
+  assert.equal(mock.state.context["embarchChat.lastClosedWasChat"], true, "our own tab's close keeps it");
+  mock.bus.emit("tabs", { closed: [{ input: {} }], opened: [], changed: [] });
+  assert.equal(mock.state.context["embarchChat.lastClosedWasChat"], false, "any other tab's close hands the keys back to VS Code (and to Claude Code)");
+  await mock.state.commands.get("embarchChat.reopenClosedChat")();
+  assert.equal(mock.state.panels.length, panels + 1, "reopened");
+  const tab = mock.state.panels.at(-1);
+  tab.webview.fromPage({ t: "ready" });
+  assert.equal([...tab.webview.posted].reverse().find((m) => m.t === "snapshot").state.sessionId, sid, "the last one closed first");
+  // Earlier tests closed tabs too: each comes back, latest first, until none is left.
+  const reopened = [tab];
+  for (let i = 0; i < 20 && mock.state.context["embarchChat.lastClosedWasChat"]; i++) {
+    await mock.state.commands.get("embarchChat.reopenClosedChat")();
+    reopened.push(mock.state.panels.at(-1));
+  }
+  assert.equal(mock.state.context["embarchChat.lastClosedWasChat"], false, "none left");
+  mock.state.executed.length = 0;
+  await mock.state.commands.get("embarchChat.reopenClosedChat")();
+  assert.ok(mock.state.executed.includes("workbench.action.reopenClosedEditor"), "nothing of ours: VS Code's own");
+  for (const p of reopened) p.dispose();
+});

@@ -69,8 +69,10 @@ export type HostToChat =
   | { t: "taskOutput"; taskId: string; output?: string; totalBytes?: number; truncated?: boolean; error?: string }
   /** The editor's open file or selection, which goes with the next message unless dismissed (60). */
   | { t: "editor"; editor: (EditorItem & { label: string }) | null }
-  /** Focus the input (after a terminal was read, 58). */
-  | { t: "focus" };
+  /** Focus the input (after a terminal was read, 58; Ctrl+Alt+Esc, 59). */
+  | { t: "focus" }
+  /** Text in at the input's caret: an @-mention of the editor's selection (Alt+Shift+K, 59). */
+  | { t: "insert"; text: string };
 
 /** What a rewind restores (decision 73), as Claude Code's panel offers it: the conversation always as a fork. */
 export type Restore = "both" | "conversation" | "code";

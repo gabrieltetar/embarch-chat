@@ -1904,6 +1904,21 @@ await check("a terminal picked from @ is a chip under the input, not text; its n
   assert.equal(await exec("return document.activeElement === document.querySelector('.composer textarea')"), true);
 });
 
+await check("Alt+Shift+K's @-mention lands at the caret, spaced from the word before, and the input takes focus (59)", async () => {
+  await fresh({}, false);
+  await send([{ t: "insert", text: "@src/main.c#L10-24 " }]);
+  assert.equal(await value(), "@src/main.c#L10-24 ", "an input never used: at the end");
+  assert.equal(await exec("return document.activeElement === document.querySelector('.composer textarea')"), true);
+  await type("why is this");
+  await exec("const t=document.querySelector('.composer textarea'); t.setSelectionRange(3, 3)");
+  await send([{ t: "insert", text: "@README.md " }]);
+  assert.equal(await value(), "@sr @README.md c/main.c#L10-24 why is this", "at the caret");
+  await exec("const t=document.querySelector('.composer textarea'); t.value=''; t.dispatchEvent(new Event('input', {bubbles:true}))");
+  await type("look at");
+  await send([{ t: "insert", text: "@a.c " }]);
+  assert.equal(await value(), "look at @a.c ");
+});
+
 await check("what went with a message shows as rows under it: a selection and a terminal open to their text, the file opens in the editor (58, 60)", async () => {
   await fresh({}, false);
   const context = [SEL, { kind: "file", path: "/work/rec/x/README.md" }, { kind: "terminal", name: "west build", text: "[1/2] Building C object\nerror: 'x' undeclared" }];

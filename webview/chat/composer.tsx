@@ -265,6 +265,19 @@ export function Composer(p: Props) {
         ta.current?.focus();
         return;
       }
+      if (m.t === "insert") {
+        // At the caret — at the end when the input was never in use — spaced from the word before.
+        const el = ta.current;
+        if (!el) return;
+        const cur = textRef.current;
+        const [at, end] = el.selectionStart === 0 && el.selectionEnd === 0 ? [cur.length, cur.length] : [el.selectionStart, el.selectionEnd];
+        const before = cur.slice(0, at);
+        const pad = before && !/\s$/.test(before) ? " " : "";
+        const next = before + pad + m.text + cur.slice(end);
+        setText(next);
+        focusAt(at + pad.length + m.text.length);
+        return;
+      }
       if (m.t === "ghost") {
         if (!s.ghostReq || m.seq !== s.ghostReq.seq) return;
         if (m.done) s.inflight = false;

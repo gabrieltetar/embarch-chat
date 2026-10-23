@@ -124,6 +124,26 @@
         "category": "EmbArch Chat"
       },
       {
+        "command": "embarchChat.focus",
+        "title": "Focus Chat Input",
+        "category": "EmbArch Chat"
+      },
+      {
+        "command": "embarchChat.blur",
+        "title": "Leave Chat Input",
+        "category": "EmbArch Chat"
+      },
+      {
+        "command": "embarchChat.insertAtMention",
+        "title": "Insert @-Mention of the Selection",
+        "category": "EmbArch Chat"
+      },
+      {
+        "command": "embarchChat.reopenClosedChat",
+        "title": "Reopen Closed Chat Tab",
+        "category": "EmbArch Chat"
+      },
+      {
         "command": "embarchUi.start",
         "title": "EmbArch UI: Start",
         "category": "EmbArch UI"
@@ -195,6 +215,29 @@
         }
       ]
     },
+    "keybindings": [
+      {
+        "command": "embarchChat.focus",
+        "key": "ctrl+alt+escape",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "embarchChat.blur",
+        "key": "ctrl+alt+escape",
+        "when": "!editorTextFocus"
+      },
+      {
+        "command": "embarchChat.insertAtMention",
+        "key": "alt+shift+k",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "embarchChat.reopenClosedChat",
+        "key": "ctrl+shift+t",
+        "mac": "cmd+shift+t",
+        "when": "embarchChat.lastClosedWasChat"
+      }
+    ],
     "configuration": [
       {
         "title": "EmbArch Chat",

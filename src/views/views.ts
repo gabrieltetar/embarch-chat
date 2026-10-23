@@ -47,6 +47,13 @@ export class ChatPanels implements vscode.Disposable {
   private panels = new Map<string, { panel: vscode.WebviewPanel; host: ChatHost }>();
   /** Called when a tab shows or hides. */
   onShown: () => void = () => {};
+  /** Called when the owner closed a tab: Ctrl+Shift+T can bring it back (59). */
+  onClosed: () => void = () => {};
+  /** Tabs the owner closed, the latest last (Claude Code keeps its own so). */
+  private closed: string[] = [];
+  /** The tab last focused, for a key that goes to the chat (59). */
+  private lastActive: string | null = null;
+  private disposing = false;
 
   constructor(
     private extensionUri: vscode.Uri,
@@ -72,13 +79,34 @@ export class ChatPanels implements vscode.Disposable {
     const host = new ChatHost(panel.webview, this.ctx, sid, true, () => panel.reveal(undefined, false));
     panel.webview.html = webviewHtml(panel.webview, this.extensionUri, "chat", title);
     this.panels.set(sid, { panel, host });
-    panel.onDidChangeViewState?.(() => this.onShown());
+    panel.onDidChangeViewState?.(() => {
+      if (panel.active) this.lastActive = sid;
+      this.onShown();
+    });
     panel.onDidDispose(() => {
       host.dispose();
       this.panels.delete(sid);
       this.ctx.chats.release(sid);
       this.onShown();
+      if (this.disposing) return;
+      this.closed = [...this.closed.filter((x) => x !== sid), sid].slice(-20);
+      this.onClosed();
     });
+  }
+
+  /** The last closed tab's chat, taken off the list; null when none is left. */
+  reopen(): string | null {
+    return this.closed.pop() ?? null;
+  }
+
+  get canReopen(): boolean {
+    return this.closed.length > 0;
+  }
+
+  /** The tab last focused, while it still shows. */
+  shownHost(): ChatHost | undefined {
+    const p = this.lastActive ? this.panels.get(this.lastActive) : undefined;
+    return p?.panel.visible ? p.host : undefined;
   }
 
   retitle(sid: string, title: string): void {
@@ -106,6 +134,7 @@ export class ChatPanels implements vscode.Disposable {
   }
 
   dispose(): void {
+    this.disposing = true;
     for (const p of this.panels.values()) p.panel.dispose();
   }
 }

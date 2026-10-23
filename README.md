@@ -146,6 +146,15 @@ whose decision numbers the code cites.
   progress; question and answer show above the input and never join the
   conversation. Clear drops them.
 
+- **Keys**, after Claude Code's own: **Ctrl+Alt+Esc** focuses the chat's
+  input from an editor (with lines selected, it brings them as an
+  @-mention) and again leaves it; **Alt+Shift+K** inserts the editor's file
+  and selected lines as `@path#L10-24` at the input's caret;
+  **Ctrl+Shift+T** reopens the last closed chat tab while a chat tab was
+  the last tab closed, else VS Code's own reopen. Claude Code binds
+  Ctrl+Esc and Alt+K wherever an editor has focus, so with both installed
+  those chords stay Claude Code's.
+
 The desk is called from the extension's Node side only, on
 `127.0.0.1:4891` with the token in `~/.config/embarch-desk/desk-token`;
 **the webviews never hold the token**.

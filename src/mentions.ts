@@ -23,19 +23,23 @@ function rel(cwd: string, abs: string): string {
   return r.startsWith("..") ? abs : r;
 }
 
+/** An editor's file as an @-mention from `cwd`, with its selected lines: `src/main.c#L10-24`. */
+export function mentionOf(ed: vscode.TextEditor, cwd: string): string {
+  const p = rel(cwd, ed.document.uri.fsPath);
+  const sel = ed.selection;
+  if (sel.isEmpty) return p;
+  const a = sel.start.line + 1;
+  const b = sel.end.character === 0 && sel.end.line > sel.start.line ? sel.end.line : sel.end.line + 1;
+  return `${p}#L${a}${b > a ? `-${b}` : ""}`;
+}
+
 /** Ranked: the active selection first, then basename prefix, then path substring, then subsequence. */
 export async function mentionItems(q: string, cwd: string): Promise<MentionItem[]> {
   const out: MentionItem[] = [];
   const ed = vscode.window.activeTextEditor;
-  if (ed && ed.document.uri.scheme === "file") {
-    const p = rel(cwd, ed.document.uri.fsPath);
-    const sel = ed.selection;
-    if (!sel.isEmpty && (!q || p.toLowerCase().includes(q.toLowerCase()))) {
-      const a = sel.start.line + 1;
-      const b = sel.end.character === 0 && sel.end.line > sel.start.line ? sel.end.line : sel.end.line + 1;
-      const insert = `${p}#L${a}${b > a ? `-${b}` : ""}`;
-      out.push({ insert, label: insert, detail: "selected lines" });
-    }
+  if (ed && ed.document.uri.scheme === "file" && !ed.selection.isEmpty) {
+    const insert = mentionOf(ed, cwd);
+    if (!q || rel(cwd, ed.document.uri.fsPath).toLowerCase().includes(q.toLowerCase())) out.push({ insert, label: insert, detail: "selected lines" });
   }
   const needle = q.toLowerCase();
   for (const name of terminalNames()) {

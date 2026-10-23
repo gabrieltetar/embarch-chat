@@ -11,7 +11,7 @@ import type { DiffContent, Proposals } from "../diff";
 import { diffSides } from "../diff";
 import { atlasInfo, citationTarget } from "../atlas";
 import { jump } from "../jump";
-import { mentionItems } from "../mentions";
+import { mentionItems, mentionOf } from "../mentions";
 import type { WireMessage } from "../wire/types";
 import type { ChatRecord } from "../chats";
 import type { HaikuAssistant } from "../assistant/assistant";
@@ -253,6 +253,7 @@ export class ChatHost implements vscode.Disposable {
       this.promptsSent = -1;
       this.post({ t: "library", entries: this.ctx.library(), assistant: this.ctx.assistantOn() });
       this.snapshot();
+      for (const k of this.keyed.splice(0)) this.post(k);
       return;
     }
     if (m.t === "newChat") return this.ctx.newChat();
@@ -484,10 +485,26 @@ export class ChatHost implements vscode.Disposable {
     else chat.send(m.text, images, extra);
   }
 
+  /** For a page not yet loaded: what a key asked of it (59), posted once it is ready. */
+  private keyed: HostToChat[] = [];
+
+  private postKeyed(m: HostToChat): void {
+    if (this.ready) this.post(m);
+    else this.keyed.push(m);
+  }
+
   /** This page forward, its input focused. */
   focusInput(): void {
     this.reveal();
-    if (this.ready) this.post({ t: "focus" });
+    this.postKeyed({ t: "focus" });
+  }
+
+  /** The editor's file and selected lines as an @-mention at the input's caret (Alt+Shift+K, 59), from this chat's folder. */
+  insertMention(ed: vscode.TextEditor): void {
+    const rec = this.sid ? this.ctx.chats.get(this.sid) : undefined;
+    if (!rec) return;
+    this.reveal();
+    this.postKeyed({ t: "insert", text: `@${mentionOf(ed, rec.chat.opts.cwd || rec.chat.state.cwd || "")} ` });
   }
 
   dispose(): void {
