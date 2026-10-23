@@ -288,7 +288,8 @@ test("a desk updated in place that looks the same: a mark it keeps clears the no
   const viewOf = (cards) => ({ now_ms: Date.now(), today: "2026-10-23", cards, desks: [A, B], open_desk: A, sessions: [] });
   const srv = http.createServer((req, res) => {
     const u = new URL(req.url, "http://x");
-    const json = (status, body) => (res.writeHead(status, { "content-type": "application/json" }), res.end(JSON.stringify(body)));
+    // No keep-alive: the next test's server on the probe port never gets this one's socket.
+    const json = (status, body) => (res.writeHead(status, { "content-type": "application/json", connection: "close" }), res.end(JSON.stringify(body)));
     if (u.pathname === "/view") {
       const d = u.searchParams.get("desk");
       if (d && reads) return d === B.id ? json(200, viewOf([onB])) : json(404, { error: `no desk ${d}` });
@@ -314,6 +315,52 @@ test("a desk updated in place that looks the same: a mark it keeps clears the no
     await svc.poll();
     assert.deepEqual(items(), [onB.id], "asked again on the next poll: the window's desk's cards");
     assert.equal(svc.notice, null);
+  } finally {
+    svc.dispose();
+    await new Promise((r) => srv.close(r));
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a desk that refuses an unknown ?desk= with another 4xx than 404 reads it all the same, and a deleted desk falls back", async () => {
+  let status = 400;
+  let hasB = true;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "embarch-chat-desk4xx-"));
+  const fw = (n) => (fs.mkdirSync(path.join(root, n), { recursive: true }), path.join(root, n));
+  const A = { id: "da", name: "Desk A", firmware_repos: [fw("fw-a")] };
+  const B = { id: "db", name: "Desk B", firmware_repos: [fw("fw-b")] };
+  const onA = card("wa", "ABC-211", [], { repo_path: A.firmware_repos[0], desk_id: A.id });
+  const onB = card("wb", "ABC-210", [], { repo_path: B.firmware_repos[0], desk_id: B.id });
+  const viewOf = (cards) => ({ now_ms: Date.now(), today: "2026-10-23", cards, desks: hasB ? [A, B] : [A], open_desk: A, sessions: [] });
+  const srv = http.createServer((req, res) => {
+    const u = new URL(req.url, "http://x");
+    const json = (s, body) => (res.writeHead(s, { "content-type": "application/json", connection: "close" }), res.end(JSON.stringify(body)));
+    if (u.pathname !== "/view") return json(404, { error: "no route" });
+    const d = u.searchParams.get("desk");
+    if (d === null) return json(200, viewOf([onA]));
+    return d === B.id && hasB ? json(200, viewOf([onB])) : json(status, { error: `unknown desk ${d}` });
+  });
+  await new Promise((r) => srv.listen(PROBE_PORT, "127.0.0.1", r));
+  const c = new core.DeskClient({ baseUrl: `http://127.0.0.1:${PROBE_PORT}`, tokenPath: "/nonexistent" });
+  const chats = new core.ChatManager(() => ({ claudePath: "/bin/false", idleMs: 60000, log: () => {} }));
+  const svc = new core.DeskService(() => c, chats, () => [B.firmware_repos[0]], () => {});
+  const items = () => svc.groups.map((g) => g.item?.id).filter(Boolean);
+  try {
+    for (const s of [400, 422, 404]) {
+      status = s;
+      assert.equal(await c.readsDeskParam(), true, `${s}: it reads ?desk=`);
+    }
+    status = 401;
+    await assert.rejects(c.readsDeskParam(), (e) => e.status === 401, "a token refused says nothing about the desk");
+    status = 400;
+    await svc.poll();
+    assert.equal(svc.error, null);
+    assert.deepEqual(items(), [onB.id], "the window's desk's cards");
+    assert.equal(svc.notice, null);
+    hasB = false;
+    await svc.poll();
+    assert.equal(svc.error, null, "a deleted desk refused with a 400 falls back to the open desk's view, not an error");
+    assert.deepEqual(items(), [onA.id], "the open desk is the window's desk now");
   } finally {
     svc.dispose();
     await new Promise((r) => srv.close(r));

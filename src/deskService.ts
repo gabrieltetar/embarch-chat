@@ -6,7 +6,7 @@
 
 import * as cp from "child_process";
 import { EventEmitter } from "events";
-import { DeskClient, DeskError, DeskView, MailboxEntry, ViewDesk } from "./desk/client";
+import { DeskClient, DeskError, DeskView, MailboxEntry, ViewDesk, refusesDesk } from "./desk/client";
 import { ThreadGroup, buildThreads, isUnder, ownDesk, resolveDesk, waitingThreads } from "./desk/threads";
 import { TranscriptIndex, TranscriptMeta } from "./wire/transcript";
 import type { ChatManager } from "./chats";
@@ -197,7 +197,8 @@ export class DeskService extends EventEmitter {
   /**
    * The view for this window (decision 9): its own desk's cards
    * (`/view?desk=`) when its folder is in a desk's repo, else the open
-   * desk's. A desk deleted since answers 404: the plain view, and the
+   * desk's. A desk deleted since answers 404 (any 4xx but the token's
+   * counts: the Interface does not pin it): the plain view, and the
    * window's desk is found again from it. A desk that ignores `?desk=`
    * (one older than this panel) gets the plain view too: its cards are
    * the open desk's, and buildThreads keeps only those in this window's
@@ -212,7 +213,7 @@ export class DeskService extends EventEmitter {
         if (this.reshaped(v) && !again) return this.fetchView(true);
         return v;
       } catch (e) {
-        if (!(e instanceof DeskError && e.status === 404)) throw e;
+        if (!refusesDesk(e)) throw e;
         this.log(`desk ${this.ownDeskId} is gone: the open desk's view`);
         this.ownDeskId = null;
       }
@@ -228,7 +229,7 @@ export class DeskService extends EventEmitter {
         v = await this.client.view(own.id);
         this.scopedTo = own.id;
       } catch (e) {
-        if (!(e instanceof DeskError && e.status === 404)) throw e;
+        if (!refusesDesk(e)) throw e;
         this.ownDeskId = null;
       }
     }

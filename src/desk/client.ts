@@ -67,6 +67,15 @@ export const CLIENT = "embarch-chat";
 /** A desk name no desk has: `/view?desk=` with it is a 404 on a desk that reads the parameter. */
 const NO_SUCH_DESK = "embarch-chat: no such desk";
 
+/**
+ * A `/view?desk=` the desk refused for the desk it names — none by that
+ * name (404 today), or any other 4xx. Not the token (401), which is no
+ * answer about the desk at all.
+ */
+export function refusesDesk(e: unknown): boolean {
+  return e instanceof DeskError && e.status >= 400 && e.status < 500 && e.status !== 401;
+}
+
 export function expandHome(p: string): string {
   return p.startsWith("~/") || p === "~" ? os.homedir() + p.slice(1) : p;
 }
@@ -149,16 +158,17 @@ export class DeskClient {
 
   /**
    * Whether this desk reads `/view?desk=` (desk b722b3b and later). Asked
-   * for a desk no one has, it answers 404; an older desk ignores the
-   * parameter and answers with the open desk's cards, which a window on
-   * another desk must not show as its own.
+   * for a desk no one has, it refuses: 404 today, and any refusal of the
+   * request (`refusesDesk`) counts, as the Interface does not pin the
+   * status. An older desk ignores the parameter and answers with the open
+   * desk's cards, which a window on another desk must not show as its own.
    */
   async readsDeskParam(): Promise<boolean> {
     try {
       await this.call("GET", `/view?desk=${encodeURIComponent(NO_SUCH_DESK)}`);
       return false;
     } catch (e) {
-      if (e instanceof DeskError && e.status === 404) return true;
+      if (refusesDesk(e)) return true;
       throw e;
     }
   }
