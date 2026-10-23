@@ -36,14 +36,14 @@
         {
           "id": "embarch-chat",
           "title": "EmbArch Chat",
-          "icon": "media/chat.svg"
+          "icon": "media/embarch-glyph.svg"
         }
       ],
       "secondarySidebar": [
         {
           "id": "embarch-chat-secondary",
           "title": "EmbArch Chat",
-          "icon": "media/chat.svg"
+          "icon": "media/embarch-glyph.svg"
         }
       ]
     },
@@ -62,6 +62,15 @@
           "name": "Chat"
         }
       ]
+    },
+    "icons": {
+      "embarch-mark": {
+        "description": "The EmbArch mark, in one colour",
+        "default": {
+          "fontPath": "media/embarch-glyph.woff",
+          "fontCharacter": "\\E000"
+        }
+      }
     },
     "commands": [
       {

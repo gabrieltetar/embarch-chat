@@ -90,6 +90,14 @@ whose decision numbers the code cites.
   frontmatter (none is Other); a click puts `/<name> ` at the head of the
   draft, as the session knows it (`/embarch-chat:<name>` for the plugin's).
   `/` completes them too.
+- **It looks like EmbArch over VS Code's own theme**: the UI text in IBM
+  Plex Sans, shipped in the extension (code, diffs and tool output keep the
+  editor's font); EmbArch's cyan accent and its green, amber, red and blue
+  for done, waiting on you, failed and running, over VS Code's backgrounds,
+  text, inputs and borders, in a dark or a light theme (a high-contrast one
+  keeps VS Code's colours). The EmbArch mark is the activity bar's icon,
+  the chat tab's and **EmbArch** at the right of the status bar, which
+  starts a new chat.
 
 The desk is called from the extension's Node side only, on
 `127.0.0.1:4891` with the token in `~/.config/embarch-desk/desk-token`;
@@ -186,6 +194,11 @@ npm run test:webview # both webviews in headless Firefox over geckodriver
   `CLAUDE_CONFIG_DIR`, and never touch the live desk on :4891. A `start`
   mailbox entry is seeded into the scratch desk's store, as Start work
   would leave it: the desk refuses one posted to `/mailbox`.
+- **The glyph** — the status bar's icon font, the activity bar's icon and
+  the chat tab's pair (`media/embarch-glyph.*`, `media/embarch-tab-*.svg`)
+  — is made from the mark (`tools/embarch-mark.svg`, embarch-ui's) by
+  `tools/make_glyph.py`, which needs fontTools and skia-pathops in a scratch
+  venv; its docstring says how to run it.
 - `node test/live.smoke.mjs <scratch-dir> [claude]` runs one real, stripped
   Haiku chat through the wire layer (about three cents).
 - **The assistant tests** replay real recorded Haiku calls
@@ -202,4 +215,7 @@ An internal `.vsix` only, never the public Marketplace.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE). IBM Plex Sans
+(`webview/shared/fonts/`) is the SIL Open Font License 1.1 — see
+[its licence](webview/shared/fonts/LICENSE-IBM-Plex.txt), which the
+`.vsix` carries beside the font.

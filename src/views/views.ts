@@ -64,7 +64,11 @@ export class ChatPanels implements vscode.Disposable {
       retainContextWhenHidden: true,
       localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, "dist")],
     });
-    panel.iconPath = vscode.Uri.joinPath(this.extensionUri, "media", "chat.svg");
+    // The mark in its two colours, a file per theme (decision 54).
+    panel.iconPath = {
+      light: vscode.Uri.joinPath(this.extensionUri, "media", "embarch-tab-light.svg"),
+      dark: vscode.Uri.joinPath(this.extensionUri, "media", "embarch-tab-dark.svg"),
+    };
     const host = new ChatHost(panel.webview, this.ctx, sid, true);
     panel.webview.html = webviewHtml(panel.webview, this.extensionUri, "chat", title);
     this.panels.set(sid, { panel, host });

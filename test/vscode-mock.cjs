@@ -128,8 +128,10 @@ const vscode = {
   },
   window: {
     createOutputChannel: () => ({ appendLine: (l) => state.output.push(l), append: (l) => state.output.push(l), show() {}, dispose() {} }),
-    createStatusBarItem: () => {
-      const it = { text: "", tooltip: "", command: undefined, visible: false, show() {
+    // Both signatures: (alignment, priority) and (id, alignment, priority).
+    createStatusBarItem: (...args) => {
+      const id = typeof args[0] === "string" ? args.shift() : undefined;
+      const it = { id, alignment: args[0] ?? 1, priority: args[1], name: undefined, text: "", tooltip: "", command: undefined, visible: false, show() {
         this.visible = true;
       }, hide() {
         this.visible = false;

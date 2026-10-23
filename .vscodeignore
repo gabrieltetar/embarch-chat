@@ -9,3 +9,4 @@ reinstall.sh
 **/*.map
 .gitignore
 .claude-plugin/**
+tools/**

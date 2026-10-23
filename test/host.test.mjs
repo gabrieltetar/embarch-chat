@@ -103,6 +103,24 @@ test("activation registers the chat's and the launcher's commands, and the views
   assert.equal(chatView.webview.posted.at(-1).t, "empty");
 });
 
+test("the status bar's right end holds EmbArch Chat's own new chat, in the mark", { skip }, () => {
+  const entry = mock.state.statusItems.find((s) => s.id === "embarchChat.entry");
+  assert.ok(entry?.visible, "always shown");
+  assert.equal(entry.alignment, mock.vscode.StatusBarAlignment.Right);
+  assert.equal(entry.text, "$(embarch-mark) EmbArch");
+  assert.equal(entry.tooltip, "New EmbArch chat");
+  assert.equal(entry.command, "embarchChat.newChat");
+  // The icon is the extension's own, from a font it ships (decision 54).
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+  const icon = manifest.contributes.icons["embarch-mark"].default;
+  assert.equal(icon.fontCharacter, "\\E000");
+  assert.ok(fs.statSync(path.join(root, icon.fontPath)).size > 0, icon.fontPath);
+  for (const c of Object.values(manifest.contributes.viewsContainers).flat()) assert.ok(fs.existsSync(path.join(root, c.icon)), c.icon);
+  // The count stays where it was: the left, and only while something waits.
+  const count = mock.state.statusItems.find((s) => s.command === "embarchChat.openWaiting");
+  assert.equal(count.alignment, mock.vscode.StatusBarAlignment.Left);
+});
+
 test("the + picks a work item, assigns the session on the desk, and the chat runs", { skip }, async () => {
   const { id: item } = await client.call("POST", "/items", { title: "ABC-123 blink the widget", desk: "none" });
   await mock.state.commands.get("embarchChat.refresh")();
@@ -204,6 +222,8 @@ test("an editor tab shows the same chat", { skip }, async () => {
   const snap = await waitFor(() => panel.webview.posted.find((m) => m.t === "snapshot"), 3000, "the tab's snapshot");
   assert.equal(snap.state.sessionId, sid);
   assert.equal(snap.view.inEditor, true);
+  // Its tab wears the mark, a file per theme (decision 54).
+  for (const theme of ["light", "dark"]) assert.ok(fs.existsSync(panel.iconPath[theme].fsPath), theme);
 });
 
 test("a terminal session in this folder lists read-only, and Jump asks Claude Code for it", { skip }, async () => {

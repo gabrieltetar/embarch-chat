@@ -186,6 +186,19 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!desk.error) for (const rec of manager.records.values()) if (rec.ours && rec.deskDue) void tellDesk(rec);
   });
 
+  // ------------------------------------------------------------ the entry
+
+  // EmbArch Chat's own "new chat" at the right of the status bar, where
+  // Claude Code and Copilot keep theirs, in the mark rather than a codicon
+  // (decision 54): always shown, and a click is the top +.
+  const entry = vscode.window.createStatusBarItem("embarchChat.entry", vscode.StatusBarAlignment.Right);
+  entry.name = "EmbArch Chat";
+  entry.text = "$(embarch-mark) EmbArch";
+  entry.tooltip = "New EmbArch chat";
+  entry.command = "embarchChat.newChat";
+  entry.show();
+  context.subscriptions.push(entry);
+
   // ------------------------------------------------------------ opening
 
   const reveal = async () => {
