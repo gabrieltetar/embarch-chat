@@ -42,7 +42,7 @@ function neutralLimit(i) {
 }
 /** The initialize request ids the panel sent: their answers name the account. */
 const inits = new Set();
-const KEEP_INITIALIZE = ["current_permission_mode", "session_state", "output_style"];
+const KEEP_INITIALIZE = ["current_permission_mode", "session_state", "output_style", "hooks_applied"];
 
 const scrub = (s) => {
   for (const [from, to] of swaps) {

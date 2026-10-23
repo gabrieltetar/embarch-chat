@@ -181,6 +181,12 @@
             "default": false,
             "scope": "machine",
             "description": "Show the time above each of your messages and Claude's replies, to the second, with a date line where the day changes — to line a turn up against a serial log or a trace (decision 68). User or Remote settings only."
+          },
+          "embarchChat.autosave": {
+            "type": "boolean",
+            "default": true,
+            "scope": "machine",
+            "description": "Before Claude reads, edits or writes a file, save that file's unsaved changes in the editor, as Claude Code's own panel does (decision 61). Off, Claude works on the copy on disk. User or Remote settings only — a workspace cannot set it."
           }
         }
       },

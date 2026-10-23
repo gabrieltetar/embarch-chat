@@ -31,12 +31,15 @@ function makeChat(name, opts = {}) {
     existing: opts.existing ?? false,
     idleMs: opts.idleMs ?? 60000,
     mode: opts.mode,
-    env: { ...process.env, FAKE_CLAUDE_FIXTURE: opts.fixture ?? fixture(name), FAKE_CLAUDE_ARGS_LOG: argsLog },
+    env: { ...process.env, FAKE_CLAUDE_FIXTURE: opts.fixture ?? fixture(name), FAKE_CLAUDE_ARGS_LOG: argsLog, FAKE_CLAUDE_INPUT_LOG: path.join(dir, "input.jsonl") },
+    hooks: opts.hooks,
   });
   const events = [];
   chat.on("event", (e) => events.push(e));
   const spawns = () => (fs.existsSync(argsLog) ? fs.readFileSync(argsLog, "utf8").trim().split("\n").map((l) => JSON.parse(l)) : []);
-  return { chat, events, spawns, dir };
+  // Every line the chat wrote to the CLI, in order.
+  const inputs = () => (fs.existsSync(path.join(dir, "input.jsonl")) ? fs.readFileSync(path.join(dir, "input.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l).o) : []);
+  return { chat, events, spawns, inputs, dir };
 }
 
 const once = (em, ev) => new Promise((r) => em.once(ev, r));
@@ -948,4 +951,44 @@ test("the prompt cache clock: warm for the reply's cache lifetime, likely expire
   assert.equal(core.cacheClock(after.cache, Date.parse("2026-10-23T06:30:00.000Z")).text, "Prompt cache warm, about 5 min left");
   assert.equal(core.cacheClock(core.initialState("s").cache), null, "nothing until a reply says");
   chat.dispose();
+});
+
+test("the panel's autosave hook: declared in initialize ahead of the first message, called before each Read and Edit, and the tool waits on it (decision 61)", async () => {
+  const saves = [];
+  const lines = [];
+  const { chat, events, inputs } = makeChat("autosave", {
+    hooks: () => ({
+      beforeFileTool: async (tool, file, cwd) => {
+        saves.push([tool, file, cwd]);
+        // A save that fails never stops the tool.
+        if (tool === "Read") throw new Error("disk full");
+      },
+    }),
+  });
+  chat.opts.log = (l) => lines.push(l);
+  chat.send("Read note.txt, then use the Edit tool to change MANGO to KIWI in it. Then reply with just: done");
+  await waitFor(() => chat.state.pending.length === 1);
+  assert.deepEqual(saves, [["Read", "/work/rec/autosave/note.txt", "/work/rec/autosave"], ["Edit", "/work/rec/autosave/note.txt", "/work/rec/autosave"]], "saved before each, the Edit before its permission prompt");
+  chat.allow(chat.state.pending[0]);
+  await turns(chat, 1);
+  const sent = inputs();
+  assert.equal(sent[0].type, "control_request");
+  assert.equal(sent[0].request.subtype, "initialize");
+  assert.deepEqual(sent[0].request.hooks.PreToolUse.map((m) => m.matcher), ["Edit|Write|Read"]);
+  assert.deepEqual(sent[0].request.supportedDialogKinds, core.DIALOG_KINDS, "one initialize, with the dialogs (66)");
+  assert.equal(sent.filter((o) => o.request?.subtype === "initialize").length, 1);
+  assert.equal(sent[1].type, "user", "the message after it");
+  const answers = sent.filter((o) => o.type === "control_response" && o.response.response?.continue !== undefined);
+  assert.deepEqual(answers.map((o) => o.response.response), [{ continue: true }, { continue: true }]);
+  assert.ok(!events.some((e) => e.type === "control_request" && e.request?.subtype === "hook_callback"), "a hook's callback is the panel's own, not the chat's");
+  assert.ok(lines.some((l) => l.includes("autosave: disk full")));
+  assert.equal(entries(chat.state, "tool").map((t) => t.status).join(), "done,done");
+  chat.dispose();
+  // Nothing of the panel's to declare: the one initialize carries the dialogs alone (66).
+  const bare = makeChat("basic");
+  bare.chat.send("Run the bash command `echo hello-from-bash` and then reply with just: done");
+  await turns(bare.chat, 1);
+  assert.deepEqual(bare.inputs()[0].request, { subtype: "initialize", supportedDialogKinds: core.DIALOG_KINDS });
+  assert.equal(bare.inputs()[1].type, "user");
+  bare.chat.dispose();
 });

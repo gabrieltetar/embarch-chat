@@ -379,3 +379,29 @@ test("a link opens once, in the browser, and only http(s); a URI is never opened
   assert.equal(mock.state.opened.length, 1);
   assert.ok(mock.state.opened[0].endsWith("/src/main.c"), mock.state.opened[0]);
 });
+
+test("an open file with unsaved changes is saved before Claude reads it (decision 61)", { skip }, async () => {
+  const saved = [];
+  const doc = {
+    uri: mock.vscode.Uri.file("/work/rec/autosave/note.txt"),
+    isDirty: true,
+    save: async () => {
+      saved.push(doc.uri.fsPath);
+      doc.isDirty = false;
+      return true;
+    },
+  };
+  // Open but unchanged, and changed but another file: neither is saved.
+  const clean = { uri: mock.vscode.Uri.file("/work/rec/autosave/other.txt"), isDirty: false, save: async () => saved.push("clean") };
+  const other = { uri: mock.vscode.Uri.file("/work/rec/elsewhere/note.txt"), isDirty: true, save: async () => saved.push("other") };
+  mock.state.textDocuments.push(doc, clean, other);
+  await startUntracked("autosave");
+  const n = chatView.webview.posted.length;
+  chatView.webview.fromPage({ t: "send", text: "Read note.txt, then use the Edit tool to change MANGO to KIWI in it. Then reply with just: done" });
+  const ask = await waitFor(() => chatView.webview.posted.slice(n).find((m) => m.t === "event" && m.e.type === "control_request"), 5000, "the Edit's permission prompt");
+  assert.deepEqual(saved, ["/work/rec/autosave/note.txt"], "saved once, before the Read");
+  chatView.webview.fromPage({ t: "allow", requestId: ask.e.request_id });
+  await waitFor(() => chatView.webview.posted.slice(n).some((m) => m.t === "event" && m.e.type === "result"), 5000, "the turn's end");
+  assert.ok(mock.state.output.some((l) => l.includes("autosave: /work/rec/autosave/note.txt saved before Read")));
+  mock.state.textDocuments.length = 0;
+});

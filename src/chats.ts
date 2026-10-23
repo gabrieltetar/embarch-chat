@@ -8,6 +8,7 @@
 import { EventEmitter } from "events";
 import * as fs from "fs";
 import { Chat } from "./wire/chat";
+import type { HostHooks } from "./wire/host";
 import { chatStatus } from "./wire/reducer";
 import { FileMark, findTranscript, isSessionId, markFile, readLines, readTranscript, remark, sameFile, transcriptEvents } from "./wire/transcript";
 import type { WireMessage } from "./wire/types";
@@ -47,6 +48,8 @@ export interface ChatSettings {
   claudePath: string;
   idleMs: number;
   log: (line: string) => void;
+  /** What the panel does for the CLI (decisions 61, 65). */
+  hooks?: () => HostHooks;
 }
 
 /**
@@ -98,7 +101,7 @@ export class ChatManager extends EventEmitter {
   /** A new chat of this window's, already assigned on the desk (decision 10); its process starts with the first message. */
   create(sessionId: string, cwd: string, itemId: string | null, itemTitle: string | null, opts: { untracked?: boolean; deskDue?: DeskDue | null } = {}): ChatRecord {
     const s = this.settings();
-    const chat = new Chat({ sessionId, cwd, claudePath: s.claudePath, existing: false, idleMs: s.idleMs, log: s.log });
+    const chat = new Chat({ sessionId, cwd, claudePath: s.claudePath, existing: false, idleMs: s.idleMs, log: s.log, hooks: s.hooks });
     const rec: ChatRecord = {
       chat,
       ours: true,
@@ -133,7 +136,7 @@ export class ChatManager extends EventEmitter {
     }
     const file = findTranscript(sessionId, cwd ?? undefined);
     const s = this.settings();
-    const chat = new Chat({ sessionId, cwd: cwd ?? "", claudePath: s.claudePath, existing: true, idleMs: s.idleMs, log: s.log });
+    const chat = new Chat({ sessionId, cwd: cwd ?? "", claudePath: s.claudePath, existing: true, idleMs: s.idleMs, log: s.log, hooks: s.hooks });
     const rec: ChatRecord = { chat, ours: false, viewer: true, resumable, itemId, itemTitle, untracked: false, deskDue: null, createdMs: Date.now(), lastMs: Date.now() };
     this.records.set(sessionId, rec);
     this.wire(sessionId, rec);

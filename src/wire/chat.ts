@@ -7,6 +7,7 @@
 import { EventEmitter } from "events";
 import * as fs from "fs";
 import { ClaudeProcess, SpawnSpec, chatEnv } from "./process";
+import { HostHooks, answererFor, initializeRequest } from "./host";
 import { findTranscript, holdsMessage, projectsRoot } from "./transcript";
 import { ChatState, Pending, chatStatus, initialState, reduce, reduceAll, textOf } from "./reducer";
 import type { ContextUsage, PermissionDecision, WireMessage } from "./types";
@@ -24,6 +25,8 @@ export interface ChatOptions {
   /** Extra CLI flags, for tests (a stripped model, no MCP, ...). */
   extraArgs?: string[];
   log?: (line: string) => void;
+  /** What the panel does for the CLI (decisions 61, 65), read as each process starts: settings may have changed. */
+  hooks?: () => HostHooks;
 }
 
 export interface Attachment {
@@ -164,6 +167,9 @@ export class Chat extends EventEmitter {
     if (this.proc && !this.proc.exited) return this.proc;
     const env = this.opts.env ?? chatEnv();
     this.settleSession(env);
+    // The panel's own hooks and MCP servers (61, 65), read as each process starts, in its one initialize.
+    const hooks = this.opts.hooks?.() ?? {};
+    const init = initializeRequest(hooks);
     const spec: SpawnSpec = {
       claudePath: this.opts.claudePath,
       cwd: this.opts.cwd,
@@ -173,8 +179,11 @@ export class Chat extends EventEmitter {
       model: this.model,
       env,
       extraArgs: this.opts.extraArgs,
+      ...(init ? { initialize: init } : {}),
     };
     const proc = new ClaudeProcess(spec);
+    // Their callbacks are answered in process.ts and never reach the refusal below (66).
+    if (init) proc.answerer = answererFor(hooks, (l) => this.log(l));
     this.proc = proc;
     this.closing = false;
     this.dispatch({ type: "_process", state: "starting" });

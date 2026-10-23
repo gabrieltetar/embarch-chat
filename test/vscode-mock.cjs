@@ -100,6 +100,8 @@ const state = {
   inputBox: async () => undefined,
   folders: [],
   output: [],
+  /** The editor's open documents: { uri, isDirty, save() }. */
+  textDocuments: [],
 };
 
 const vscode = {
@@ -161,6 +163,9 @@ const vscode = {
   workspace: {
     get workspaceFolders() {
       return state.folders.map((f) => ({ uri: Uri.file(f), name: path.basename(f) }));
+    },
+    get textDocuments() {
+      return state.textDocuments;
     },
     getConfiguration: (section) => ({
       get: (k, d) => {

@@ -95,7 +95,7 @@ after(async () => {
 test("every path or URL setting is machine-scoped: user or remote settings only", () => {
   const props = Object.assign({}, ...pkg.contributes.configuration.map((s) => s.properties));
   const machine = Object.keys(props).filter((k) => props[k].scope === "machine");
-  for (const k of ["embarchChat.claudePath", "embarchChat.deskUrl", "embarchChat.deskTokenPath", "embarchChat.assistant", "embarchChat.idleMinutes", "embarchUi.binaryPath", "embarchUi.host", "embarchUi.port", "embarchUi.configPath", "embarchUi.autoStart"]) {
+  for (const k of ["embarchChat.claudePath", "embarchChat.deskUrl", "embarchChat.deskTokenPath", "embarchChat.assistant", "embarchChat.idleMinutes", "embarchChat.autosave", "embarchUi.binaryPath", "embarchUi.host", "embarchUi.port", "embarchUi.configPath", "embarchUi.autoStart"]) {
     assert.ok(machine.includes(k), `${k} is machine-scoped`);
   }
   for (const [k, v] of Object.entries(props)) {

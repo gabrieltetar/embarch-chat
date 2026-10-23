@@ -3,6 +3,7 @@ export * from "./wire/reducer";
 export * from "./wire/dialogs";
 export * from "./wire/limits";
 export * from "./wire/process";
+export * from "./wire/host";
 export * from "./wire/chat";
 export * from "./wire/version";
 export * from "./wire/transcript";

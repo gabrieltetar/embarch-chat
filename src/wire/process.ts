@@ -20,6 +20,8 @@ export interface SpawnSpec {
   model?: string;
   env?: NodeJS.ProcessEnv;
   extraArgs?: string[];
+  /** What else the one `initialize` declares: the panel's own hooks and MCP servers (decisions 61, 65). */
+  initialize?: Record<string, unknown>;
 }
 
 /** The official panel's flags (proposal, "What is possible"), plus streaming and prompt suggestions. */
@@ -61,6 +63,14 @@ interface Waiter {
 }
 
 /**
+ * Answers a control request the CLI sends the panel that is not a
+ * permission prompt — a hook's callback (decision 61), a message for the
+ * panel's own MCP server (65): its response, or null when it is not one of
+ * the panel's, which then goes on as a message.
+ */
+export type ControlAnswerer = (request: Record<string, unknown>) => Promise<Record<string, unknown>> | null;
+
+/**
  * Events: `message` (a parsed stdout line), `exit` ({code, signal, stderr}),
  * `error` (spawn failure).
  */
@@ -72,6 +82,8 @@ export class ClaudeProcess extends EventEmitter {
   private nextId = 1;
   readonly answered = new Set<string>();
   exited = false;
+  /** Set before `start`: what answers the CLI's hook callbacks and MCP messages. */
+  answerer: ControlAnswerer | undefined;
 
   constructor(readonly spec: SpawnSpec) {
     super();
@@ -117,9 +129,10 @@ export class ClaudeProcess extends EventEmitter {
       this.failWaiters(new Error(`claude exited (${code ?? signal})`));
       this.emit("exit", { code, signal, stderr: this.stderrTail.trim() });
     });
-    // The first line, as Claude Code's panel sends it: the dialogs this panel
-    // renders, which the CLI sends only once declared (decision 66).
-    this.request("initialize", { supportedDialogKinds: DIALOG_KINDS }).catch(() => {
+    // The first line, as Claude Code's panel sends it, and the only
+    // initialize: the dialogs this panel renders, which the CLI sends only
+    // once declared (decision 66), and the panel's hooks and MCP servers.
+    this.request("initialize", { supportedDialogKinds: DIALOG_KINDS, ...this.spec.initialize }).catch(() => {
       /* an old CLI, or one that died: the user message initializes with defaults */
     });
   }
@@ -154,6 +167,19 @@ export class ClaudeProcess extends EventEmitter {
         else w.resolve(r?.response ?? {});
       }
       return;
+    }
+    if (o.type === "control_request" && this.answerer) {
+      const req = o.request as Record<string, unknown> | undefined;
+      const answer = req && req.subtype !== "can_use_tool" ? this.answerer(req) : null;
+      if (answer) {
+        // The CLI waits on it (a hook holds its tool call): answered whatever happens.
+        const id = String(o.request_id);
+        answer.then(
+          (response) => this.write({ type: "control_response", response: { subtype: "success", request_id: id, response } }),
+          (e: Error) => this.write({ type: "control_response", response: { subtype: "error", request_id: id, error: e.message } }),
+        );
+        return;
+      }
     }
     this.emit("message", o);
   }

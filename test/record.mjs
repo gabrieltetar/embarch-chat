@@ -97,6 +97,8 @@ class Rec {
       while (this.buffer.length) {
         const o = this.buffer.shift();
         if (o.type === "control_request" && o.request?.subtype === "can_use_tool") policy(o);
+        // The CLI calling back into the panel: a hook's callback, a message for the panel's own MCP server.
+        else if (o.type === "control_request" && this.onControl) this.onControl(o);
         if (pred(o)) return o;
       }
       if (Date.now() - t0 > ms) throw new Error(`${this.name}: timeout`);
@@ -312,6 +314,19 @@ const scenarios = {
     const late = await r.until((o) => o.type !== "stream_event", undefined, 20000).catch(() => null);
     fs.writeFileSync(path.join(scratch, "elicitbare.probe.txt"), `elicitation unanswered for ${Date.now() - t0} ms; next line: ${late ? JSON.stringify(late).slice(0, 300) : "none"}\n`);
     r.respond(ask, { action: "decline" });
+    await r.result();
+    await r.close();
+  },
+  // Claude Code's own autosave (decision 61): an SDK hook declared in
+  // `initialize`, which the CLI calls back as a `hook_callback` control
+  // request before each Read, Edit and Write, and waits on.
+  async autosave() {
+    const r = new Rec("autosave", ["--tools", "Read,Edit"]);
+    r.onControl = (o) => o.request.subtype === "hook_callback" && r.respond(o, { continue: true });
+    // The panel's own request (process.ts, src/wire/host.ts), so the recording declares what the panel does.
+    r.control("init-1", { subtype: "initialize", supportedDialogKinds: core.DIALOG_KINDS, ...core.initializeRequest({ beforeFileTool: async () => {} }) });
+    await r.until(isResp("init-1"));
+    r.user("Read note.txt, then use the Edit tool to change MANGO to KIWI in it. Then reply with just: done");
     await r.result();
     await r.close();
   },

@@ -16,6 +16,7 @@ import { ChatManager, ChatRecord, DeskDue } from "./chats";
 import { AssignBody, DeskClient, DeskError, MailboxEntry, expandHome } from "./desk/client";
 import { DeskService } from "./deskService";
 import { DIFF_SCHEME, DiffContent } from "./diff";
+import { hostHooks } from "./hostHooks";
 import { agentPid, jump } from "./jump";
 import { activateLauncher, deactivateLauncher, serverUrl } from "./launcher/launcher";
 import { HostCtx, assistInput } from "./views/chatHost";
@@ -78,7 +79,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
 
-  chats = new ChatManager(() => ({ claudePath: cfg().claudePath, idleMs: cfg().idleMs, log }));
+  chats = new ChatManager(() => ({ claudePath: cfg().claudePath, idleMs: cfg().idleMs, log, hooks: () => hostHooks(log) }));
   const manager = chats;
   deskService = new DeskService(() => client, manager, folders, log);
   const desk = deskService;
