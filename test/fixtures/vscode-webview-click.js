@@ -1,3 +1,7 @@
+// The code below this comment:
+//   Copyright (c) Microsoft Corporation. All rights reserved.
+//   Licensed under the MIT License.
+//
 // VS Code's own click handler for a webview's page, verbatim from VS Code
 // 1.143.1 (MIT), resources/app/out/vs/workbench/contrib/webview/browser/pre/index.html.
 // VS Code adds it to every webview's window (`contentWindow.addEventListener
