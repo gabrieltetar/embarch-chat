@@ -43,8 +43,8 @@ export interface HostCtx {
   library: () => LibraryEntry[];
   /** A new chat on the same work item that starts with this chat's handoff (36). */
   freshChat: (sid: string) => void;
-  /** Makes a resumable thread this window's (32); false when it may not be resumed here. */
-  resume: (sid: string) => Promise<boolean>;
+  /** Makes a resumable thread this window's (32) for the owner's message; false when it may not be resumed here (the message then stays in the refusal's note). */
+  resume: (sid: string, text: string) => Promise<boolean>;
 }
 
 /** The chat's card in two lines (decision 18), from the desk's view. */
@@ -207,7 +207,7 @@ export class ChatHost implements vscode.Disposable {
     switch (m.t) {
       case "send": {
         if (!rec.ours) {
-          if (!(await this.ctx.resume(chat.sessionId))) {
+          if (!(await this.ctx.resume(chat.sessionId, m.text))) {
             this.snapshot();
             return;
           }

@@ -140,7 +140,7 @@ export function activate(context: vscode.ExtensionContext): void {
     history,
     library,
     freshChat: (sid) => void freshChat(sid),
-    resume: (sid) => resume(sid),
+    resume: (sid, text) => resume(sid, text),
   };
 
   const chatView = new ChatViewProvider(context.extensionUri, ctx);
@@ -449,18 +449,24 @@ export function activate(context: vscode.ExtensionContext): void {
    * assign, which could move it off its item or untrack it and clear its
    * spans, whatever the window had resolved.
    */
-  async function resume(sid: string): Promise<boolean> {
+  /**
+   * Makes a past chat this window's for the owner's message `text`. Refused
+   * — something else runs it now, or it is read-only here — the message is
+   * not sent and stays on screen in the refusal's note, to copy.
+   */
+  async function resume(sid: string, text: string): Promise<boolean> {
     const rec = manager.get(sid);
     if (!rec) return false;
     if (rec.ours) return true;
-    if (!rec.resumable) return false;
-    // Asked again at the moment it would start: two writers on one session is what this prevents.
-    if (!(await freeToResume(rec))) {
+    const refuse = (why: string) => {
       rec.resumable = false;
-      rec.chat.preload([{ type: "_note", text: "Something else runs this chat now — it stays read-only here; Jump goes to it.", tone: "error" }]);
+      rec.chat.preload([{ type: "_note", text: `${why} Your message was not sent:`, tone: "error", kept: text }]);
       return false;
-    }
-    if (!manager.adopt(sid)) return false;
+    };
+    if (!rec.resumable) return refuse("This chat is read-only here.");
+    // Asked again at the moment it would start: two writers on one session is what this prevents.
+    if (!(await freeToResume(rec))) return refuse("Something else runs this chat now — it stays read-only here; Jump goes to it.");
+    if (!manager.adopt(sid)) return refuse("This chat is read-only here.");
     rec.deskDue = "mark";
     void tellDesk(rec);
     return true;

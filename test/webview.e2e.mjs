@@ -334,6 +334,13 @@ await check("mode and model switch, context meter and Compact", async () => {
   assert.ok(ps.some((p) => p.t === "compact"));
 });
 
+await check("a message refused with its chat keeps its text on screen, with Copy", async () => {
+  const st = core.reduceAll(core.initialState(SID), [{ type: "_note", text: "Something else runs this chat now — it stays read-only here; Jump goes to it. Your message was not sent:", tone: "error", kept: "take it over\nand finish the blink test" }]);
+  await send([{ ...snapshot({ ...st, process: "none" }, { ...OURS, ours: false, readOnly: true }) }]);
+  assert.equal((await text(".note.error .kept pre"))[0], "take it over\nand finish the blink test");
+  assert.deepEqual(await text(".note.error .kept button"), ["Copy"]);
+});
+
 await check("a thread run elsewhere is read-only, with Jump", async () => {
   await send([snapshot({ process: "none" }, { ...OURS, ours: false, readOnly: true, where: "a terminal or Claude Code's panel" }), ...events(outLines("basic"))]);
   assert.equal((await text(".composer")).length, 0);

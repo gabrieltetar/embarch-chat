@@ -260,7 +260,19 @@ function App() {
       case "tool":
         return <ToolView t={e} entries={entries} ctx={ctx} render={renderEntry} />;
       case "note":
-        return <div class={`note ${e.tone}`}>{e.text}</div>;
+        return (
+          <div class={`note ${e.tone}`}>
+            {e.text}
+            {e.kept && (
+              <div class="kept">
+                <pre>{e.kept}</pre>
+                <button class="secondary" title="Copy the message" onClick={() => void navigator.clipboard?.writeText(e.kept!)}>
+                  Copy
+                </button>
+              </div>
+            )}
+          </div>
+        );
     }
   };
 

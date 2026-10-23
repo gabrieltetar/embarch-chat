@@ -55,6 +55,8 @@ export interface NoteEntry {
   id: string;
   text: string;
   tone: "info" | "error" | "compact" | "interrupt";
+  /** The owner's message that was not sent, kept with the note to copy. */
+  kept?: string;
 }
 export type Entry = UserEntry | TextEntry | ThinkingEntry | ToolEntry | NoteEntry;
 
@@ -235,8 +237,8 @@ function confirm(s: ChatState, id: string, extra: Partial<UserEntry> = {}): Chat
   return { ...s, unconfirmed: (s.unconfirmed ?? []).filter((x) => x !== id) };
 }
 
-function note(s: ChatState, text: string, tone: NoteEntry["tone"]): ChatState {
-  return put(s, { kind: "note", id: `n:${s.seq}`, text, tone }, null);
+function note(s: ChatState, text: string, tone: NoteEntry["tone"], kept?: string): ChatState {
+  return put(s, { kind: "note", id: `n:${s.seq}`, text, tone, ...(kept ? { kept } : {}) }, null);
 }
 
 function resultText(c: unknown): string {
@@ -497,7 +499,7 @@ export function reduce(s: ChatState, o: WireMessage): ChatState {
     case "_title":
       return { ...s, title: String(o.title) };
     case "_note":
-      return note(s, String(o.text), (o.tone as NoteEntry["tone"]) ?? "info");
+      return note(s, String(o.text), (o.tone as NoteEntry["tone"]) ?? "info", typeof o.kept === "string" ? o.kept : undefined);
     default:
       return s;
   }

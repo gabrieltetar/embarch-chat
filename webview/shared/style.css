@@ -339,6 +339,20 @@ a:focus-visible {
   align-self: stretch;
   white-space: pre-wrap;
 }
+.note .kept {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 4px;
+  color: var(--vscode-foreground);
+}
+.note .kept pre {
+  flex: 1;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: inherit;
+}
 .note.compact::before,
 .note.compact::after {
   content: " — ";

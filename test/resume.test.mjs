@@ -181,7 +181,9 @@ test("a past chat something else runs is not taken over: not offered, and not re
   const after = await waitFor(() => chatView.webview.posted.slice(n).find((m) => m.t === "snapshot" && m.state.sessionId === S2), 5000, "the refusal");
   assert.equal(after.view.resumable, false);
   assert.equal(after.view.readOnly, true);
-  assert.ok(Object.values(after.state.entries).some((e) => e.kind === "note" && /Something else runs this chat/.test(e.text)));
+  const refusal = Object.values(after.state.entries).find((e) => e.kind === "note" && /Something else runs this chat/.test(e.text));
+  assert.ok(refusal, "the refusal is told");
+  assert.equal(refusal.kept, "take it over", "the message stays on screen with it, to copy");
   assert.ok(!chatView.webview.posted.slice(n).some((m) => m.t === "event" && m.e.type === "_sent"), "nothing sent");
   assert.ok(!spawnedFor(S2), "no second claude on it");
 
