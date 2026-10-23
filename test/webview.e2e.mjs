@@ -1209,6 +1209,24 @@ await check("a running step counts its time, and a long one keeps how long it to
   assert.match((await text(".tool .elapsed"))[0], /^1m 1[3-5]s$/, "done: how long it took");
 });
 
+// Decision 69: the prompt cache clock, from the recorded replies' usage (basic: the one-hour cache), retimed to now.
+await check("the prompt cache clock between turns: warm with the minutes left, kept when the process closes; likely expired; not covering a compaction; nothing while a turn runs", async () => {
+  const retimed = outLines("basic").map((o) => (o.type === "assistant" ? { ...o, timestamp: ago(2 * 60_000 + 5_000) } : o));
+  await send([snapshot(), sent("Run the bash command `echo hello-from-bash` and then reply with just: done"), ...events(retimed)]);
+  assert.deepEqual(await text(".status-line .cache.warm"), ["Prompt cache warm, about 58 min left"]);
+  await send([{ t: "event", e: { type: "_process", state: "closed" } }]);
+  assert.deepEqual(await text(".status-line span"), ["Closed when idle — the next message resumes it.", "Prompt cache warm, about 58 min left"], "the idle close leaves the cache as it was (41)");
+  await shot("cache-warm");
+  await send([sent("go on")]);
+  assert.deepEqual(await text(".status-line .cache"), [], "a turn runs: no clock");
+  await send([snapshot({ cache: { msgId: "m", at: Date.now() - 61 * 60_000, ttl: 3_600_000 } })]);
+  assert.deepEqual(await text(".status-line .cache.cold"), ["Prompt cache likely expired (idle 1h 1m)"]);
+  assert.match(await exec("return document.querySelector('.status-line .cache').title"), /^Idle 1h 1m\. The prompt cache has likely expired/);
+  await shot("cache-cold");
+  await send(events([outLines("compact").find((o) => o.subtype === "compact_boundary")]));
+  assert.deepEqual(await text(".status-line .cache.compacted"), ["Prompt cache does not cover the compacted conversation"]);
+});
+
 await check("reply chips after a turn: a click sends it; the handoff's chip asks for a fresh chat", async () => {
   const sid = await fresh();
   const chips = [

@@ -24,6 +24,7 @@ import { setAtlas } from "./atlas";
 import { LimitBannerView } from "./limits";
 import { Stamp, useNow } from "./clock";
 import { dayKey, elapsedText, stalled } from "./time";
+import { cacheClock } from "../../src/wire/limits";
 
 let uiUrl = "";
 toolRenderers.push(benchRenderer(() => uiUrl));
@@ -125,8 +126,8 @@ function HeaderBar({ h, state, view }: { h: Header | null; state: ChatState; vie
 
 function StatusLine({ state, warning }: { state: ChatState; warning: string | null }) {
   const st = chatStatus(state);
-  // A minute with no word from the CLI and no tool running: it may be stuck, not flashing (68).
-  const now = useNow(1000, st === "busy");
+  // A minute with no word from the CLI and no tool running: it may be stuck, not flashing (68); the cache clock by the half minute (69).
+  const now = useNow(st === "busy" ? 1000 : 30_000, st === "busy" || !!state.cache);
   const quiet = stalled(state, now);
   const parts: preact.ComponentChildren[] = [];
   if (state.compacting) parts.push(<span key="c"><span class="spinner" /> Compacting…</span>);
@@ -141,6 +142,9 @@ function StatusLine({ state, warning }: { state: ChatState; warning: string | nu
   if (state.process === "closed" && state.timeline.length) parts.push(<span key="cl">Closed when idle — the next message resumes it.</span>);
   if (state.process === "error") parts.push(<span key="e" class="err">{state.processError ?? "claude failed"}</span>);
   if (state.background.length) parts.push(<span key="bg">{state.background.length} background task{state.background.length > 1 ? "s" : ""} running</span>);
+  // Between turns, whether a message now reads the conversation from the prompt cache (69).
+  const cache = st !== "busy" ? cacheClock(state.cache, now) : null;
+  if (cache) parts.push(<span key="pc" class={`cache ${cache.kind}`} title={cache.detail}>{cache.text}</span>);
   return (
     <>
       {warning && <div class="warn-line">{warning}</div>}

@@ -914,3 +914,38 @@ test("a step's time reads 8s, 3m 04s, 1h 02m; a message's to the second", () => 
   assert.equal(core.dayLine(t, t), "Fri, Oct 23");
   assert.equal(core.dayLine(t, new Date(2027, 0, 2).getTime()), "Fri, Oct 23, 2026");
 });
+
+// ---- the prompt cache clock (decision 69)
+
+const outLines = (name) =>
+  fs
+    .readFileSync(fixture(name), "utf8")
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l))
+    .filter((e) => e.d === "out")
+    .map((e) => e.o);
+
+test("the prompt cache clock: warm for the reply's cache lifetime, likely expired after, not covering a compaction; a subagent's reply moves nothing", async () => {
+  const { chat } = makeChat("basic");
+  chat.send("Run the bash command `echo hello-from-bash` and then reply with just: done");
+  await turns(chat, 1);
+  chat.send("Reply with just: ok");
+  await turns(chat, 1);
+  // Recorded: every reply wrote the one-hour cache; the last one times it.
+  const c = chat.state.cache;
+  const at = Date.parse("2026-10-23T06:20:40.417Z");
+  assert.deepEqual([c.at, c.ttl, c.compactedAt], [at, 3_600_000, undefined]);
+  assert.equal(core.cacheClock(c, at + 2 * 60_000 + 5_000).text, "Prompt cache warm, about 58 min left");
+  assert.equal(core.cacheClock(c, at + 61 * 60_000).text, "Prompt cache likely expired (idle 1h 1m)");
+  assert.equal(core.cacheClock(c, at + 61 * 60_000).kind, "cold");
+  const sub = core.reduce(chat.state, { type: "assistant", parent_tool_use_id: "toolu_x", timestamp: "2026-10-23T07:00:00.000Z", message: { id: "msub", content: [{ type: "text", text: "x" }], usage: { cache_read_input_tokens: 9000 } } });
+  assert.equal(sub.cache, chat.state.cache, "a subagent's own prefix");
+  const compacted = core.reduce(chat.state, outLines("compact").find((o) => o.subtype === "compact_boundary"));
+  assert.equal(core.cacheClock(compacted.cache, at + 60_000).text, "Prompt cache does not cover the compacted conversation");
+  const after = core.reduce(compacted, { type: "assistant", timestamp: "2026-10-23T06:30:00.000Z", message: { id: "m-next", content: [{ type: "text", text: "y" }], usage: { cache_creation_input_tokens: 800, cache_creation: { ephemeral_5m_input_tokens: 800 } } } });
+  assert.deepEqual([after.cache.ttl, after.cache.compactedAt], [300_000, undefined], "the next reply writes a new one, here for five minutes");
+  assert.equal(core.cacheClock(after.cache, Date.parse("2026-10-23T06:30:00.000Z")).text, "Prompt cache warm, about 5 min left");
+  assert.equal(core.cacheClock(core.initialState("s").cache), null, "nothing until a reply says");
+  chat.dispose();
+});

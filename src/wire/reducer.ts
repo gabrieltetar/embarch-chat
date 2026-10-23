@@ -84,6 +84,16 @@ export interface Pending {
   form: "question" | "plan" | "permission" | "elicitation" | "dialog";
 }
 
+/** The prompt cache the next message would read (decision 69): written at `at` for `ttl` ms; a compaction since leaves it behind. */
+export interface CacheWindow {
+  /** The reply that wrote or read it: its later lines keep the first one's time. */
+  msgId: string;
+  at: number;
+  /** Null until a reply says how long it lives. */
+  ttl: number | null;
+  compactedAt?: number;
+}
+
 export interface StreamBlock {
   type: string;
   text: string;
@@ -120,6 +130,7 @@ export interface ChatState {
   rateLimit: RateLimitInfo | null;
   /** When the CLI last wrote a line, or the owner last sent one: the "Not responding" clock (decision 68). */
   lastLineAt: number | null;
+  cache: CacheWindow | null;
   seq: number;
 }
 
@@ -148,6 +159,7 @@ export function initialState(sessionId: string, mode = "auto"): ChatState {
     lastTurn: null,
     rateLimit: null,
     lastLineAt: null,
+    cache: null,
     seq: 0,
   };
 }
@@ -194,6 +206,13 @@ function stamp(o: WireMessage): number | undefined {
   const t = typeof o.timestamp === "string" ? Date.parse(o.timestamp) : NaN;
   if (Number.isFinite(t)) return t;
   return typeof o._at === "number" ? o._at : undefined;
+}
+
+/** How long a reply's cache write lives, from its usage: an hour or five minutes; null when it wrote none (69). */
+function cacheTtl(u: { cache_creation?: { ephemeral_1h_input_tokens?: number; ephemeral_5m_input_tokens?: number } }): number | null {
+  if ((u.cache_creation?.ephemeral_1h_input_tokens ?? 0) > 0) return 3_600_000;
+  if ((u.cache_creation?.ephemeral_5m_input_tokens ?? 0) > 0) return 300_000;
+  return null;
 }
 
 /** What waits on the owner, from one of the CLI's requests `answerable` takes (decision 66). */
@@ -309,11 +328,18 @@ function inBackground(s: ChatState, toolId: string | undefined): boolean {
 // ----------------------------------------------------------------- folding
 
 function foldAssistant(s: ChatState, o: WireMessage): ChatState {
-  const msg = o.message as { id?: string; content?: ContentBlock[] } | undefined;
+  const msg = o.message as { id?: string; content?: ContentBlock[]; usage?: Record<string, number> & { cache_creation?: Record<string, number> } } | undefined;
   if (!msg || !Array.isArray(msg.content)) return s;
   const parent = (o.parent_tool_use_id as string | null | undefined) ?? null;
   const msgId = msg.id ?? `m:${s.seq}`;
   const at = stamp(o);
+  // The main thread's prompt cache, as Claude Code's panel reads it: from a
+  // reply that wrote or read it, timed by its first line (69). A subagent's
+  // prefix is its own; a reply without a lifetime keeps the last one known.
+  const u = msg.usage;
+  if (!parent && u && at !== undefined && s.cache?.msgId !== msgId && (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) > 0) {
+    s = { ...s, cache: { msgId, at, ttl: cacheTtl(u) ?? s.cache?.ttl ?? null } };
+  }
   for (const b of msg.content) {
     const sig =
       b.type === "tool_use" ? `${msgId}#u:${(b as { id: string }).id}` : `${msgId}#${b.type}:${hash(String((b as { text?: string; thinking?: string }).text ?? (b as { thinking?: string }).thinking ?? ""))}`;
@@ -409,7 +435,9 @@ function foldSystem(s: ChatState, o: WireMessage): ChatState {
     case "compact_boundary": {
       const m = o.compact_metadata as { pre_tokens?: number; trigger?: string } | undefined;
       const pre = m?.pre_tokens ? ` from ${Math.round(m.pre_tokens / 1000)}K tokens` : "";
-      return note({ ...s, compacting: false }, `Compacted${pre}${m?.trigger === "auto" ? " (auto)" : ""}`, "compact");
+      // The cache held the conversation before it; the next message writes a new one (69).
+      const cache = s.cache ? { ...s.cache, compactedAt: stamp(o) ?? s.cache.at } : null;
+      return note({ ...s, compacting: false, cache }, `Compacted${pre}${m?.trigger === "auto" ? " (auto)" : ""}`, "compact");
     }
     case "session_title_changed":
       return typeof o.title === "string" ? { ...s, title: o.title } : s;

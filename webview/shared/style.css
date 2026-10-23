@@ -1022,6 +1022,11 @@ details.thinking .md {
 .status-line .stalled {
   color: var(--err);
 }
+/* The prompt cache clock (69): muted while warm, amber once it has likely gone. */
+.status-line .cache.cold,
+.status-line .cache.compacted {
+  color: var(--warn);
+}
 .status-line .stalled .spinner {
   border-color: var(--err);
   border-right-color: transparent;
@@ -1031,7 +1036,8 @@ details.thinking .md {
   color: var(--muted);
   padding: 0 var(--gap) 2px;
   display: flex;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 0 8px;
   align-items: center;
 }
 .spinner {
