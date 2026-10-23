@@ -202,6 +202,23 @@ const scenarios = {
     await r.until((o) => o.type === "result", undefined, 30000).catch(() => null);
     await r.close();
   },
+  // The Questions row (decision 79): two questions, one taking two picks,
+  // the other answered in Other with a line break, as a pasted pin list is.
+  async questionmulti() {
+    const r = new Rec("questionmulti", ["--tools", "AskUserQuestion"]);
+    r.user(
+      "Use the AskUserQuestion tool once, with two questions: which fruits I like (multiSelect true; options apple, pear, plum) and which board to use (options DK, EVK). Then tell me in one line what I picked.",
+    );
+    await r.result((o) => {
+      const inp = { ...o.request.input };
+      const [q1, q2] = inp.questions ?? [];
+      inp.answers = {};
+      if (q1) inp.answers[q1.question] = q1.options.slice(0, 2).map((x) => x.label).join(", ");
+      if (q2) inp.answers[q2.question] = "P0.13 LED1\nP0.14 LED2";
+      r.respond(o, { behavior: "allow", updatedInput: inp });
+    });
+    await r.close();
+  },
   async plan() {
     const r = new Rec("plan", ["--permission-mode", "plan", "--tools", "Read,Write,ExitPlanMode"]);
     r.user("Plan how to create hello.txt containing hi, then present the plan for approval with ExitPlanMode. Keep the plan to two lines. After approval, create the file.");

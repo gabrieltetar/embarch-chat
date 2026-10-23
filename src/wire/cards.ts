@@ -1,7 +1,8 @@
-// What the owner's answers on the cards say to the CLI, in Claude Code's own
-// words where its panel (2.1.309) has them: a plan sent back with comments
-// on its lines (decision 77), and the rules a permission card saves and
-// where (78).
+// What the owner's answers on the cards say to the CLI, and what a card
+// reads back, in Claude Code's own words where its panel (2.1.309) has them:
+// a plan sent back with comments on its lines (decision 77), the rules a
+// permission card saves and where (78), and the picks a question was
+// answered with, for the Questions row it leaves behind (79).
 
 // ---------------------------------------------------------------- plans
 
@@ -121,4 +122,62 @@ export function alwaysPermissions(suggestions: unknown[] | undefined, picks: num
     const placed = { ...(s as object), destination };
     return destination === "session" ? [placed] : [placed, { ...(s as object), destination: "session" }];
   });
+}
+
+// ---------------------------------------------------------------- questions
+
+export interface AskedQuestion {
+  question: string;
+  header?: string;
+  multiSelect?: boolean;
+  options: Array<{ label: string; description?: string; preview?: string }>;
+}
+
+export function questionsOf(input: Record<string, unknown>): AskedQuestion[] {
+  return (Array.isArray(input.questions) ? input.questions : []).filter((q): q is AskedQuestion => !!q && typeof (q as AskedQuestion).question === "string").map((q) => ({ ...q, options: Array.isArray(q.options) ? q.options : [] }));
+}
+
+/**
+ * The answers a finished AskUserQuestion took, by question: the CLI's own
+ * record of them (`tool_use_result.answers`, live and in a transcript), else
+ * read from its result text (`…answered: "<q>"="<a>", "<q>"="<a>". …`);
+ * null when neither has them.
+ */
+export function questionAnswers(t: { input: Record<string, unknown>; result?: string; structured?: unknown }): Record<string, string> | null {
+  const rec = (t.structured as { answers?: unknown } | undefined)?.answers;
+  if (rec && typeof rec === "object") {
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(rec as Record<string, unknown>)) if (typeof v === "string") out[k] = v;
+    if (Object.keys(out).length) return out;
+  }
+  const text = t.result ?? "";
+  const out: Record<string, string> = {};
+  const qs = questionsOf(t.input).map((q) => q.question);
+  for (let i = 0; i < qs.length; i++) {
+    const at = text.indexOf(`"${qs[i]}"="`);
+    if (at < 0) continue;
+    const from = at + qs[i].length + 4;
+    // To the next question's key, else to the sentence after the last answer.
+    const next = qs.slice(i + 1).map((q) => text.indexOf(`, "${q}"="`, from)).filter((n) => n >= 0);
+    const end = next.length ? Math.min(...next) : text.lastIndexOf('".');
+    if (end > from) out[qs[i]] = text.slice(from, end - (next.length ? 1 : 0));
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/** An answer as picks among the question's options and the rest typed in Other — Claude Code's split: several picks are joined by ", ". */
+export function splitAnswer(q: AskedQuestion, answer: string): { picked: string[]; other?: string } {
+  const labels = q.options.map((o) => o.label).filter((l) => typeof l === "string");
+  if (!q.multiSelect) return labels.includes(answer) ? { picked: [answer] } : { picked: [], other: answer };
+  const picked: string[] = [];
+  let rest = answer;
+  for (;;) {
+    const hit = labels.filter((l) => rest === l || rest.startsWith(l + ", ")).sort((a, b) => b.length - a.length)[0];
+    if (hit === undefined) break;
+    picked.push(hit);
+    rest = rest.slice(hit.length);
+    if (!rest) return { picked };
+    rest = rest.slice(2);
+  }
+  return { picked, other: rest };
 }

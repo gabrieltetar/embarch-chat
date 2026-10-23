@@ -120,6 +120,12 @@ interface Question {
   options: Array<{ label: string; description?: string; preview?: string }>;
 }
 
+/** A textarea as tall as its lines, up to a few. */
+function fit(el: HTMLTextAreaElement) {
+  el.style.height = "auto";
+  el.style.height = `${Math.min(el.scrollHeight + 2, 160)}px`;
+}
+
 function QuestionCard({ p, ctx }: { p: Pending; ctx: ToolCtx }) {
   const qs = (Array.isArray(p.input.questions) ? p.input.questions : []) as Question[];
   const [picked, setPicked] = useState<Record<number, string[]>>({});
@@ -127,11 +133,13 @@ function QuestionCard({ p, ctx }: { p: Pending; ctx: ToolCtx }) {
   const [hover, setHover] = useState<Record<number, number>>({});
   const answerOf = (i: number) => (other[i]?.trim() ? other[i].trim() : (picked[i] ?? []).join(", "));
   const done = qs.every((_, i) => answerOf(i));
+  // From the state as it is by then: two clicks between renders both count.
   const toggle = (i: number, label: string, multi: boolean) => {
-    const cur = picked[i] ?? [];
-    const next = multi ? (cur.includes(label) ? cur.filter((x) => x !== label) : [...cur, label]) : [label];
-    setPicked({ ...picked, [i]: next });
-    if (!multi) setOther({ ...other, [i]: "" });
+    setPicked((all) => {
+      const cur = all[i] ?? [];
+      return { ...all, [i]: multi ? (cur.includes(label) ? cur.filter((x) => x !== label) : [...cur, label]) : [label] };
+    });
+    if (!multi) setOther((all) => ({ ...all, [i]: "" }));
   };
   const submit = () => {
     const answers: Record<string, string> = {};
@@ -168,11 +176,22 @@ function QuestionCard({ p, ctx }: { p: Pending; ctx: ToolCtx }) {
                 <Markdown text={preview} ctx={ctx} />
               </div>
             )}
-            <input
-              style="width:100%;margin-top:4px;padding:2px 6px"
+            {/* Several lines, as a pasted pin list has: Shift+Enter breaks the line, Enter answers (79). */}
+            <textarea
+              class="other"
+              rows={1}
               placeholder="Other…"
               value={other[i] ?? ""}
-              onInput={(e) => setOther({ ...other, [i]: (e.target as HTMLInputElement).value })}
+              onInput={(e) => {
+                const el = e.target as HTMLTextAreaElement;
+                setOther({ ...other, [i]: el.value });
+                fit(el);
+              }}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
+                e.preventDefault();
+                if (done) submit();
+              }}
             />
           </div>
         );

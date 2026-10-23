@@ -342,6 +342,37 @@ await check("Claude's question: options with descriptions, answered", async () =
   await shot("chat-question");
 });
 
+await check("Other takes several lines — Shift+Enter breaks the line, Enter answers; the answered questions stay as a Questions row with the picks (decision 79)", async () => {
+  const lines = outLines("questionmulti");
+  const ask = lines.findIndex((o) => o.type === "control_request");
+  await send([snapshot(), sent("q"), ...events(lines.slice(0, ask + 1))]);
+  await exec("for (const o of document.querySelectorAll('.card .opt')) if (/Apple|Pear/.test(o.textContent)) o.querySelector('input').click();");
+  await settle();
+  await clearPosts();
+  await exec("document.querySelectorAll('.card textarea.other')[1].setAttribute('data-o', '1')");
+  const el = Object.values(await wd("POST", `${S}/element`, { using: "css selector", value: "textarea[data-o='1']" }))[0];
+  // Shift+Enter; a call's modifiers are let go at its end.
+  await wd("POST", `${S}/element/${el}/value`, { text: "P0.13 LED1\uE008\uE007" });
+  await wd("POST", `${S}/element/${el}/value`, { text: "P0.14 LED2" });
+  await settle();
+  assert.equal(await exec("return document.querySelector(\"textarea[data-o='1']\").value"), "P0.13 LED1\nP0.14 LED2");
+  assert.deepEqual(await posts(), [], "Shift+Enter answers nothing");
+  await shot("question-other-lines");
+  await wd("POST", `${S}/element/${el}/value`, { text: "\uE007" });
+  await settle();
+  const a = (await posts()).find((p) => p.t === "answer");
+  assert.deepEqual(a.answers, { "Which fruits do you like?": "Apple, Pear", "Which board should you use?": "P0.13 LED1\nP0.14 LED2" });
+  // The CLI's answer and the rest of the turn: the card goes, the row stays.
+  await send([{ t: "event", e: { type: "_answered", requestId: a.requestId, behavior: "allow" } }, ...events(lines.slice(ask + 1))]);
+  assert.deepEqual(await text(".card"), []);
+  const row = (await text(".tool .line"))[0];
+  assert.ok(row.includes("Questions") && row.includes("Answered · 2 questions"), row);
+  assert.deepEqual(await text(".qa .qa-opt.picked > span:last-child > div:first-child"), ["Apple", "Pear", "Other"]);
+  assert.deepEqual(await text(".qa .qa-opt .typed"), ["P0.13 LED1\nP0.14 LED2"]);
+  assert.deepEqual(await text(".qa .qa-opt.dim > span:last-child > div:first-child"), ["Plum", "DK", "EVK"]);
+  await shot("chat-questions-row");
+});
+
 await check("a plan: Claude Code's three answers, auto mode first; Open to comment asks for its tab (decision 77)", async () => {
   const lines = outLines("plan");
   await send([snapshot({ mode: "plan" }), sent("p"), ...events(upTo(lines, (o) => o.type === "control_request"))]);

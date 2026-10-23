@@ -245,3 +245,34 @@ test("the suggestions as the card lists them, where it starts, and what the owne
   assert.deepEqual(core.alwaysPermissions(s, [], "userSettings"), []);
   assert.deepEqual(core.alwaysPermissions(s, undefined, undefined), s, "as the CLI suggested");
 });
+
+// ---- the question's row (decision 79)
+
+test("an answered question keeps its picks — two of a multi-select, and Other with a line break — from the CLI's own record and from its result text", async () => {
+  const { chat, inputs } = makeChat("questionmulti");
+  chat.send("Use the AskUserQuestion tool once, with two questions: which fruits I like (multiSelect true; options apple, pear, plum) and which board to use (options DK, EVK). Then tell me in one line what I picked.");
+  await waitFor(() => chat.state.pending.length === 1);
+  const p = chat.state.pending[0];
+  const [q1, q2] = core.questionsOf(p.input);
+  const answers = { [q1.question]: "Apple, Pear", [q2.question]: "P0.13 LED1\nP0.14 LED2" };
+  chat.answerQuestion(p, answers);
+  await turns(chat, 1);
+  assert.deepEqual(inputs().find((o) => o.type === "control_response").response.response.updatedInput.answers, answers, "the line break went as typed");
+  const t = entries(chat.state, "tool").find((x) => x.name === "AskUserQuestion");
+  assert.equal(t.status, "done");
+  assert.deepEqual(core.questionAnswers(t), answers, "the CLI's own record");
+  assert.deepEqual(core.questionAnswers({ input: t.input, result: t.result }), answers, "its result text says the same");
+  assert.deepEqual(core.splitAnswer(q1, answers[q1.question]), { picked: ["Apple", "Pear"] });
+  assert.deepEqual(core.splitAnswer(q2, answers[q2.question]), { picked: [], other: "P0.13 LED1\nP0.14 LED2" });
+  chat.dispose();
+});
+
+test("an answer read back as Claude Code reads it: the longest label first, Other after the picks, nothing for a question not answered", () => {
+  const q = { question: "Which?", multiSelect: true, options: [{ label: "A" }, { label: "A, B" }, { label: "C" }] };
+  assert.deepEqual(core.splitAnswer(q, "A, B, C"), { picked: ["A, B", "C"] });
+  assert.deepEqual(core.splitAnswer(q, "C, pins 3 and 4"), { picked: ["C"], other: "pins 3 and 4" });
+  assert.deepEqual(core.splitAnswer({ ...q, multiSelect: false }, "A"), { picked: ["A"] });
+  const t = { input: { questions: [q, { question: "Port?", options: [] }] }, result: 'The user answered: "Which?"="C". You can now continue with these answers in mind.' };
+  assert.deepEqual(core.questionAnswers(t), { "Which?": "C" });
+  assert.equal(core.questionAnswers({ input: t.input, result: "The user did not answer the questions." }), null);
+});

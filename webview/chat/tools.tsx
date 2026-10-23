@@ -8,13 +8,14 @@
 // there shows its output as it goes (port items 70, 71; background.tsx).
 
 import { memo } from "preact/compat";
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import type { Entry, ToolEntry } from "../../src/wire/reducer";
 import { Markdown, MdCtx } from "../shared/markdown";
 import { movable } from "../../src/wire/tasks";
 import { failedText, foldRuns, quietTool, runHead, runTally, toolIntent } from "./runs";
 import { Elapsed } from "./clock";
+import { QuestionsBody, QuestionsLine } from "./questions";
 import { vscodeApi } from "../shared/vscode";
 import { RunInBackground, TaskOutput, backgroundStatus } from "./background";
 
@@ -208,7 +209,13 @@ function ToolViewInner({ t, entries, ctx, render }: ToolProps) {
   const editLike = ["Edit", "Write", "MultiEdit"].includes(t.name);
   const sub = t.name === "Agent" || t.name === "Task";
   const custom = toolRenderers.map((r) => r.render(t, ctx)).find((x) => x);
-  const [open, setOpen] = useState<boolean>(editLike || sub || t.name === "TodoWrite" || !!custom);
+  // Claude's question stays as a Questions row, opening to the picks once answered (decision 79).
+  const asked = t.name === "AskUserQuestion";
+  const answered = asked && t.status === "done";
+  const [open, setOpen] = useState<boolean>(editLike || sub || t.name === "TodoWrite" || !!custom || answered);
+  useEffect(() => {
+    if (answered) setOpen(true);
+  }, [answered]);
   const d = editLike ? diffLines(t) : null;
   const bg = backgroundStatus(t);
   // A step that went to the background: its tool result only says so; its output is the task's.
@@ -216,7 +223,7 @@ function ToolViewInner({ t, entries, ctx, render }: ToolProps) {
   return (
     <div class={`tool ${t.status}`}>
       <div class="line" onClick={() => setOpen(!open)}>
-        <StepLabel t={t} cwd={ctx.cwd} />
+        {asked ? <QuestionsLine t={t} /> : <StepLabel t={t} cwd={ctx.cwd} />}
         {d && (
           <span class="diffstat">
             <span class="a">+{d.add}</span> <span class="d">−{d.del}</span>
@@ -232,6 +239,8 @@ function ToolViewInner({ t, entries, ctx, render }: ToolProps) {
         <div class="body">
           {custom ? (
             custom
+          ) : asked ? (
+            <QuestionsBody t={t} />
           ) : editLike ? (
             <DiffView t={t} onOpen={() => ctx.openDiff(t.id)} />
           ) : t.name === "TodoWrite" ? (
