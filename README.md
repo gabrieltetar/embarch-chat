@@ -52,8 +52,10 @@ whose decision numbers the code cites.
 - **Bench results show as cards**: an `embarch-api` build, flash, bootload,
   study or `serial_log` result becomes pass or fail, the board, the first
   error, steps passed and a link into embarch-ui — read from the tool result
-  already in the stream. A `serial_log` whose log holds an assert, a panic,
-  a hard fault or a fatal error is a FAIL, the line shown.
+  already in the stream. A `serial_log` whose log holds an assert failure,
+  a panic, a hard fault or a fatal error is a FAIL, the line shown — by
+  their whole markers (`ASSERTION FAIL`, `ZEPHYR FATAL ERROR`, `HARD
+  FAULT`, `panicked at`, ...), so a pin that is "asserted" is no failure.
 - **Atlas citations become links** in a repo with an `embarch/atlas`:
   `<doc_id> p<N>` opens that page's text, `<board>:<ref>` the line naming it
   in the board's nets or parts.

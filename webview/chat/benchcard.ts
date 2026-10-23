@@ -10,8 +10,28 @@ import type { ToolEntry } from "../../src/wire/reducer";
 
 const API = /^mcp__(?:.*?[_-])?embarch-api__(\w+)$/;
 
-/** A line that says the firmware stopped (Zephyr's `ASSERTION FAIL`, `>>> ZEPHYR FATAL ERROR`, a panic, a hard fault). */
-const CRASH = /\b(assert(ion|ed)?\b|assertion failed|panic(ked)?\b|hard ?fault|fatal error|kernel oops)/i;
+/**
+ * A line that says the firmware stopped: an assert failure, a panic, a
+ * hard fault, a fatal error. Whole markers, not words — firmware logs say
+ * a pin is "asserted" all the time, and "assertion checks enabled" or "no
+ * panic" is no crash.
+ */
+const CRASH = [
+  /\bASSERTION FAIL\b/, // Zephyr's __ASSERT: "ASSERTION FAIL [x] @ file:line"
+  /\bassert(?:ion)?\s+failed\b/i, // "assert failed", "Assertion failed"
+  /\bassertion\s+(?:"[^"\n]*"|`[^'\n]*')\s+failed\b/i, // newlib's assertion "x" failed, glibc's Assertion `x' failed
+  /\bFATAL ERROR\b/, // Zephyr's ">>> ZEPHYR FATAL ERROR n: ..."
+  /\*{3,}\s*[A-Z ]*\bFAULT\s*\*{3,}/, // Zephyr's "***** HARD FAULT *****", BUS, MPU, USAGE
+  /\bhard ?fault\b/i, // "HardFault", "Hard fault"
+  /\bkernel (?:panic|oops)\b/i,
+  /\bpanicked at\b/, // Rust
+  /\bGuru Meditation Error\b/, // ESP-IDF
+];
+
+/** Whether a log line is one of the crash markers above. */
+export function isCrashLine(line: string): boolean {
+  return CRASH.some((r) => r.test(line));
+}
 
 export function benchTool(name: string): string | null {
   return API.exec(name)?.[1] ?? null;
@@ -136,11 +156,12 @@ export function benchCard(tool: string, t: Pick<ToolEntry, "status" | "result">)
       // The firmware stopped: an assert, a panic, a fault, a fatal error. A
       // log that holds one is a failed run whatever the tool call said; any
       // other error line is shown, not judged.
-      const crash = lines.find((l) => CRASH.test(l));
+      const crash = lines.find(isCrashLine);
       card.ok = !failed && !crash;
       if (j.port) detail.push(String(j.port));
       detail.push(`${lines.length} lines`);
-      const bad = crash ?? lines.find((l) => /\b(error|err|fail\w*|fault|assert\w*|panic|hardfault)\b/i.test(l));
+      // An error-looking line is shown; "asserted" or "panic" in passing is not one.
+      const bad = crash ?? lines.find((l) => /\b(error|err|fail\w*|fault)\b/i.test(l));
       if (bad) card.error = bad.trim();
       card.log = lines.slice(-8);
       break;
