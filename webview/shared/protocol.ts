@@ -29,6 +29,10 @@ export interface ChatView {
   resumable: boolean;
   where?: string;
   inEditor: boolean;
+  /** embarch-ui's address, for bench cards' links (decision 15). */
+  uiUrl: string;
+  /** The chat's repo's atlas, for citation links (decision 16); null without one. */
+  atlas: { docs: string[]; boards: string[] } | null;
 }
 
 export type HostToChat =
@@ -59,6 +63,7 @@ export type ChatToHost =
   | { t: "openDiff"; toolId?: string; requestId?: string }
   | { t: "openFile"; path: string; line?: number }
   | { t: "openLink"; url: string }
+  | { t: "atlas"; doc?: string; page?: number; board?: string; ref?: string }
   | { t: "mention"; q: string }
   | { t: "jump" }
   | { t: "openInEditor" }

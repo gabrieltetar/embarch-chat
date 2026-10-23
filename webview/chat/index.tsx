@@ -12,7 +12,12 @@ import type { ChatView, Header, HostToChat, MentionItem } from "../shared/protoc
 import { duration, vscodeApi } from "../shared/vscode";
 import { PendingCards } from "./cards";
 import { Composer } from "./composer";
-import { ToolCtx, ToolView, toolLabel } from "./tools";
+import { ToolCtx, ToolView, toolLabel, toolRenderers } from "./tools";
+import { benchRenderer } from "./bench";
+import { setAtlas } from "./atlas";
+
+let uiUrl = "";
+toolRenderers.push(benchRenderer(() => uiUrl));
 
 const post = (m: unknown) => vscodeApi.postMessage(m);
 
@@ -145,6 +150,8 @@ function App() {
       const m = ev.data;
       switch (m.t) {
         case "snapshot":
+          uiUrl = m.view.uiUrl;
+          setAtlas(m.view.atlas);
           live.current = m.state;
           stick.current = true;
           setEmpty(false);

@@ -42,6 +42,13 @@ whose decision numbers the code cites.
   mailbox: the window whose folder matches takes the entry, once.
 - **A thread this window does not run is read-only**, from its transcript,
   with Jump to the window or terminal running it.
+- **Bench results show as cards**: an `embarch-api` build, flash, bootload,
+  study or `serial_log` result becomes pass or fail, the board, the first
+  error, steps passed and a link into embarch-ui — read from the tool result
+  already in the stream.
+- **Atlas citations become links** in a repo with an `embarch/atlas`:
+  `<doc_id> p<N>` opens that page's text, `<board>:<ref>` the line naming it
+  in the board's nets or parts.
 - `claude --version` outside the tested range (2.1.287–2.1.308) shows a
   one-line warning and keeps working.
 

@@ -8,6 +8,7 @@ import type { ChatManager } from "../chats";
 import type { DeskService } from "../deskService";
 import type { DiffContent } from "../diff";
 import { diffSides } from "../diff";
+import { atlasInfo, citationTarget } from "../atlas";
 import { jump } from "../jump";
 import { mentionItems } from "../mentions";
 import type { WireMessage } from "../wire/types";
@@ -20,6 +21,7 @@ export interface HostCtx {
   log: (s: string) => void;
   claudePath: () => string;
   deskUrl: (itemId: string | null) => string;
+  uiUrl: () => string;
   warning: () => string | null;
   openInEditor: (sid: string) => void;
   newChat: (itemId?: string) => void;
@@ -80,7 +82,18 @@ export class ChatHost implements vscode.Disposable {
     this.post({
       t: "snapshot",
       state: rec.chat.state,
-      view: { ours: rec.ours, readOnly: !rec.ours && !rec.resumable, resumable: !rec.ours && rec.resumable, where, inEditor: this.inEditor },
+      view: {
+        ours: rec.ours,
+        readOnly: !rec.ours && !rec.resumable,
+        resumable: !rec.ours && rec.resumable,
+        where,
+        inEditor: this.inEditor,
+        uiUrl: this.ctx.uiUrl(),
+        atlas: (() => {
+          const a = atlasInfo(rec.chat.opts.cwd || rec.chat.state.cwd || "");
+          return a ? { docs: a.docs, boards: a.boards } : null;
+        })(),
+      },
       header: this.header(),
       warning: this.ctx.warning(),
     });
@@ -179,6 +192,22 @@ export class ChatHost implements vscode.Disposable {
         const ed = await vscode.window.showTextDocument(doc, { preview: true, viewColumn: vscode.ViewColumn.One });
         if (m.line) {
           const pos = new vscode.Position(Math.max(0, m.line - 1), 0);
+          ed.selection = new vscode.Selection(pos, pos);
+          ed.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
+        }
+        return;
+      }
+      case "atlas": {
+        const a = atlasInfo(chat.opts.cwd || chat.state.cwd || "");
+        const target = a && citationTarget(a, m);
+        if (!target) {
+          void vscode.window.showInformationMessage(`The atlas has nothing for ${m.doc ? `${m.doc} p${m.page}` : `${m.board}:${m.ref}`}.`);
+          return;
+        }
+        const doc = await vscode.workspace.openTextDocument(target.file);
+        const ed = await vscode.window.showTextDocument(doc, { preview: true, viewColumn: vscode.ViewColumn.One });
+        if (target.line) {
+          const pos = new vscode.Position(target.line - 1, 0);
           ed.selection = new vscode.Selection(pos, pos);
           ed.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
         }

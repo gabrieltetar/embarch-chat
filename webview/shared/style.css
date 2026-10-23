@@ -744,3 +744,67 @@ details.thinking .md {
   padding: 2px var(--gap) 2px 18px;
   font-size: 0.86em;
 }
+
+/* ------------------------------------------------------------ bench and atlas */
+
+.bench {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--muted);
+  border-radius: var(--radius);
+  padding: 4px 8px;
+  margin: 2px 0;
+}
+.bench.pass {
+  border-left-color: var(--ok);
+}
+.bench.fail {
+  border-left-color: var(--err);
+}
+.bench.run {
+  border-left-color: var(--busy);
+}
+.bench-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.bench-mark {
+  font-weight: 700;
+  font-size: 0.85em;
+  letter-spacing: 0.04em;
+}
+.bench.pass .bench-mark {
+  color: var(--ok);
+}
+.bench.fail .bench-mark {
+  color: var(--err);
+}
+.bench-title {
+  font-weight: 600;
+}
+.bench-board {
+  font-family: var(--vscode-editor-font-family);
+  font-size: 0.9em;
+}
+.bench-link {
+  margin-left: auto;
+  font-size: 0.9em;
+}
+.bench-error {
+  font-family: var(--vscode-editor-font-family);
+  font-size: 0.88em;
+  color: var(--err);
+  margin-top: 2px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.bench-detail {
+  font-size: 0.88em;
+}
+a.cite {
+  border-bottom: 1px dotted var(--vscode-textLink-foreground);
+}
+a.cite:hover {
+  text-decoration: none;
+}

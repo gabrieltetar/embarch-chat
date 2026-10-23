@@ -129,7 +129,7 @@ const HEADER = {
   deskUrl: "http://127.0.0.1:4890/#desk?item=w1",
   untracked: false,
 };
-const OURS = { ours: true, readOnly: false, resumable: false, inEditor: false };
+const OURS = { ours: true, readOnly: false, resumable: false, inEditor: false, uiUrl: "http://127.0.0.1:4890/", atlas: null };
 const snapshot = (over = {}, view = OURS) => ({
   t: "snapshot",
   state: { ...core.initialState(SID), cwd: "/work/rec/x", process: "running", ...over },
@@ -306,7 +306,7 @@ await check("mode and model switch, context meter and Compact", async () => {
 });
 
 await check("a thread run elsewhere is read-only, with Jump", async () => {
-  await send([snapshot({ process: "none" }, { ours: false, readOnly: true, resumable: false, where: "a terminal or Claude Code's panel", inEditor: false }), ...events(outLines("basic"))]);
+  await send([snapshot({ process: "none" }, { ...OURS, ours: false, readOnly: true, where: "a terminal or Claude Code's panel" }), ...events(outLines("basic"))]);
   assert.equal((await text(".composer")).length, 0);
   assert.ok((await text(".readonly"))[0].includes("a terminal"));
   await clearPosts();
@@ -348,6 +348,64 @@ await check("markdown: lists, code, tables, links, file paths, no HTML", async (
   const p = (await posts()).find((x) => x.t === "openFile");
   assert.deepEqual([p.path, p.line], ["src/main.c", 42]);
   await shot("chat-markdown");
+});
+
+const toolCall = (id, name, input) => ({ t: "event", e: { type: "assistant", message: { id: `m-${id}`, content: [{ type: "tool_use", id, name, input }] }, parent_tool_use_id: null } });
+const toolResult = (id, text, isError = false) => ({ t: "event", e: { type: "user", message: { content: [{ type: "tool_result", tool_use_id: id, content: text, is_error: isError }] }, parent_tool_use_id: null } });
+
+await check("bench results show as cards: pass or fail, board, first error, steps, a link", async () => {
+  const failedBuild = {
+    success: false,
+    reason: "build failed",
+    timed_out: false,
+    exit_code: 1,
+    artifact_path: "/w/build/zephyr/zephyr.hex",
+    artifact_fresh: false,
+    stdout: "[1/40] Building C object\n",
+    stderr: "../src/main.c: In function 'main':\n../src/main.c:12:5: error: 'led' undeclared (first use in this function)\nninja: build stopped: subcommand failed.\n",
+    target: { project: "fw", board: "nrf54l15dk", app: "blinky" },
+  };
+  await send([
+    snapshot(),
+    toolCall("toolu_b1", "mcp__embarch-api__build_and_flash", { project: "fw" }),
+    toolResult("toolu_b1", JSON.stringify(failedBuild, null, 2), true),
+    toolCall("toolu_b2", "mcp__embarch-api__run_study", { study: {} }),
+    toolResult("toolu_b2", JSON.stringify({ study_id: "st-42", reflashed: false })),
+    toolCall("toolu_b3", "mcp__embarch-api__serial_log", { project: "fw" }),
+    toolResult("toolu_b3", JSON.stringify({ port: "COM7", lines: ["boot ok", "ASSERTION FAIL @ main.c:40", "idle"] })),
+    toolCall("toolu_b4", "mcp__embarch-api__flash", { project: "fw" }),
+    toolResult("toolu_b4", "flash failed for 'fw': probe not found", true),
+  ]);
+  const cards = await exec(
+    "return [...document.querySelectorAll('.bench')].map(b => ({cls: b.className, mark: b.querySelector('.bench-mark').textContent, board: b.querySelector('.bench-board')?.textContent, err: b.querySelector('.bench-error')?.textContent, head: b.querySelector('.bench-head').textContent}))",
+  );
+  assert.equal(cards.length, 4);
+  assert.equal(cards[0].mark, "FAIL");
+  assert.equal(cards[0].board, "nrf54l15dk · blinky");
+  assert.match(cards[0].err, /main\.c:12:5: error: 'led' undeclared/);
+  assert.ok(cards[0].head.includes("build ✗ · flash –"));
+  assert.equal(cards[1].mark, "PASS");
+  assert.match(cards[2].err, /ASSERTION FAIL/);
+  assert.equal(cards[3].mark, "FAIL");
+  assert.match(cards[3].err, /probe not found/);
+  await clearPosts();
+  await exec("document.querySelectorAll('.bench')[1].querySelector('.bench-link').click()");
+  const p = (await posts()).find((x) => x.t === "openLink");
+  assert.equal(p.url, "http://127.0.0.1:4890/#live-study?study=st-42");
+  await shot("chat-bench");
+});
+
+await check("atlas citations become links when the repo has an atlas", async () => {
+  const say = { t: "event", e: { type: "assistant", message: { id: "m-at", content: [{ type: "text", text: "VBUS tops out at 28 V (abc123@A p12) and is wired at A:U3-12; see also `abc123@A p3`." }] }, parent_tool_use_id: null } };
+  await send([snapshot({}, { ...OURS, atlas: { docs: ["abc123@A"], boards: ["A", "B"] } }), say]);
+  assert.deepEqual(await text("a.cite"), ["abc123@A p12", "A:U3-12"]);
+  await clearPosts();
+  await click("a.cite", "abc123@A p12");
+  await click("a.cite", "A:U3-12");
+  const ps = (await posts()).filter((x) => x.t === "atlas");
+  assert.deepEqual(ps, [{ t: "atlas", doc: "abc123@A", page: 12 }, { t: "atlas", board: "A", ref: "U3-12" }]);
+  await send([snapshot(), say]);
+  assert.equal((await text("a.cite")).length, 0, "no atlas, no links");
 });
 
 // ------------------------------------------------------------ the list

@@ -93,6 +93,7 @@ export function activate(context: vscode.ExtensionContext): void {
     log,
     claudePath: () => cfg().claudePath,
     deskUrl,
+    uiUrl: () => serverUrl(),
     warning: () => warning,
     openInEditor: (sid) => openInEditor(sid),
     newChat: (itemId) => void newChat(itemId),

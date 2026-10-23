@@ -6,3 +6,4 @@ export * from "./wire/version";
 export * from "./wire/transcript";
 export * from "./desk/client";
 export * from "./desk/threads";
+export * from "./atlas";

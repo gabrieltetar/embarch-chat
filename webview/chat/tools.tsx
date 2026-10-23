@@ -163,9 +163,9 @@ interface ToolProps {
 function ToolViewInner({ t, entries, ctx, render }: ToolProps) {
   const editLike = ["Edit", "Write", "MultiEdit"].includes(t.name);
   const sub = t.name === "Agent" || t.name === "Task";
-  const [open, setOpen] = useState<boolean>(editLike || sub || t.name === "TodoWrite");
-  const d = editLike ? diffLines(t) : null;
   const custom = toolRenderers.map((r) => r(t, ctx)).find((x) => x);
+  const [open, setOpen] = useState<boolean>(editLike || sub || t.name === "TodoWrite" || !!custom);
+  const d = editLike ? diffLines(t) : null;
   return (
     <div class={`tool ${t.status}`}>
       <div class="line" onClick={() => setOpen(!open)}>
