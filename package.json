@@ -102,6 +102,23 @@
         "category": "EmbArch Chat"
       },
       {
+        "command": "embarchChat.acceptChanges",
+        "title": "Accept the Kept Changes",
+        "category": "EmbArch Chat",
+        "icon": "$(check)"
+      },
+      {
+        "command": "embarchChat.rejectChanges",
+        "title": "Reject the Change",
+        "category": "EmbArch Chat",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "embarchChat.toggleChange",
+        "title": "Reject or Keep This Change",
+        "category": "EmbArch Chat"
+      },
+      {
         "command": "embarchUi.start",
         "title": "EmbArch UI: Start",
         "category": "EmbArch UI"
@@ -138,6 +155,32 @@
           "command": "embarchChat.openInEditor",
           "when": "view == embarchChat.chat",
           "group": "navigation@2"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "embarchChat.acceptChanges",
+          "when": "resourceScheme == embarch-chat-proposal",
+          "group": "navigation@1"
+        },
+        {
+          "command": "embarchChat.rejectChanges",
+          "when": "resourceScheme == embarch-chat-proposal",
+          "group": "navigation@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "embarchChat.acceptChanges",
+          "when": "resourceScheme == embarch-chat-proposal"
+        },
+        {
+          "command": "embarchChat.rejectChanges",
+          "when": "resourceScheme == embarch-chat-proposal"
+        },
+        {
+          "command": "embarchChat.toggleChange",
+          "when": "false"
         }
       ]
     },

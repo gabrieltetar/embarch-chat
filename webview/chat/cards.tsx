@@ -44,6 +44,7 @@ function PermissionCard({ p, ctx }: { p: Pending; ctx: ToolCtx }) {
         {p.description && p.description !== toolSummary(p.toolName, p.input, ctx.cwd) && <div class="muted">{p.description}</div>}
       </div>
       {editLike && <DiffView t={{ name: p.toolName, input: p.input }} onOpen={() => post({ t: "openDiff", requestId: p.requestId })} max={24} />}
+      {p.kept && <div class="muted">{p.kept} in the diff tab — Allow sends only those</div>}
       {!editLike && p.toolName !== "Bash" && <pre class="out">{JSON.stringify(p.input, null, 2).slice(0, 2000)}</pre>}
       <div class="actions">
         <button class="primary" onClick={() => post({ t: "allow", requestId: p.requestId })}>

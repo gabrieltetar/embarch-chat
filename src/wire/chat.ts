@@ -361,6 +361,16 @@ export class Chat extends EventEmitter {
     this.answer(p.requestId, d);
   }
 
+  /**
+   * The owner kept only some of a pending Edit's or Write's changes in its
+   * diff tab (decision 64): Allow now sends this input; `kept` says so on
+   * the card (null: all of them).
+   */
+  propose(requestId: string, input: Record<string, unknown>, kept: string | null): void {
+    if (!this.state.pending.some((p) => p.requestId === requestId)) return;
+    this.dispatch({ type: "_proposed", requestId, input, kept });
+  }
+
   deny(p: Pending, message = "The user declined this tool call."): void {
     this.answer(p.requestId, { behavior: "deny", message });
   }

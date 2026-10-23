@@ -107,10 +107,37 @@ const state = {
   /** Content providers by scheme, and the documents shown in an editor. */
   contentProviders: new Map(),
   shown: [],
+  /** CodeLens providers: [selector, provider]. */
+  codeLenses: [],
+  /** Arguments of each executed command, beside `executed`. */
+  executedArgs: [],
 };
+
+/** vscode.EventEmitter: `event` subscribes, `fire` delivers. */
+class VsEventEmitter {
+  constructor() {
+    this.em = new EventEmitter();
+    this.event = (cb) => {
+      this.em.on("e", cb);
+      return disposable(() => this.em.off("e", cb));
+    };
+  }
+  fire(v) {
+    this.em.emit("e", v);
+  }
+  dispose() {}
+}
 
 const vscode = {
   Uri,
+  EventEmitter: VsEventEmitter,
+  CodeLens: class {
+    constructor(range, command) {
+      this.range = range;
+      this.command = command;
+    }
+  },
+  TabInputTextDiff: class {},
   StatusBarAlignment: { Left: 1, Right: 2 },
   ViewColumn: { Active: -1, Beside: -2, One: 1 },
   QuickPickItemKind: { Separator: -1, Default: 0 },
@@ -164,6 +191,7 @@ const vscode = {
     showTextDocument: async (doc, opts) => (state.shown.push({ doc, opts }), { selection: null, revealRange() {} }),
     activeTextEditor: undefined,
     terminals: [],
+    tabGroups: { all: [], close: async () => true },
   },
   workspace: {
     get workspaceFolders() {
@@ -194,6 +222,7 @@ const vscode = {
     },
   },
   languages: {
+    registerCodeLensProvider: (selector, provider) => (state.codeLenses.push([selector, provider]), disposable()),
     setTextDocumentLanguage: async (doc, languageId) => ({ ...doc, languageId }),
     getDiagnostics: (uri) => (uri ? (state.diagnostics.find(([u]) => u.fsPath === uri.fsPath)?.[1] ?? []) : state.diagnostics),
   },
@@ -205,6 +234,7 @@ const vscode = {
     },
     executeCommand: async (id, ...args) => {
       state.executed.push(id);
+      state.executedArgs.push([id, ...args]);
       const f = state.commands.get(id);
       return f ? f(...args) : undefined;
     },

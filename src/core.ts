@@ -12,6 +12,7 @@ export * from "./desk/threads";
 export * from "./atlas";
 export * from "./mcpServer";
 export * from "./diagnostics";
+export * from "./hunks";
 export * from "./assistant/edits";
 export * from "./assistant/haiku";
 export * from "./assistant/prompts";

@@ -1066,3 +1066,27 @@ test("diagnostics as Claude Code shapes them: severity by name, a code from its 
   assert.ok(cut.length < 2000);
   assert.match(cut.at(-1).note, /^\d+ more file\(s\) left out/);
 });
+
+test("an Edit with some of its changes rejected is allowed with an input that makes only the kept ones (decision 64)", async () => {
+  const { chat, inputs } = makeChat("hunks");
+  chat.send("Read config.txt, then make ONE call to the Edit tool on it that changes alpha=1 to alpha=10 and delta=4 to delta=40 together, its old_string spanning from alpha=1 through delta=4. Then reply with just: done");
+  await waitFor(() => chat.state.pending.length === 1);
+  const p = chat.state.pending[0];
+  const before = "alpha=1\nbeta=2\ngamma=3\ndelta=4\n";
+  const hunks = core.lineHunks(before, before.replace(p.input.old_string, p.input.new_string));
+  const partial = core.keptInput("Edit", p.input, before, hunks, [true, false]);
+  chat.propose(p.requestId, partial, "1 of 2 changes kept");
+  assert.equal(chat.state.pending[0].kept, "1 of 2 changes kept");
+  assert.equal(chat.state.pending[0].input.new_string, "alpha=10\nbeta=2\ngamma=3\ndelta=4");
+  chat.allow(chat.state.pending[0]);
+  await turns(chat, 1);
+  const answer = inputs().find((o) => o.type === "control_response" && o.response.response?.behavior === "allow");
+  assert.deepEqual(answer.response.response.updatedInput, { ...p.input, new_string: "alpha=10\nbeta=2\ngamma=3\ndelta=4" });
+  // The CLI's own patch: only the kept change was made.
+  const edit = entries(chat.state, "tool").find((t) => t.name === "Edit");
+  assert.deepEqual(edit.structured.structuredPatch[0].lines, ["-alpha=1", "+alpha=10", " beta=2", " gamma=3", " delta=4"]);
+  // A proposal for a prompt no longer pending changes nothing.
+  chat.propose(p.requestId, {}, "x");
+  assert.equal(chat.state.pending.length, 0);
+  chat.dispose();
+});

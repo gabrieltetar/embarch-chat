@@ -39,6 +39,11 @@ whose decision numbers the code cites.
   tool's whole input or output opens in a read-only editor tab (a Bash
   output as a log, JSON as JSON) — a 100K serial or build log gets search
   and the minimap.
+- **In Ask mode a pending Edit or Write is taken change by change**: its
+  diff tab has a Reject on each change (a CodeLens) and Accept and Reject
+  in the title bar; Accept — or the card's Allow — sends an input that
+  makes only the kept changes (a Write's content, an Edit's `new_string`).
+  An Edit with `replace_all` is taken whole.
 - **An open file's unsaved changes are saved before Claude reads, edits or
   writes it**, as Claude Code's own panel does: a PreToolUse hook declared
   in the CLI's `initialize`, which the CLI calls back over stdio and waits

@@ -7,7 +7,7 @@ import * as vscode from "vscode";
 import type { ChatManager } from "../chats";
 import type { DeskService } from "../deskService";
 import type { ContentDocs } from "../content";
-import type { DiffContent } from "../diff";
+import type { DiffContent, Proposals } from "../diff";
 import { diffSides } from "../diff";
 import { atlasInfo, citationTarget } from "../atlas";
 import { jump } from "../jump";
@@ -28,6 +28,8 @@ export interface HostCtx {
   chats: ChatManager;
   desk: DeskService;
   diff: DiffContent;
+  /** A pending Edit's or Write's diff, change by change (decision 64). */
+  proposals: Proposals;
   /** A tool's whole input or output in an editor tab (decision 62). */
   content: ContentDocs;
   log: (s: string) => void;
@@ -250,12 +252,16 @@ export class ChatHost implements vscode.Disposable {
         return this.ctx.freshChat(chat.sessionId);
       case "allow": {
         const p = pending(m.requestId);
-        if (p) chat.allow(p, m.always);
+        // Every change rejected in the diff tab: Allow has nothing left to allow (64).
+        if (p && this.ctx.proposals.rejectsAll(p.requestId)) chat.deny(p, "The user rejected every change of this edit.");
+        else if (p) chat.allow(p, m.always);
+        this.ctx.proposals.done(m.requestId);
         return;
       }
       case "deny": {
         const p = pending(m.requestId);
         if (p) chat.deny(p, m.message?.trim() || (p.form === "plan" ? "Keep planning." : "The user declined this tool call."));
+        this.ctx.proposals.done(m.requestId);
         return;
       }
       case "answer": {
@@ -287,6 +293,8 @@ export class ChatHost implements vscode.Disposable {
           if (e && e.kind === "tool") d = diffSides(e.name, e.input, e.structured, cwd);
         } else if (m.requestId) {
           const p = pending(m.requestId);
+          // Change by change when it can be taken so (64); else the plain diff.
+          if (p && (await this.ctx.proposals.open(chat.sessionId, p, cwd))) return;
           if (p) d = diffSides(p.toolName, p.input, undefined, cwd);
         }
         if (d) await this.ctx.diff.open(d);

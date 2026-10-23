@@ -258,6 +258,22 @@ await check("text shows while it streams, with a cursor", async () => {
   assert.equal((await text(".live")).length, 0);
 });
 
+await check("an Edit's card follows the changes kept in its diff tab, and Allow sends those (decision 64)", async () => {
+  const lines = outLines("hunks");
+  await send([snapshot({ mode: "default" }), sent("edit"), ...events(upTo(lines, (o) => o.type === "control_request"))]);
+  const ask = lines.find((o) => o.type === "control_request");
+  let diff = (await text(".card .diff"))[0];
+  assert.ok(diff.includes("+ alpha=10") && diff.includes("+ delta=40"), diff);
+  await send([{ t: "event", e: { type: "_proposed", requestId: ask.request_id, input: { ...ask.request.input, new_string: "alpha=10\nbeta=2\ngamma=3\ndelta=4" }, kept: "1 of 2 changes kept" } }]);
+  diff = (await text(".card .diff"))[0];
+  assert.ok(diff.includes("+ alpha=10") && !diff.includes("delta=40"), diff);
+  assert.ok((await text(".card"))[0].includes("1 of 2 changes kept in the diff tab — Allow sends only those"));
+  await clearPosts();
+  await click(".card button", "Open diff");
+  assert.deepEqual((await posts()).find((x) => x.t === "openDiff"), { t: "openDiff", requestId: ask.request_id });
+  await shot("card-kept-changes");
+});
+
 await check("a permission prompt: Allow, Always allow, Deny with a message", async () => {
   const lines = outLines("deny");
   await send([snapshot(), sent("touch"), ...events(upTo(lines, (o) => o.type === "control_request"))]);

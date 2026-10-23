@@ -354,6 +354,24 @@ const scenarios = {
     await r.result();
     await r.close();
   },
+  // Some of a proposed Edit's changes (decision 64): in ask mode the Edit's
+  // permission is answered with an input that keeps the first of its two
+  // changes and not the second, as the diff tab's Accept sends it.
+  async hunks() {
+    const r = new Rec("hunks", ["--tools", "Read,Edit"]);
+    const before = "alpha=1\nbeta=2\ngamma=3\ndelta=4\n";
+    fs.writeFileSync(path.join(r.dir, "config.txt"), before);
+    r.user("Read config.txt, then make ONE call to the Edit tool on it that changes alpha=1 to alpha=10 and delta=4 to delta=40 together, its old_string spanning from alpha=1 through delta=4. Then reply with just: done");
+    await r.result((o) => {
+      const inp = o.request.input;
+      if (o.request.tool_name !== "Edit") return r.respond(o, { behavior: "allow", updatedInput: inp });
+      const after = before.replace(inp.old_string, inp.new_string);
+      const hunks = core.lineHunks(before, after);
+      r.respond(o, { behavior: "allow", updatedInput: core.keptInput("Edit", inp, before, hunks, hunks.map((_, k) => k === 0)) });
+    });
+    await r.close();
+    console.log(`hunks: config.txt is now ${JSON.stringify(fs.readFileSync(path.join(r.dir, "config.txt"), "utf8"))}`);
+  },
   async persist() {
     const r = new Rec("persist", ["--tools", ""], { persist: true });
     r.user("Remember the word PELICAN. Reply with just: noted");

@@ -82,6 +82,8 @@ export interface Pending {
    * `input` its payload), decision 66.
    */
   form: "question" | "plan" | "permission" | "elicitation" | "dialog";
+  /** Some of an Edit's or Write's changes rejected in its diff tab (decision 64): how many are kept; `input` makes only those. */
+  kept?: string;
 }
 
 /** The prompt cache the next message would read (decision 69): written at `at` for `ttl` ms; a compaction since leaves it behind. */
@@ -591,6 +593,11 @@ export function reduce(s: ChatState, o: WireMessage): ChatState {
       if (p?.toolUseId) n = patch(n, p.toolUseId, "tool", () => ({ status: o.behavior === "deny" ? "denied" : "running" }));
       return n;
     }
+    case "_proposed":
+      return {
+        ...s,
+        pending: s.pending.map((p) => (p.requestId === o.requestId ? { ...p, input: o.input as Record<string, unknown>, kept: typeof o.kept === "string" ? o.kept : undefined } : p)),
+      };
     case "_unsent":
       return confirm(s, String(o.id), { held: false, unsent: true });
     case "_context":

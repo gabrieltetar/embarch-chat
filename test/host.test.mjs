@@ -458,3 +458,48 @@ test("a tool's whole input or output opens in a read-only editor tab, in a langu
   await new Promise((r) => setTimeout(r, 100));
   assert.equal(mock.state.shown.length, shown + 2);
 });
+
+test("a pending Edit's diff tab rejects a change; Accept sends only the kept one (decision 64)", { skip }, async () => {
+  // The recorded Edit, on a file of this test's own.
+  const work = fs.mkdtempSync(path.join(dir, "hunks-"));
+  fs.writeFileSync(path.join(work, "config.txt"), "alpha=1\nbeta=2\ngamma=3\ndelta=4\n");
+  const fixture = path.join(dir, "hunks.jsonl");
+  fs.writeFileSync(fixture, fs.readFileSync(path.join(here, "fixtures", "wire", "hunks.jsonl"), "utf8").split("/work/rec/hunks").join(work));
+  const input = path.join(dir, "input-hunks.jsonl");
+  process.env.FAKE_CLAUDE_INPUT_LOG = input;
+  try {
+    await startUntracked("basic");
+    process.env.FAKE_CLAUDE_FIXTURE = fixture;
+    const n = chatView.webview.posted.length;
+    chatView.webview.fromPage({ t: "send", text: "Read config.txt, then make ONE call to the Edit tool on it that changes alpha=1 to alpha=10 and delta=4 to delta=40 together, its old_string spanning from alpha=1 through delta=4. Then reply with just: done" });
+    const ask = await waitFor(() => chatView.webview.posted.slice(n).find((m) => m.t === "event" && m.e.type === "control_request"), 5000, "the Edit's permission prompt");
+    chatView.webview.fromPage({ t: "openDiff", requestId: ask.e.request_id });
+    const [, left, right, title] = await waitFor(() => mock.state.executedArgs.find((a) => a[0] === "vscode.diff" && a[2]?.scheme === "embarch-chat-proposal"), 3000, "the diff tab");
+    assert.match(title, /config\.txt — Claude's proposed change/);
+    const docs = mock.state.contentProviders.get("embarch-chat-proposal");
+    assert.equal(docs.provideTextDocumentContent(left), "alpha=1\nbeta=2\ngamma=3\ndelta=4\n");
+    assert.equal(docs.provideTextDocumentContent(right), "alpha=10\nbeta=2\ngamma=3\ndelta=40\n");
+    const [, lens] = mock.state.codeLenses.find(([sel]) => sel.scheme === "embarch-chat-proposal");
+    const doc = { uri: right, lineCount: 5 };
+    assert.deepEqual(lens.provideCodeLenses(doc).map((l) => [l.range.start.line, l.command.title]), [
+      [0, "$(discard) Reject this change"],
+      [3, "$(discard) Reject this change"],
+    ]);
+    // Reject the second change from its lens.
+    const second = lens.provideCodeLenses(doc)[1].command;
+    await mock.state.commands.get(second.command)(...second.arguments);
+    assert.equal(docs.provideTextDocumentContent(right), "alpha=10\nbeta=2\ngamma=3\ndelta=4\n");
+    assert.equal(lens.provideCodeLenses(doc)[1].command.title, "$(check) Rejected — keep it after all");
+    const proposed = await waitFor(() => chatView.webview.posted.slice(n).find((m) => m.t === "event" && m.e.type === "_proposed"), 3000, "the card told");
+    assert.equal(proposed.e.kept, "1 of 2 changes kept");
+    // The tab's Accept answers the prompt.
+    await mock.state.commands.get("embarchChat.acceptChanges")(right);
+    await waitFor(() => chatView.webview.posted.slice(n).some((m) => m.t === "event" && m.e.type === "result"), 5000, "the turn's end");
+    const sent = fs.readFileSync(input, "utf8").trim().split("\n").map((l) => JSON.parse(l).o);
+    const allow = sent.find((o) => o.type === "control_response" && o.response.response?.behavior === "allow");
+    assert.equal(allow.response.response.updatedInput.new_string, "alpha=10\nbeta=2\ngamma=3\ndelta=4");
+    assert.equal(docs.provideTextDocumentContent(right), "", "the proposal is gone with its answer");
+  } finally {
+    delete process.env.FAKE_CLAUDE_INPUT_LOG;
+  }
+});
