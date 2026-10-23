@@ -6,6 +6,9 @@
 //
 //   npm run test:webview          (needs geckodriver and firefox on PATH)
 //   SHOTS=<dir> npm run test:webview   also saves screenshots there
+//
+// The pages run in VS Code's Dark Modern unless `?kind=light` asks for Light
+// Modern: its variables, and the theme kind's class VS Code puts on the body.
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -27,6 +30,11 @@ const THEME = `:root{--vscode-font-family:sans-serif;--vscode-font-size:13px;--v
 --vscode-foreground:#ccc;--vscode-sideBar-background:#1f1f1f;--vscode-editor-background:#1e1e1e;--vscode-input-background:#2a2a2a;
 --vscode-button-background:#0e639c;--vscode-button-foreground:#fff;--vscode-button-secondaryBackground:#3a3d41;--vscode-button-secondaryForeground:#ddd;
 --vscode-descriptionForeground:#999;--vscode-textLink-foreground:#4daafc;--vscode-textCodeBlock-background:#2b2b2b;--vscode-panel-border:#333}`;
+const THEME_LIGHT = `:root{--vscode-font-family:sans-serif;--vscode-font-size:13px;--vscode-editor-font-family:monospace;
+--vscode-foreground:#3b3b3b;--vscode-sideBar-background:#f8f8f8;--vscode-editor-background:#fff;--vscode-input-background:#fff;--vscode-input-border:#cecece;
+--vscode-button-background:#005fb8;--vscode-button-foreground:#fff;--vscode-button-secondaryBackground:#e5e5e5;--vscode-button-secondaryForeground:#3b3b3b;
+--vscode-descriptionForeground:#3b3b3b;--vscode-textLink-foreground:#005fb8;--vscode-textCodeBlock-background:#f8f8f8;--vscode-panel-border:#e5e5e5}`;
+const KINDS = { dark: { vars: THEME, body: "vscode-dark" }, light: { vars: THEME_LIGHT, body: "vscode-light" } };
 
 // The page VS Code would get (src/views/page.ts): the same strict CSP —
 // scripts by nonce only — and the title escaped; the stand-in for the
@@ -38,10 +46,10 @@ const PAGE_PORT = 4989;
 const WD_PORT = 4988;
 const origin = `http://127.0.0.1:${PAGE_PORT}`;
 const VSCODE_CLICK = fs.readFileSync(path.join(here, "fixtures", "vscode-webview-click.js"), "utf8");
-function page(bundle, title) {
+function page(bundle, title, kind = KINDS.dark) {
   const nonce = Math.random().toString(36).slice(2);
   const head = `
-<style>${THEME}</style>
+<style>${kind.vars}</style>
 <script nonce="${nonce}">
 window.__posts = []; window.__state = undefined; window.__violations = []; window.__vscode = [];
 document.addEventListener("securitypolicyviolation", (e) => window.__violations.push(e.violatedDirective + " " + e.blockedURI));
@@ -52,21 +60,25 @@ window.addEventListener("click", handleInnerClick);
 </script>`;
   const html = core.pageHtml({ nonce, cspSource: origin, js: `${origin}/dist/webview/${bundle}.js`, css: `${origin}/dist/webview/${bundle}.css`, title, head });
   // The stand-in must run before the bundle: it goes in <head>, ahead of the body's script.
-  return html;
+  return html.replace("<body>", `<body class="${kind.body}">`);
 }
 
+/** The fonts the pages asked this origin for. */
+const fontsServed = new Set();
 const server = http.createServer((req, res) => {
   const u = new URL(req.url, "http://x");
   if (u.pathname === "/chat.html" || u.pathname === "/list.html") {
     res.writeHead(200, { "content-type": "text/html" });
-    return res.end(page(u.pathname.slice(1, -5), u.searchParams.get("title") ?? "Chat"));
+    return res.end(page(u.pathname.slice(1, -5), u.searchParams.get("title") ?? "Chat", KINDS[u.searchParams.get("kind") ?? "dark"]));
   }
   const file = path.join(root, u.pathname);
   if (!file.startsWith(path.join(root, "dist")) || !fs.existsSync(file)) {
     res.writeHead(404);
     return res.end();
   }
-  res.writeHead(200, { "content-type": file.endsWith(".css") ? "text/css" : "text/javascript" });
+  if (file.endsWith(".woff2")) fontsServed.add(u.pathname);
+  const type = file.endsWith(".css") ? "text/css" : file.endsWith(".woff2") ? "font/woff2" : "text/javascript";
+  res.writeHead(200, { "content-type": type });
   res.end(fs.readFileSync(file));
 });
 await new Promise((r) => server.listen(PAGE_PORT, "127.0.0.1", r));
@@ -1096,6 +1108,7 @@ await check("the 📚: one submenu per category; a click puts /<name> in the dra
 
 await go("/list.html");
 
+let listMsg;
 await check("the list: groups by item, waiting first, + per group, rows open", async () => {
   const DESK = { id: "k1", name: "Example", firmware_repos: ["/work/fw"] };
   const card = (id, key, sessions) => ({
@@ -1126,7 +1139,8 @@ await check("the list: groups by item, waiting first, + per group, rows open", a
     itemOf: {},
     now: Date.now(),
   });
-  await send([{ t: "groups", groups, desk: "Example", error: null, selected: "o", now: Date.now() }]);
+  listMsg = { t: "groups", groups, desk: "Example", error: null, selected: "o", now: Date.now() };
+  await send([listMsg]);
   const heads = await text(".group-head .gtitle");
   assert.deepEqual(heads.map((h) => h.trim()), ["ABC-2 ABC-2 title", "ABC-1 ABC-1 title", "Untracked"]);
   assert.deepEqual(await text(".badge"), ["1"]);
@@ -1172,6 +1186,55 @@ await check("a title that closes the <title> stays text: the page still runs", a
   assert.equal(await exec("return document.title"), "ABC-123 Fix </title><plaintext> parsing");
   await send([snapshot()]);
   assert.ok((await text(".header"))[0].includes("Make the widget blink"));
+});
+
+// ------------------------------------------------------------ the look
+
+await check("UI text is IBM Plex Sans from the page's own origin, a 600 is a 600, and code keeps the editor's font", async () => {
+  await go("/chat.html");
+  await send([snapshot(), sent("hi"), ...events(outLines("basic"))]);
+  await click(".tool .line");
+  const f = await wd("POST", `${S}/execute/async`, {
+    script: `const done = arguments[0];
+      document.fonts.ready.then(() => {
+        const width = (w) => { const s = document.createElement("span"); s.style.cssText = "font: " + w + " 20px 'IBM Plex Sans'; white-space: nowrap"; s.textContent = "Threads waiting on you"; document.body.append(s); const x = s.getBoundingClientRect().width; s.remove(); return x; };
+        done({
+          faces: [...document.fonts].filter((f) => f.family.replace(/"/g, "") === "IBM Plex Sans").map((f) => f.status),
+          body: getComputedStyle(document.body).fontFamily,
+          code: getComputedStyle(document.querySelector(".tool .summary")).fontFamily,
+          out: getComputedStyle(document.querySelector(".tool pre.out")).fontFamily,
+          widths: [400, 600, 700].map(width),
+        });
+      });`,
+    args: [],
+  });
+  assert.deepEqual(f.faces, ["loaded"]);
+  assert.deepEqual([...fontsServed], ["/dist/webview/fonts/ibm-plex-sans-var-latin.woff2"], "one file, from the page's origin");
+  assert.match(f.body, /^"IBM Plex Sans", sans-serif$/);
+  assert.equal(f.code, "monospace");
+  assert.equal(f.out, "monospace");
+  // One variable file: each weight is its own width. A static cut would
+  // synthesise 600 and 700 alike.
+  assert.ok(f.widths[0] < f.widths[1] && f.widths[1] < f.widths[2], JSON.stringify(f.widths));
+  assert.deepEqual(await exec("return window.__violations"), []);
+});
+
+await check("dark and light take EmbArch's accents and semantics; a high-contrast theme keeps VS Code's", async () => {
+  const tokens = "const c = getComputedStyle(document.body); return ['--accent', '--link', '--waiting', '--busy', '--ok', '--err'].map((t) => c.getPropertyValue(t).trim());";
+  assert.deepEqual(await exec(tokens), ["oklch(72% 0.13 200)", "oklch(72% 0.13 200)", "oklch(78% 0.15 85)", "oklch(70% 0.11 240)", "oklch(72% 0.15 150)", "oklch(66% 0.19 25)"]);
+  await exec("document.body.classList.replace('vscode-dark', 'vscode-high-contrast')");
+  assert.deepEqual(await exec(tokens), ["#0e639c", "#4daafc", "#d18616", "#3794ff", "#388a34", "#f14c4c"]);
+  await go("/chat.html?kind=light");
+  assert.deepEqual(await exec(tokens), ["oklch(52% 0.13 200)", "oklch(52% 0.13 200)", "oklch(55% 0.14 80)", "oklch(50% 0.12 240)", "oklch(48% 0.13 150)", "oklch(50% 0.18 25)"]);
+  // The light pages, for the screenshots.
+  await send([snapshot(), sent("Run the bash command `echo hello-from-bash` and then reply with just: done"), ...events(outLines("basic"))]);
+  await click(".tool .line");
+  await send(events(upTo(outLines("deny"), (o) => o.type === "control_request")));
+  await shot("chat-light");
+  await go("/list.html?kind=light");
+  await send([listMsg]);
+  await shot("list-light");
+  assert.deepEqual(await exec("return window.__violations"), []);
 });
 
 await teardown();

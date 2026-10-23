@@ -80,16 +80,17 @@ manifest = f"""<?xml version="1.0" encoding="utf-8"?>
 """
 
 content_types = """<?xml version="1.0" encoding="utf-8"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension=".js" ContentType="application/javascript"/><Default Extension=".css" ContentType="text/css"/><Default Extension=".json" ContentType="application/json"/><Default Extension=".md" ContentType="text/markdown"/><Default Extension=".txt" ContentType="text/plain"/><Default Extension=".vsixmanifest" ContentType="text/xml"/><Default Extension=".png" ContentType="image/png"/><Default Extension=".svg" ContentType="image/svg+xml"/></Types>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension=".js" ContentType="application/javascript"/><Default Extension=".css" ContentType="text/css"/><Default Extension=".json" ContentType="application/json"/><Default Extension=".md" ContentType="text/markdown"/><Default Extension=".txt" ContentType="text/plain"/><Default Extension=".vsixmanifest" ContentType="text/xml"/><Default Extension=".png" ContentType="image/png"/><Default Extension=".svg" ContentType="image/svg+xml"/><Default Extension=".woff" ContentType="font/woff"/><Default Extension=".woff2" ContentType="font/woff2"/></Types>
 """
 
 with zipfile.ZipFile(vsix, "w", zipfile.ZIP_DEFLATED) as z:
     z.writestr("extension.vsixmanifest", manifest)
     z.writestr("[Content_Types].xml", content_types)
     z.writestr("extension/package.json", open("package.json", "rb").read())
-    # Every bundle: the extension and both webviews. A missing file is a
-    # webview that loads blank or an activation that throws — the same
-    # silent symptom this script exists to fix. Source maps stay out.
+    # Every bundle: the extension and both webviews, with the webviews'
+    # font and its licence. A missing file is a webview that loads blank or
+    # an activation that throws — the same silent symptom this script exists
+    # to fix. Source maps stay out.
     for f in sorted(glob.glob("dist/**/*", recursive=True)):
         if os.path.isfile(f) and not f.endswith(".map"):
             z.writestr(f"extension/{f}", open(f, "rb").read())

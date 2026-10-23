@@ -1,4 +1,21 @@
-/* Both webviews, in VS Code's own theme variables (decision 21). */
+/* Both webviews. The surfaces — backgrounds, text, inputs, borders — are
+   VS Code's own theme variables (decision 21); the accents and the
+   semantics are EmbArch's palette in a dark or light theme (decision 53). */
+
+/* The UI's typeface, as embarch-ui serves it (its decision 42): IBM Plex
+   Sans, one variable file (wght 100-700, so a 600 renders at 600 rather than
+   a synthesised bold), Latin only, shipped in the extension and loaded from
+   the webview's own origin, which the CSP's font-src already allows — no CDN
+   (decision 52). Code, diffs and tool output keep the editor's font. IBM
+   Plex is SIL OFL 1.1: fonts/LICENSE-IBM-Plex.txt beside it. */
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 100 700;
+  font-display: swap;
+  src: url("./fonts/ibm-plex-sans-var-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
 
 :root {
   --gap: 8px;
@@ -6,10 +23,70 @@
   --muted: var(--vscode-descriptionForeground);
   --border: var(--vscode-panel-border, var(--vscode-widget-border, rgba(128, 128, 128, 0.35)));
   --bubble: var(--vscode-input-background);
+  /* Accents and semantics: VS Code's own here, which a high-contrast theme
+     keeps; the dark and light blocks below put EmbArch's in their place. */
+  --accent: var(--vscode-button-background);
+  --accent-hover: var(--vscode-button-hoverBackground);
+  --on-accent: var(--vscode-button-foreground);
+  --link: var(--vscode-textLink-foreground);
+  --focus: var(--vscode-focusBorder);
+  --selected: var(--vscode-list-inactiveSelectionBackground);
+  --active: var(--vscode-list-activeSelectionBackground, var(--vscode-list-hoverBackground));
+  --on-active: var(--vscode-list-activeSelectionForeground, var(--vscode-foreground));
+  --suggested: var(--vscode-editorSuggestWidget-selectedBackground, var(--vscode-list-activeSelectionBackground));
+  --on-suggested: var(--vscode-editorSuggestWidget-selectedForeground, var(--vscode-foreground));
+  --meter: var(--vscode-progressBar-background, var(--vscode-charts-blue, #3794ff));
   --waiting: var(--vscode-charts-orange, #d18616);
+  --on-waiting: var(--vscode-badge-foreground, #fff);
+  --warn: var(--vscode-editorWarning-foreground, var(--waiting));
   --busy: var(--vscode-charts-blue, #3794ff);
   --ok: var(--vscode-charts-green, #388a34);
   --err: var(--vscode-errorForeground, #f14c4c);
+}
+
+/* EmbArch's accents and semantics, embarch-ui's tokens verbatim
+   (assets/style.css; its decisions 8 and 25; --accent-hover is its
+   --accent-strong): one cyan accent, and green, amber, red and blue holding
+   lightness across hues. --on-waiting is this file's own: a count on amber,
+   as --on-accent is text on cyan. The webview's body names VS Code's theme
+   kind; the high-contrast kinds match neither block. Accent and semantic
+   text clears 4.5:1 on the default sidebars (#181818, #f8f8f8). Never the
+   mark's red: on a control it reads as destructive. */
+body.vscode-dark {
+  --accent: oklch(72% 0.13 200);
+  --accent-hover: oklch(78% 0.15 200);
+  --accent-soft-bg: oklch(72% 0.13 200 / 0.16);
+  --on-accent: oklch(15% 0.01 200);
+  --waiting: oklch(78% 0.15 85);
+  --on-waiting: oklch(15% 0.01 85);
+  --busy: oklch(70% 0.11 240);
+  --ok: oklch(72% 0.15 150);
+  --err: oklch(66% 0.19 25);
+}
+body.vscode-light {
+  --accent: oklch(52% 0.13 200);
+  --accent-hover: oklch(46% 0.14 200);
+  --accent-soft-bg: oklch(52% 0.13 200 / 0.1);
+  --on-accent: oklch(98% 0.005 200);
+  --waiting: oklch(55% 0.14 80);
+  --on-waiting: oklch(98% 0.005 80);
+  --busy: oklch(50% 0.12 240);
+  --ok: oklch(48% 0.13 150);
+  --err: oklch(50% 0.18 25);
+}
+body.vscode-dark,
+body.vscode-light {
+  --link: var(--accent);
+  --focus: var(--accent);
+  --selected: var(--accent-soft-bg);
+  --active: var(--accent-soft-bg);
+  --suggested: var(--accent-soft-bg);
+  /* A theme's selection text is for its own selection colour (white on
+     Light+'s blue): on the tint, the text stays the text. */
+  --on-active: var(--vscode-foreground);
+  --on-suggested: var(--vscode-foreground);
+  --meter: var(--accent);
+  --warn: var(--waiting);
 }
 
 * {
@@ -23,7 +100,7 @@ body {
   height: 100%;
   color: var(--vscode-foreground);
   background: var(--vscode-sideBar-background, var(--vscode-editor-background));
-  font-family: var(--vscode-font-family);
+  font-family: "IBM Plex Sans", var(--vscode-font-family);
   font-size: var(--vscode-font-size);
 }
 
@@ -48,11 +125,11 @@ button:hover {
   background: var(--vscode-button-secondaryHoverBackground);
 }
 button.primary {
-  color: var(--vscode-button-foreground);
-  background: var(--vscode-button-background);
+  color: var(--on-accent);
+  background: var(--accent);
 }
 button.primary:hover {
-  background: var(--vscode-button-hoverBackground);
+  background: var(--accent-hover);
 }
 button.icon {
   background: transparent;
@@ -71,6 +148,7 @@ select,
 input,
 textarea {
   font: inherit;
+  accent-color: var(--accent);
   color: var(--vscode-input-foreground);
   background: var(--vscode-input-background);
   border: 1px solid var(--vscode-input-border, transparent);
@@ -85,12 +163,12 @@ select {
 textarea:focus,
 input:focus,
 select:focus {
-  outline: 1px solid var(--vscode-focusBorder);
+  outline: 1px solid var(--focus);
   outline-offset: -1px;
 }
 
 a {
-  color: var(--vscode-textLink-foreground);
+  color: var(--link);
   text-decoration: none;
   cursor: pointer;
 }
@@ -98,7 +176,7 @@ a:hover {
   text-decoration: underline;
 }
 a:focus-visible {
-  outline: 1px solid var(--vscode-focusBorder);
+  outline: 1px solid var(--focus);
 }
 /* A link in a reply that is neither http(s) nor a path: shown, not opened. */
 .link-refused {
@@ -113,7 +191,7 @@ a:focus-visible {
   color: var(--err);
 }
 .warn-line {
-  color: var(--vscode-editorWarning-foreground, var(--waiting));
+  color: var(--warn);
   font-size: 0.92em;
   padding: 2px var(--gap);
 }
@@ -151,7 +229,7 @@ a:focus-visible {
 }
 .md code.file {
   cursor: pointer;
-  color: var(--vscode-textLink-foreground);
+  color: var(--link);
 }
 .md blockquote {
   margin: 0.4em 0;
@@ -266,7 +344,7 @@ a:focus-visible {
 .meter .bar {
   width: 54px;
   height: 5px;
-  background: var(--vscode-progressBar-background, var(--busy));
+  background: var(--meter);
   opacity: 0.25;
   border-radius: 3px;
   position: relative;
@@ -275,7 +353,7 @@ a:focus-visible {
 .meter .bar > span {
   position: absolute;
   inset: 0 auto 0 0;
-  background: var(--vscode-progressBar-background, var(--busy));
+  background: var(--meter);
   opacity: 1;
 }
 .meter-wrap {
@@ -283,13 +361,13 @@ a:focus-visible {
   width: 54px;
   height: 5px;
   border-radius: 3px;
-  background: color-mix(in srgb, var(--vscode-progressBar-background, var(--busy)) 25%, transparent);
+  background: color-mix(in srgb, var(--meter) 25%, transparent);
   overflow: hidden;
 }
 .meter-fill {
   position: absolute;
   inset: 0 auto 0 0;
-  background: var(--vscode-progressBar-background, var(--busy));
+  background: var(--meter);
 }
 .meter-fill.high {
   background: var(--waiting);
@@ -737,8 +815,8 @@ details.thinking .md {
   border-style: dashed;
 }
 .chip.handoff {
-  border-color: var(--busy);
-  color: var(--vscode-textLink-foreground);
+  border-color: var(--link);
+  color: var(--link);
 }
 .assist-slot {
   display: inline-flex;
@@ -756,7 +834,7 @@ details.thinking .md {
 .bulb .count {
   font-size: 0.78em;
   background: var(--waiting);
-  color: var(--vscode-badge-foreground, #fff);
+  color: var(--on-waiting);
   border-radius: 8px;
   padding: 0 5px;
 }
@@ -818,8 +896,8 @@ details.thinking .md {
   font-size: 0.85em;
 }
 .menu-cat.on {
-  background: var(--vscode-list-activeSelectionBackground, var(--vscode-list-hoverBackground));
-  color: var(--vscode-list-activeSelectionForeground, inherit);
+  background: var(--active);
+  color: var(--on-active);
 }
 .menu-items {
   flex: 1;
@@ -899,8 +977,8 @@ details.thinking .md {
   text-overflow: ellipsis;
 }
 .popup div.on {
-  background: var(--vscode-editorSuggestWidget-selectedBackground, var(--vscode-list-activeSelectionBackground));
-  color: var(--vscode-editorSuggestWidget-selectedForeground, inherit);
+  background: var(--suggested);
+  color: var(--on-suggested);
 }
 .popup .detail {
   color: var(--muted);
@@ -961,7 +1039,7 @@ details.thinking .md {
 }
 .badge {
   background: var(--waiting);
-  color: var(--vscode-badge-foreground, #fff);
+  color: var(--on-waiting);
   border-radius: 8px;
   padding: 0 6px;
   font-size: 0.8em;
@@ -978,7 +1056,7 @@ details.thinking .md {
   background: var(--vscode-list-hoverBackground);
 }
 .thread.sel {
-  background: var(--vscode-list-inactiveSelectionBackground);
+  background: var(--selected);
 }
 .thread .tbody {
   flex: 1;
@@ -1098,7 +1176,7 @@ details.thinking .md {
   font-size: 0.88em;
 }
 a.cite {
-  border-bottom: 1px dotted var(--vscode-textLink-foreground);
+  border-bottom: 1px dotted var(--link);
 }
 a.cite:hover {
   text-decoration: none;

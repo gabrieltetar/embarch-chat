@@ -40,12 +40,17 @@ const builds = tests
         format: "iife",
         jsx: "automatic",
         jsxImportSource: "preact",
-        loader: { ".css": "css" },
+        // The UI font rides beside the CSS that names it, at a fixed path
+        // the page loads from its own origin (decision 52).
+        loader: { ".css": "css", ".woff2": "file" },
+        assetNames: "fonts/[name]",
       },
     ];
 
 if (!tests) {
-  fs.mkdirSync("dist/webview", { recursive: true });
+  fs.mkdirSync("dist/webview/fonts", { recursive: true });
+  // The OFL travels with the font it licenses.
+  fs.copyFileSync("webview/shared/fonts/LICENSE-IBM-Plex.txt", "dist/webview/fonts/LICENSE-IBM-Plex.txt");
 }
 
 if (watch) {
