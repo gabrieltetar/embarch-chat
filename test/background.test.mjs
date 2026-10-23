@@ -1,7 +1,7 @@
-// Work that runs while the owner does something else (port items 70, 71),
+// Work that runs while the owner does something else (port items 70–72),
 // against recorded real sessions replayed by fake-claude.mjs: a step moved
-// to the background, and background tasks with their output and their own
-// Stop.
+// to the background, background tasks with their output and their own
+// Stop, and messages that wait for Claude — taken back, or sent now.
 
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
@@ -33,13 +33,15 @@ function makeChat(name, opts = {}) {
   });
   const events = [];
   chat.on("event", (e) => events.push(e));
+  const unsent = [];
+  chat.on("unsent", (t) => unsent.push(t));
   // Each recording allowed its permission prompts.
   chat.on("status", (st) => {
     if (st === "waiting") for (const p of chat.state.pending) chat.allow(p);
   });
   // What the panel wrote to the CLI, in order.
   const sentIn = () => (fs.existsSync(inputs) ? fs.readFileSync(inputs, "utf8").trim().split("\n").map((l) => JSON.parse(l).o) : []);
-  return { chat, events, sentIn };
+  return { chat, events, unsent, sentIn };
 }
 
 const turns = (chat, n) =>
@@ -62,6 +64,7 @@ const waitFor = async (pred, ms = 8000) => {
 };
 const tools = (s) => Object.values(s.entries).filter((e) => e.kind === "tool");
 const top = (s) => s.timeline.map((id) => s.entries[id]);
+const userBy = (s, text) => Object.values(s.entries).find((e) => e.kind === "user" && e.text.includes(text));
 const controls = (sentIn, subtype) => sentIn().filter((o) => o.type === "control_request" && o.request.subtype === subtype).map((o) => o.request);
 
 // ------------------------------------------------------------ item 70
@@ -165,4 +168,118 @@ test("a Monitor is a shell to get_task_output, and says so in its row (port item
 
 test("a task's output reads as plain text: escapes out, a carriage-return redraw at its last state", () => {
   assert.equal(core.plainOutput("\x1b[32mok\x1b[0m\n10%\r50%\r100%\n\x1b]0;title\x07done\n"), "ok\n100%\ndone\n");
+});
+
+// ------------------------------------------------------------ item 72
+
+test("messages sent while Claude works wait at the bottom; one is taken back before Claude took it, the other joins where Claude took it (port item 72)", async () => {
+  const { chat, unsent, sentIn } = makeChat("queue");
+  chat.send("Run the bash command `sleep 8; echo one`, then reply with just: one");
+  await waitFor(() => tools(chat.state).length === 1);
+  chat.send("Also end your reply with the word: two");
+  chat.send("Also end your reply with the word: three");
+  const two = userBy(chat.state, "two");
+  const three = userBy(chat.state, "three");
+  assert.deepEqual(chat.state.queue, [two.id, three.id], "both wait, in order");
+  assert.ok(!chat.state.timeline.includes(two.id), "not among the steps");
+  assert.ok(two.uuid && three.uuid && two.uuid !== three.uuid, "each with its own uuid");
+  await waitFor(() => sentIn().filter((o) => o.type === "user").length === 3);
+  assert.deepEqual(
+    sentIn().filter((o) => o.type === "user").map((o) => o.uuid),
+    [chat.state.entries[chat.state.timeline[0]].uuid, two.uuid, three.uuid],
+    "the uuids went to the CLI with the messages",
+  );
+  const ended = turns(chat, 1);
+  await chat.cancelQueued(three.id);
+  assert.deepEqual(controls(sentIn, "cancel_async_message"), [{ subtype: "cancel_async_message", message_uuid: three.uuid }]);
+  assert.equal(chat.state.entries[three.id], undefined, "taken back: gone");
+  assert.deepEqual(unsent, ["Also end your reply with the word: three"], "its text back in the draft");
+  await ended;
+  assert.deepEqual(chat.state.queue, []);
+  const t = top(chat.state);
+  assert.deepEqual(t.map((e) => e.kind), ["user", "tool", "user", "text"], "it joined after the step, where Claude took it in");
+  assert.equal(t[2].id, two.id);
+  assert.equal(t[2].pending, false);
+  assert.equal(t[3].text, "one\ntwo");
+  chat.dispose();
+});
+
+test("Send now while a step runs in the foreground: the step goes to the background and the turn takes the message in (port item 72)", async () => {
+  const { chat, events, sentIn } = makeChat("sendnowbg");
+  chat.send("Run the bash command ... then reply with just: one");
+  await waitFor(() => tools(chat.state).some(core.movable));
+  chat.send("Also end your reply with the word: two");
+  const two = userBy(chat.state, "two");
+  assert.deepEqual(chat.state.queue, [two.id]);
+  await waitFor(() => events.some((e) => e.type === "command_lifecycle" && e.command_uuid === two.uuid && e.state === "queued"));
+  assert.ok(core.anyMovable(chat.state));
+  const ended = turns(chat, 1);
+  await chat.sendNow(two.id);
+  await ended;
+  assert.deepEqual(controls(sentIn, "background_tasks"), [{ subtype: "background_tasks" }], "every step in the foreground, not an interrupt");
+  assert.deepEqual(controls(sentIn, "interrupt"), []);
+  const t = top(chat.state);
+  assert.deepEqual(t.map((e) => e.kind), ["user", "tool", "user", "text"]);
+  assert.equal(t[1].background, true, "the step runs on");
+  assert.equal(t[3].text, "one\n\ntwo");
+  assert.ok(!Object.values(chat.state.entries).some((e) => e.kind === "note" && e.tone === "interrupt"), "nothing was stopped");
+  await chat.stopTask(t[1].task);
+  await waitFor(() => chat.state.background.length === 0);
+  chat.dispose();
+});
+
+test("Send now while Claude writes: an interrupt with send_now and the message's uuid; the message runs next", async () => {
+  const { chat, events, sentIn } = makeChat("sendnowtext");
+  // This turn's own text, not the first turn's: an interrupt sent before the CLI took the message stops nothing.
+  const from = events.length;
+  chat.send("Write a 400-word story about a lighthouse keeper.");
+  await waitFor(() => events.slice(from).some((e) => e.type === "stream_event" && e.event?.delta?.type === "text_delta"));
+  chat.send("Stop the story. Reply with just: two");
+  const two = userBy(chat.state, "two");
+  await waitFor(() => events.some((e) => e.type === "command_lifecycle" && e.command_uuid === two.uuid));
+  const both = turns(chat, 2);
+  await chat.sendNow(two.id);
+  await both;
+  assert.deepEqual(controls(sentIn, "interrupt"), [{ subtype: "interrupt", send_now: true, message_uuid: two.uuid }]);
+  assert.deepEqual(chat.state.queue, []);
+  assert.equal(top(chat.state).at(-1).text, "two");
+  assert.ok(chat.state.timeline.includes(two.id));
+  chat.dispose();
+});
+
+test("the CLI's own send_now stops a step running in the foreground (2.1.287): why Send now moves the step first", () => {
+  // Recorded: interrupt with send_now and the waiting message's uuid while a
+  // Bash call ran in the foreground. Should a later CLI move the step instead
+  // (its changelog says so of its own key since 2.1.281), this fails when
+  // re-recorded, and Send now can use send_now alone.
+  const lines = fs.readFileSync(fixture("sendnow"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  const answer = lines.find((e) => e.d === "out" && e.o.type === "control_response" && e.o.response.request_id === "sn-1").o.response.response;
+  assert.equal(answer.send_now, "stopped");
+  const s = core.reduceAll(core.initialState("x"), lines.filter((e) => e.d === "out").map((e) => e.o));
+  const bash = tools(s).find((t) => t.name === "Bash");
+  assert.equal(bash.status, "error", "the step was ended, not moved");
+  assert.notEqual(bash.background, true);
+  assert.ok(Object.values(s.entries).some((e) => e.kind === "note" && e.tone === "interrupt"));
+});
+
+test("the queue in the reducer: a message sent mid-turn waits, its echo (by uuid) moves it; one not sent joins the timeline marked so", () => {
+  let s = core.initialState("x");
+  s = core.reduce(s, { type: "_sent", n: 1, text: "first", uuid: "u1" });
+  assert.deepEqual(s.timeline, ["s:1"], "nothing runs: straight in");
+  s = core.reduce(s, { type: "_sent", n: 2, text: "second", uuid: "u2" });
+  s = core.reduce(s, { type: "_sent", n: 3, text: "third", uuid: "u3" });
+  assert.deepEqual(s.queue, ["s:2", "s:3"]);
+  assert.deepEqual(s.timeline, ["s:1"]);
+  // The echo of a message whose text the CLI rewrote still finds it by its uuid.
+  s = core.reduce(s, { type: "user", isReplay: true, uuid: "u2", message: { role: "user", content: "second (expanded)" } });
+  assert.deepEqual(s.queue, ["s:3"]);
+  assert.deepEqual(s.timeline, ["s:1", "s:2"]);
+  s = core.reduce(s, { type: "_unsent", id: "s:3" });
+  assert.deepEqual(s.queue, []);
+  assert.equal(s.timeline.at(-1), "s:3");
+  assert.equal(s.entries["s:3"].unsent, true);
+  s = core.reduce(s, { type: "_sent", n: 4, text: "fourth", uuid: "u4" });
+  s = core.reduce(s, { type: "_dequeued", id: "s:4" });
+  assert.equal(s.entries["s:4"], undefined);
+  assert.ok(!s.unconfirmed.includes("s:4"));
 });

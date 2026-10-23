@@ -25,7 +25,12 @@ export interface UserEntry {
   unsent?: boolean;
   /** When it was sent, ms since the epoch (decision 68): the panel's clock, else the CLI's. */
   at?: number;
-  /** The message's id in the transcript, once the CLI has it: what a rewind or a fork names (decision 73). */
+  /**
+   * The message's own uuid, stamped by this panel as it sends it: the CLI's
+   * queue knows it by it (cancel_async_message, Send now; port item 72), and
+   * the CLI keeps it as the message's id in the transcript — what a rewind
+   * or a fork names (decision 73). A message from elsewhere has the CLI's.
+   */
   uuid?: string;
 }
 export interface TextEntry {
@@ -135,6 +140,10 @@ export interface ChatState {
   tasks: Record<string, string>;
   /** This panel's messages the CLI has not echoed yet, oldest first (the `pending` user entries). */
   unconfirmed: string[];
+  /** Messages sent while Claude worked and not yet taken: they wait at the bottom, not in the timeline, until Claude starts on them (port item 72). */
+  queue: string[];
+  /** What the CLI says it supports (init's `capabilities`): `interrupt_send_now_v1` is Send now. */
+  capabilities: string[];
   context: ContextUsage | null;
   lastTurn: { ok: boolean; subtype: string; error?: string } | null;
   /** The account's latest usage limit as the CLI reported it (decision 67). */
@@ -167,6 +176,8 @@ export function initialState(sessionId: string, mode = "auto"): ChatState {
     background: [],
     tasks: {},
     unconfirmed: [],
+    queue: [],
+    capabilities: [],
     context: null,
     lastTurn: null,
     rateLimit: null,
@@ -310,10 +321,21 @@ export function reduceAll(s: ChatState, events: WireMessage[]): ChatState {
   return st;
 }
 
-/** A message of this panel's the CLI took: no longer pending. */
+/**
+ * A message of this panel's the CLI took: no longer pending. One that
+ * waited at the bottom joins the timeline here, where Claude started on it
+ * (port item 72), as one not sent does, to say so where it was.
+ */
 function confirm(s: ChatState, id: string, extra: Partial<UserEntry> = {}): ChatState {
   s = patch(s, id, "user", () => ({ pending: false, ...extra }));
-  return { ...s, unconfirmed: (s.unconfirmed ?? []).filter((x) => x !== id) };
+  s = { ...s, unconfirmed: (s.unconfirmed ?? []).filter((x) => x !== id) };
+  if (!(s.queue ?? []).includes(id)) return s;
+  s = { ...s, queue: s.queue.filter((x) => x !== id) };
+  if (ownsEntries(s)) {
+    s.timeline.push(id);
+    return s;
+  }
+  return { ...s, timeline: [...s.timeline, id] };
 }
 
 /** The tool call a task was started by. */
@@ -421,12 +443,19 @@ function foldUser(s: ChatState, o: WireMessage): ChatState {
   const text = commandText(raw) ?? raw;
   const images = imagesOf(content);
   if (!text.trim() && !images) return s;
-  // The CLI echoing what this panel sent (`--replay-user-messages`).
-  const mine = (s.unconfirmed ?? []).find((id) => {
-    const e = s.entries[id];
-    return e?.kind === "user" && e.pending && e.text.trim() === text.trim();
-  });
+  // The CLI echoing what this panel sent (`--replay-user-messages`), under
+  // the uuid it was sent with; by its text, a message sent without one.
   const uuid = typeof o.uuid === "string" ? o.uuid : undefined;
+  const mine =
+    (uuid &&
+      (s.unconfirmed ?? []).find((id) => {
+        const e = s.entries[id];
+        return e?.kind === "user" && e.pending && e.uuid === uuid;
+      })) ||
+    (s.unconfirmed ?? []).find((id) => {
+      const e = s.entries[id];
+      return e?.kind === "user" && e.pending && e.text.trim() === text.trim();
+    });
   if (mine) return confirm(s, mine, uuid ? { uuid } : {});
   return put(s, { kind: "user", id: uuid ?? `u:${s.seq}`, text, images, at: stamp(o), ...(uuid ? { uuid } : {}) }, null);
 }
@@ -441,6 +470,7 @@ function foldSystem(s: ChatState, o: WireMessage): ChatState {
         mode: (o.permissionMode as string) ?? s.mode,
         version: (o.claude_code_version as string) ?? s.version,
         slashCommands: Array.isArray(o.slash_commands) ? (o.slash_commands as string[]) : s.slashCommands,
+        capabilities: Array.isArray(o.capabilities) ? (o.capabilities as string[]) : (s.capabilities ?? []),
       };
     case "status": {
       let n = s;
@@ -602,11 +632,29 @@ export function reduce(s: ChatState, o: WireMessage): ChatState {
     case "_sent": {
       // Sent: the time above it, and the "Not responding" clock starts (68).
       const at = typeof o.at === "number" ? o.at : undefined;
-      return put(
-        { ...s, busy: true, unconfirmed: [...(s.unconfirmed ?? []), `s:${o.n}`], ...(at !== undefined ? { lastLineAt: at } : {}) },
-        { kind: "user", id: `s:${o.n}`, text: String(o.text ?? ""), images: Number(o.images ?? 0), pending: true, ...(o.held ? { held: true } : {}), ...(at !== undefined ? { at } : {}) },
-        null,
-      );
+      const e: UserEntry = {
+        kind: "user",
+        id: `s:${o.n}`,
+        text: String(o.text ?? ""),
+        images: Number(o.images ?? 0),
+        pending: true,
+        ...(o.held ? { held: true } : {}),
+        ...(at !== undefined ? { at } : {}),
+        ...(typeof o.uuid === "string" ? { uuid: o.uuid } : {}),
+      };
+      const n: ChatState = { ...s, busy: true, unconfirmed: [...(s.unconfirmed ?? []), e.id], ...(at !== undefined ? { lastLineAt: at } : {}) };
+      // Sent while Claude works, or waits on a card: it waits at the bottom
+      // until Claude takes it (port item 72; decision 55), not among the steps.
+      if (s.busy || s.compacting || s.pending.length || o.held || (s.queue ?? []).length) return { ...n, entries: { ...n.entries, [e.id]: e }, queue: [...(s.queue ?? []), e.id] };
+      return put(n, e, null);
+    }
+    case "_dequeued": {
+      // Taken back before Claude took it (cancel_async_message): gone, its text back in the draft.
+      const id = String(o.id);
+      if (!(s.queue ?? []).includes(id)) return s;
+      const entries = { ...s.entries };
+      delete entries[id];
+      return { ...s, entries, queue: s.queue.filter((x) => x !== id), unconfirmed: (s.unconfirmed ?? []).filter((x) => x !== id) };
     }
     case "_process":
       return {

@@ -4,6 +4,7 @@
 // lifetime — unless a background task runs or it waits on the owner, and the
 // next message resumes it.
 
+import { randomUUID } from "crypto";
 import { EventEmitter } from "events";
 import * as fs from "fs";
 import { ClaudeProcess, SpawnSpec, chatEnv } from "./process";
@@ -11,6 +12,7 @@ import { HostHooks, answererFor, initializeRequest } from "./host";
 import { findTranscript, holdsMessage, projectsRoot } from "./transcript";
 import { appendTitle } from "./history";
 import { ChatState, Pending, chatStatus, initialState, reduce, reduceAll, textOf } from "./reducer";
+import { anyMovable, soonMovable } from "./tasks";
 import type { ContextUsage, PermissionDecision, WireMessage } from "./types";
 import { DIALOG_CANCELLED, answerable, unansweredNote } from "./dialogs";
 
@@ -174,7 +176,7 @@ export class Chat extends EventEmitter {
   }
 
   /** Messages written while the process was closing (an idle close under way): they go to the resumed one, once it has exited. */
-  private queued: Array<string | unknown[]> = [];
+  private queued: Array<{ content: string | unknown[]; uuid?: string }> = [];
 
   /**
    * Before a new chat's process starts again: one that died in its first
@@ -270,10 +272,11 @@ export class Chat extends EventEmitter {
         if (this.held !== null && this.compactRan) {
           // The compaction finished: now the rest of the draft.
           const rest = this.held;
+          const heldId = this.heldEntry;
           this.held = null;
           this.heldEntry = null;
           this.compactRan = false;
-          this.deliver(rest);
+          this.deliver(rest, this.uuidOf(heldId));
         } else {
           this.turns++;
           this.emit("turn", o, this.turns);
@@ -317,7 +320,7 @@ export class Chat extends EventEmitter {
         this.queued = [];
         setImmediate(() => {
           const next = this.ensureProcess();
-          for (const c of q) next.sendUser(c);
+          for (const c of q) next.sendUser(c.content, c.uuid);
           this.touch();
         });
       }
@@ -333,19 +336,26 @@ export class Chat extends EventEmitter {
     const content: unknown[] | string = images.length
       ? [...images.map((i) => ({ type: "image", source: { type: "base64", media_type: i.mediaType, data: i.data } })), { type: "text", text }]
       : text;
-    this.dispatch({ type: "_sent", n: ++this.sent, text, images: images.length, at: Date.now() });
-    this.deliver(content);
+    // Its own uuid: the CLI's queue knows it by it, to take it back or send it now (port item 72).
+    const uuid = randomUUID();
+    this.dispatch({ type: "_sent", n: ++this.sent, text, images: images.length, at: Date.now(), uuid });
+    this.deliver(content, uuid);
     this.touch();
   }
 
   /** To the running process; while one is closing, to the next, once it has gone (decision 41). */
-  private deliver(content: string | unknown[]): void {
+  private deliver(content: string | unknown[], uuid?: string): void {
     if (this.proc && !this.proc.exited && (this.closing || this.proc.closing)) {
-      this.queued.push(content);
+      this.queued.push({ content, uuid });
       return;
     }
     const proc = this.ensureProcess();
-    if (!proc.sendUser(content) && !proc.exited) this.queued.push(content);
+    if (!proc.sendUser(content, uuid) && !proc.exited) this.queued.push({ content, uuid });
+  }
+
+  private uuidOf(entryId: string | null): string | undefined {
+    const e = entryId ? this.state.entries[entryId] : undefined;
+    return e?.kind === "user" ? e.uuid : undefined;
   }
 
   /**
@@ -359,7 +369,7 @@ export class Chat extends EventEmitter {
     this.compactRan = false;
     const n = ++this.sent;
     this.heldEntry = `s:${n}`;
-    this.dispatch({ type: "_sent", n, text: rest, images: 0, held: true, at: Date.now() });
+    this.dispatch({ type: "_sent", n, text: rest, images: 0, held: true, at: Date.now(), uuid: randomUUID() });
   }
 
   /**
@@ -500,6 +510,58 @@ export class Chat extends EventEmitter {
     if (!this.running) throw new Error("claude is not running");
     const r = await this.proc!.request("get_task_output", { task_id: taskId }, 5000);
     return { output: String(r.output ?? ""), totalBytes: Number(r.total_bytes ?? 0), truncated: Boolean(r.truncated) };
+  }
+
+  /**
+   * Takes back a message that waits for Claude (port item 72): the held
+   * rest of a /compact draft, or one still in the CLI's queue
+   * (`cancel_async_message`). Its text goes back to the draft. One Claude
+   * already took stays; its echo moves it into the timeline.
+   */
+  async cancelQueued(id: string): Promise<void> {
+    const e = this.state.entries[id];
+    if (e?.kind !== "user" || !(this.state.queue ?? []).includes(id)) return;
+    let gone = false;
+    if (id === this.heldEntry) {
+      this.held = null;
+      this.heldEntry = null;
+      this.compactRan = false;
+      gone = true;
+    } else if (this.queued.some((q) => q.uuid && q.uuid === e.uuid)) {
+      // Written while the process was closing: not at the CLI yet.
+      this.queued = this.queued.filter((q) => q.uuid !== e.uuid);
+      gone = true;
+    } else if (this.running && e.uuid) {
+      try {
+        gone = (await this.proc!.request("cancel_async_message", { message_uuid: e.uuid })).cancelled === true;
+      } catch (err) {
+        this.log(`cancel: ${(err as Error).message}`);
+      }
+    }
+    if (!gone) return;
+    this.dispatch({ type: "_dequeued", id });
+    this.emit("unsent", e.text);
+  }
+
+  /**
+   * Send now (port item 72): Claude takes the waiting message at once. A
+   * step running in the foreground goes to the background and the turn
+   * takes the message in, as the CLI's send-now key does since 2.1.281;
+   * with none, an interrupt with `send_now` — which on CLI 2.1.287 stops
+   * such a step rather than move it (recorded), hence the step first. A
+   * step that cannot move (an MCP call) is stopped; the button says so.
+   */
+  async sendNow(id: string): Promise<void> {
+    const e = this.state.entries[id];
+    if (e?.kind !== "user" || !e.uuid || !this.running || !(this.state.queue ?? []).includes(id) || id === this.heldEntry) return;
+    // A Bash call or a subagent just started: its task comes within a second, then it can move.
+    for (let waited = 0; !anyMovable(this.state) && soonMovable(this.state) && waited < 3000; waited += 100) await new Promise((r) => setTimeout(r, 100));
+    try {
+      if (anyMovable(this.state)) await this.proc!.request("background_tasks", {});
+      else await this.proc!.request("interrupt", { send_now: true, message_uuid: e.uuid });
+    } catch (err) {
+      this.dispatch({ type: "_note", text: `Not sent now: ${(err as Error).message}`, tone: "error" });
+    }
   }
 
   async setMode(mode: string): Promise<void> {

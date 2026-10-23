@@ -5,10 +5,10 @@
 // It writes the recorded output lines in order and, at each recorded input,
 // waits for the client to send a line of the same kind — checking that a
 // permission answer has the recorded behavior, so a test fails when the
-// panel answers differently from the real session. Session and request ids
-// are rewritten to the client's own. A control request the recording does
-// not expect next (the panel's own context-meter refresh, say) gets a canned
-// answer instead of failing.
+// panel answers differently from the real session. Session and request ids,
+// and the uuids messages were sent with, are rewritten to the client's own.
+// A control request the recording does not expect next (the panel's own
+// context-meter refresh, say) gets a canned answer instead of failing.
 //
 // With -p it stands in for one of the Haiku assistant's calls instead
 // (test/fixtures/haiku/*.jsonl, from record-haiku.mjs): it reads the prompt
@@ -141,6 +141,7 @@ const fail = (msg) => {
 
 let pos = 0;
 const idMap = new Map(); // recorded request id -> the client's
+const uuidMap = new Map(); // a recorded message's uuid -> the one the client stamped it with
 const queue = [];
 let wake = null;
 let stdinEnded = false;
@@ -192,6 +193,7 @@ function write(o) {
   written++;
   let s = JSON.stringify(o);
   if (sid && recordedSid) s = s.split(recordedSid).join(sid);
+  for (const [rec, got] of uuidMap) s = s.split(rec).join(got);
   process.stdout.write(s + "\n");
 }
 
@@ -219,6 +221,8 @@ for (; pos < entries.length; pos++) {
   if (!got) process.exit(0);
   const want = e.o;
   if (got.type !== want.type) fail(`expected ${want.type}/${subtypeOf(want)}, got ${got.type}/${subtypeOf(got)}: ${JSON.stringify(got).slice(0, 200)}`);
+  // The CLI's queue knows a message by the uuid the client sent it with: its echo and command_lifecycle carry the client's.
+  if (want.type === "user" && want.uuid && got.uuid) uuidMap.set(want.uuid, got.uuid);
   if (want.type === "control_request") {
     if (got.request?.subtype !== want.request?.subtype) fail(`expected control ${want.request?.subtype}, got ${got.request?.subtype}`);
     idMap.set(want.request_id, got.request_id);

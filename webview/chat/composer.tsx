@@ -612,7 +612,7 @@ export function Composer(p: Props) {
             Stop
           </button>
         )}
-        <button class="primary" disabled={!text.trim()} onClick={send} title={p.waiting ? "Queued: Claude takes it after your answer to the card above" : busy ? "Queued until Claude's turn ends" : "Send (Enter)"}>
+        <button class="primary" disabled={!text.trim()} onClick={send} title={p.waiting ? "Queued: Claude takes it after your answer to the card above" : busy ? "Queued: it waits above the input until Claude reads it, at its next step" : "Send (Enter)"}>
           {busy ? "Queue" : "Send"}
         </button>
       </div>

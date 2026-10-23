@@ -1176,6 +1176,45 @@ details.thinking .md {
   font-size: 0.88em;
   color: var(--muted);
 }
+/* Messages that wait for Claude (port item 72): above the input, the owner's
+   bubble greyed as a sent one not yet taken, with Cancel and Send now. */
+.queue {
+  padding: 2px var(--gap) 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  min-height: 0;
+  max-height: 30vh;
+  overflow-y: auto;
+}
+.queued {
+  max-width: 92%;
+  flex-shrink: 0;
+  background: var(--bubble);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 3px 8px;
+}
+.queued-text {
+  opacity: 0.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.queued-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  font-size: 0.85em;
+}
+.queued-bar .spacer {
+  flex: 1;
+}
 .spinner {
   display: inline-block;
   width: 9px;

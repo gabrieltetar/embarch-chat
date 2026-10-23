@@ -4,8 +4,9 @@
 // folded as they come and rendered once per frame. The timeline is in turns,
 // one per message of the owner's (decision 51), and runs of quiet steps fold
 // into one row (decision 50). Its history — fork, rewind, copy, export — is
-// history.tsx's (decisions 73 and 74). Background tasks open from the status
-// line (port item 71).
+// history.tsx's (decisions 73 and 74). Messages that wait for Claude sit
+// above the input, background tasks open from the status line (port items
+// 70–72).
 
 import "../shared/style.css";
 import { render } from "preact";
@@ -23,6 +24,7 @@ import { RunView, ToolCtx, ToolView, quiet, toolRenderers } from "./tools";
 import { foldRuns, liveTool } from "./runs";
 import { benchRenderer } from "./bench";
 import { BackgroundPanel, BackgroundToggle } from "./background";
+import { Queued } from "./queue";
 import { setAtlas } from "./atlas";
 import { LimitBannerView } from "./limits";
 import { Stamp, useNow } from "./clock";
@@ -411,6 +413,7 @@ function App() {
         warning={model.warning}
         bg={<BackgroundToggle n={state.background.length} open={!!bgOpen[sid]} onToggle={() => setBgOpen((o) => ({ ...o, [sid]: !o[sid] }))} />}
       />
+      <Queued state={state} readOnly={view.readOnly} />
       {view.readOnly ? (
         <div class="readonly">
           <span style="flex:1">{view.where ? `Runs in ${view.where}` : "Not run by this window"} — read-only here.</span>

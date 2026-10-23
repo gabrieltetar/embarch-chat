@@ -311,6 +311,76 @@ const scenarios = {
     await r.until(isResult, undefined, 20000).catch(() => null);
     await r.close();
   },
+  // Messages sent while Claude works (item 72), each with its uuid: the
+  // CLI's command_lifecycle for each, and one taken back before Claude took it.
+  async queue() {
+    const r = new Rec("queue", ["--tools", "Bash"]);
+    r.user("Run the bash command `sleep 8; echo one`, then reply with just: one", uuidOf(1));
+    await r.until((o) => o.type === "assistant" && o.message?.content?.some((b) => b.type === "tool_use"));
+    r.user("Also end your reply with the word: two", uuidOf(2));
+    r.user("Also end your reply with the word: three", uuidOf(3));
+    await pause(500);
+    r.control("cq-1", { subtype: "cancel_async_message", message_uuid: uuidOf(3) });
+    await r.until(isResp("cq-1"));
+    await r.result();
+    // A turn of its own for what was queued, if the CLI makes one.
+    await r.until(isResult, undefined, 30000).catch(() => null);
+    await r.close();
+  },
+  // Send now on a queued message (item 72): interrupt with send_now and the
+  // message's uuid, while a Bash call runs in the foreground.
+  async sendnow() {
+    const r = new Rec("sendnow", ["--tools", "Bash"]);
+    r.user("Run the bash command `for i in $(seq 1 20); do echo tick $i; sleep 2; done` in the foreground (not in the background), then reply with just: one", uuidOf(1));
+    const call = await r.until((o) => o.type === "assistant" && o.message?.content?.some((b) => b.type === "tool_use"));
+    const t = (await r.until(taskStarted("local_bash"), undefined, 20000).catch(() => null)) ?? { tool_use_id: call.message.content.find((b) => b.type === "tool_use").id };
+    r.user("Reply with just: two", uuidOf(2));
+    await r.until((o) => o.type === "command_lifecycle" && o.command_uuid === uuidOf(2), undefined, 5000).catch(() => null);
+    await pause(1000);
+    r.control("sn-1", { subtype: "interrupt", send_now: true, message_uuid: uuidOf(2) });
+    await r.until(isResp("sn-1"));
+    await r.result();
+    await r.until(isResult, undefined, 30000).catch(() => null);
+    r.control("stop-1", { subtype: "stop_task", task_id: t.task_id });
+    await r.until(isResp("stop-1"));
+    await r.until(taskEnded, undefined, 15000).catch(() => null);
+    await r.until(isResult, undefined, 20000).catch(() => null);
+    await r.close();
+  },
+  // Send now as the panel does it while a step runs in the foreground: the
+  // step goes to the background (background_tasks, no tool_use_id: all of
+  // them) and the turn takes the queued message in — the send_now
+  // interrupt above stops such a step instead.
+  async sendnowbg() {
+    const r = new Rec("sendnowbg", ["--tools", "Bash"]);
+    r.user("Run the bash command `for i in $(seq 1 20); do echo tick $i; sleep 2; done` in the foreground (not in the background), then reply with just: one", uuidOf(1));
+    const t = await r.until(taskStarted("local_bash"), undefined, 30000);
+    r.user("Also end your reply with the word: two", uuidOf(2));
+    await r.until((o) => o.type === "command_lifecycle" && o.command_uuid === uuidOf(2), undefined, 5000).catch(() => null);
+    await pause(1000);
+    r.control("bg-1", { subtype: "background_tasks" });
+    await r.until(isResp("bg-1"));
+    await r.result();
+    await r.until(isResult, undefined, 20000).catch(() => null);
+    r.control("stop-1", { subtype: "stop_task", task_id: t.task_id });
+    await r.until(isResp("stop-1"));
+    await r.until(taskEnded, undefined, 15000).catch(() => null);
+    await r.until(isResult, undefined, 20000).catch(() => null);
+    await r.close();
+  },
+  // Send now while Claude writes, no step running: the send_now interrupt.
+  async sendnowtext() {
+    const r = new Rec("sendnowtext", ["--tools", ""]);
+    r.user("Write a 400-word story about a lighthouse keeper.", uuidOf(1));
+    await r.until(firstText);
+    r.user("Stop the story. Reply with just: two", uuidOf(2));
+    await r.until((o) => o.type === "command_lifecycle" && o.command_uuid === uuidOf(2), undefined, 5000).catch(() => null);
+    r.control("sn-1", { subtype: "interrupt", send_now: true, message_uuid: uuidOf(2) });
+    await r.until(isResp("sn-1"));
+    await r.result();
+    await r.until(isResult, undefined, 30000).catch(() => null);
+    await r.close();
+  },
   // A Monitor's output (item 71): get_task_output reads Monitors as it reads shells.
   async monitor() {
     const r = new Rec("monitor", ["--tools", "Bash,Monitor"]);

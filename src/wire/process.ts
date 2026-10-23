@@ -216,8 +216,9 @@ export class ClaudeProcess extends EventEmitter {
     return true;
   }
 
-  sendUser(content: string | unknown[]): boolean {
-    return this.write({ type: "user", message: { role: "user", content } });
+  /** `uuid`: the message's own, so the CLI's queue knows it (cancel_async_message, Send now, command_lifecycle). */
+  sendUser(content: string | unknown[], uuid?: string): boolean {
+    return this.write({ type: "user", ...(uuid ? { uuid } : {}), message: { role: "user", content } });
   }
 
   /** A control request of ours (`interrupt`, `set_model`, ...), resolved by its response. */

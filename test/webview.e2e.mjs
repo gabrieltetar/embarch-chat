@@ -911,7 +911,7 @@ await check("the compact card adds /compact focus on: …; Enter sends the draft
   const split = core.splitCompact(v);
   // What the host then shows: the /compact line, and the rest held for the compaction.
   await send([{ t: "event", e: { type: "_sent", n: 1, text: split.compact } }, { t: "event", e: { type: "_sent", n: 2, text: split.rest, held: true } }]);
-  assert.ok((await text(".user.pending .held"))[0]?.includes("after the compaction"));
+  assert.ok((await text(".queue .queued-bar"))[0]?.includes("after the compaction"), "it waits above the input (port item 72)");
   await shot("assist-compact-held");
   // The recorded compaction and turn after it, with this draft's words in place of the recording's.
   const lines = outLines("compact");
@@ -1264,7 +1264,7 @@ await check("the prompt cache clock between turns: warm with the minutes left, k
   assert.deepEqual(await text(".status-line .cache.compacted"), ["Prompt cache does not cover the compacted conversation"]);
 });
 
-// ------------------------------------------------------------ work that runs on its own (port items 70, 71)
+// ------------------------------------------------------------ work that runs on its own (port items 70–72)
 
 const isTaskStarted = (o) => o.type === "system" && o.subtype === "task_started";
 const isResultLine = (o) => o.type === "result";
@@ -1387,6 +1387,61 @@ await check("the status area with everything at once: the usage banner, the back
   await shot("status-stalled-bg");
   await send([snapshot(quietFor("runbg", allowed("runbg").findIndex(isTaskStarted) + 1))]);
   assert.deepEqual(await text(".status-line .stalled"), [], "a step running in the foreground is");
+});
+
+const U = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+const sentU = (n, text) => ({ t: "event", e: { type: "_sent", n, text, uuid: U(n) } });
+
+await check("messages sent while Claude works wait above the input, with Send now and Cancel; one taken back goes to the draft; Claude's echo moves the other into the timeline where it took it (port item 72)", async () => {
+  const sid = await fresh({}, false);
+  const lines = outLines("queue");
+  const call = lines.findIndex((o) => o.type === "assistant" && o.message.content.some((b) => b.type === "tool_use"));
+  const two = "Also end your reply with the word: two";
+  const three = "Also end your reply with the word: three";
+  await send([sentU(1, "Run the bash command `sleep 8; echo one`, then reply with just: one"), ...events(lines.slice(0, call + 1)), sentU(2, two), sentU(3, three)]);
+  assert.deepEqual(await text(".queue .queued-text"), [two, three]);
+  assert.equal((await text(".timeline .user")).length, 1, "not among the steps");
+  assert.deepEqual(await text(".queue .queued-bar button"), ["Send now", "Cancel", "Send now", "Cancel"]);
+  assert.match((await text(".queued-bar .muted"))[0], /next step/);
+  const box = await exec("return [document.querySelector('.queue').getBoundingClientRect().bottom, document.querySelector('.composer').getBoundingClientRect().top]");
+  assert.ok(box[0] <= box[1], "right above the input");
+  await shot("queue");
+  await exec("document.querySelectorAll('.queued')[1].querySelector('button:last-child').click()");
+  await settle();
+  assert.deepEqual(await postsOf("cancelQueued"), [{ t: "cancelQueued", id: "s:3" }]);
+  // Taken back by the host: gone, its text in the draft.
+  await send([{ t: "event", e: { type: "_dequeued", id: "s:3" } }, { t: "draft", sid, text: three }]);
+  assert.deepEqual(await text(".queue .queued-text"), [two]);
+  assert.equal(await value(), three);
+  await click(".queued button", "Send now");
+  assert.deepEqual(await postsOf("sendNow"), [{ t: "sendNow", id: "s:2" }]);
+  // Claude takes it in after the step.
+  await send(events(lines.slice(call + 1)));
+  assert.equal((await text(".queue")).length, 0);
+  const order = await exec("return [...document.querySelectorAll('.timeline > div > :first-child')].map(e => e.classList.contains('user') ? 'user' : e.classList.contains('tool') ? 'tool' : 'text')");
+  assert.deepEqual(order, ["user", "tool", "user", "text"]);
+  assert.ok((await text(".timeline .user")).at(-1).startsWith(two), "the last of the owner's messages is the one taken");
+});
+
+await check("a step that cannot move to the background makes Send now say it stops it", async () => {
+  await fresh({ capabilities: ["interrupt_send_now_v1"] }, false);
+  await send([
+    sentU(1, "flash it"),
+    toolCall("tf1", "mcp__embarch-api__flash", { project: "demo" }),
+    sentU(2, "use the other board"),
+  ]);
+  assert.deepEqual(await text(".queued-bar button"), ["Stop and send", "Cancel"]);
+});
+
+await check("a message sent while a card waits shows in the queue as going after the answer, with no Send now (decision 55)", async () => {
+  await fresh({}, false);
+  await send([sent("tea or coffee"), ...events(askLines.slice(0, askAt + 1)), { t: "event", e: { type: "_sent", n: 2, text: "Also end your reply with the word: kiwi" } }]);
+  assert.match((await text(".queued-bar .muted"))[0], /after your answer to the card above/);
+  assert.deepEqual(await text(".queued-bar button"), ["Cancel"]);
+  await shot("queue-after-card");
+  await send([{ t: "event", e: { type: "_answered", requestId: askLines[askAt].request_id, behavior: "allow" } }, ...events(askLines.slice(askAt + 1))]);
+  assert.equal((await text(".queue")).length, 0, "taken after the answer");
+  assert.ok((await text(".timeline .user")).some((t) => t.includes("kiwi")));
 });
 
 await check("reply chips after a turn: a click sends it; the handoff's chip asks for a fresh chat", async () => {

@@ -121,7 +121,10 @@ export type ChatToHost =
   | { t: "runInBackground"; toolUseId: string }
   /** One background task stopped, nothing else (port item 71). */
   | { t: "stopTask"; taskId: string }
-  | { t: "taskOutput"; taskId: string };
+  | { t: "taskOutput"; taskId: string }
+  /** A message that waits for Claude: taken back to the draft, or sent now (port item 72). */
+  | { t: "cancelQueued"; id: string }
+  | { t: "sendNow"; id: string };
 
 export type HostToList = {
   t: "groups";
