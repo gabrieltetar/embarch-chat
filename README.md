@@ -58,7 +58,15 @@ whose decision numbers the code cites.
 - **A chat's process closes 5 minutes after its last input or reply**,
   unless a background task runs or it waits on you; the next message resumes
   it — one written while it is closing goes to the resumed process. Chats
-  die with their window.
+  die with their window — except across a reload: the chats it had on
+  screen come back (the sidebar's and its tabs), and one cut off mid-turn
+  resumes with the CLI's own `CLAUDE_CODE_RESUME_INTERRUPTED_TURN`, which
+  reruns the interrupted step, labelled "Continuing the step that was
+  interrupted when the window reloaded." (at most twice before a turn
+  finishes, never for a step over an hour old; otherwise, or with
+  `embarchChat.continueAfterReload` off, it says no reply follows). VS Code
+  cannot tell a reload from a close: a window back within 90 s of its last
+  note is a reload.
 - **Start work and Open chat on the Desk land here** through the desk's
   mailbox: the window whose folder matches takes the entry, once.
 - **A thread this window does not run is read-only**, from its transcript,
@@ -186,6 +194,7 @@ The extension does not run in an untrusted workspace.
 | `embarchChat.deskTokenPath` | `"~/.config/embarch-desk/desk-token"` | The desk's token. |
 | `embarchChat.assistant` | `true` | The Haiku assistant: ghost text, cards, chips, naming. Off, the instant prefix match and the CLI's own suggestion remain. |
 | `embarchChat.autosave` | `true` | Save an open file's unsaved changes before Claude reads, edits or writes it. |
+| `embarchChat.continueAfterReload` | `true` | After a reload, a chat cut off mid-turn continues the interrupted step. |
 | `embarchChat.diagnosticsTool` | `false` | Give Claude `getDiagnostics`, the Problems panel (its definition rides in every chat's tool list). |
 | `embarchUi.binaryPath` | `"embarch-ui"` | The embarch-ui binary the launcher starts. |
 | `embarchUi.host` / `embarchUi.port` | `127.0.0.1` / `4890` | Where embarch-ui serves (also the Desk link). |

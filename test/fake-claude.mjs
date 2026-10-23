@@ -36,7 +36,7 @@ import { fileURLToPath } from "node:url";
 const argv = process.argv.slice(2);
 const logArgs = (extra = {}) => {
   if (process.env.FAKE_CLAUDE_ARGS_LOG) {
-    fs.appendFileSync(process.env.FAKE_CLAUDE_ARGS_LOG, JSON.stringify({ argv, cwd: process.cwd(), ...extra, env: { EMBARCH_DESK_INTERNAL: process.env.EMBARCH_DESK_INTERNAL ?? null } }) + "\n");
+    fs.appendFileSync(process.env.FAKE_CLAUDE_ARGS_LOG, JSON.stringify({ argv, cwd: process.cwd(), ...extra, env: { EMBARCH_DESK_INTERNAL: process.env.EMBARCH_DESK_INTERNAL ?? null, CLAUDE_CODE_RESUME_INTERRUPTED_TURN: process.env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN ?? null, CLAUDE_CODE_RESUME_INTERRUPTED_TURN_MAX_AGE_MS: process.env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN_MAX_AGE_MS ?? null } }) + "\n");
   }
 };
 if (argv.includes("--version")) {

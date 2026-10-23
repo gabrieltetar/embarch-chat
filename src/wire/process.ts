@@ -53,6 +53,8 @@ export function chatEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEn
   for (const k of ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SSE_PORT", "EMBARCH_DESK_INTERNAL", "TRACEPARENT", "TRACESTATE"]) {
     delete env[k];
   }
+  // Rerunning an interrupted step is the panel's call, per process (decision 63), never inherited.
+  for (const k of Object.keys(env)) if (k.toUpperCase().startsWith("CLAUDE_CODE_RESUME_")) delete env[k];
   return env;
 }
 

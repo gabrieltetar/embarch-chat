@@ -231,6 +231,12 @@
             "scope": "machine",
             "description": "Before Claude reads, edits or writes a file, save that file's unsaved changes in the editor, as Claude Code's own panel does (decision 61). Off, Claude works on the copy on disk. User or Remote settings only — a workspace cannot set it."
           },
+          "embarchChat.continueAfterReload": {
+            "type": "boolean",
+            "default": true,
+            "scope": "machine",
+            "description": "After the window reloads, a chat that was mid-turn continues the step the reload interrupted, as Claude Code's own panel does (decision 63). Off, it comes back saying no reply follows. Either way this window's chats come back after a reload, never after a close. User or Remote settings only — a workspace cannot set it."
+          },
           "embarchChat.diagnosticsTool": {
             "type": "boolean",
             "default": false,

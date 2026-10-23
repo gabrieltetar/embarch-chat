@@ -69,7 +69,7 @@ before(async () => {
   });
   mock.state.folders = [folder];
   ext = require("../dist/extension.js");
-  context = { subscriptions: [], extensionUri: mock.vscode.Uri.file(root) };
+  context = { subscriptions: [], extensionUri: mock.vscode.Uri.file(root), workspaceState: new mock.Memento() };
   ext.activate(context);
 
   threadsView = new mock.FakeView();
@@ -501,5 +501,81 @@ test("a pending Edit's diff tab rejects a change; Accept sends only the kept one
     assert.equal(docs.provideTextDocumentContent(right), "", "the proposal is gone with its answer");
   } finally {
     delete process.env.FAKE_CLAUDE_INPUT_LOG;
+  }
+});
+
+// ------------------------------------------------------------ a window reload (decision 63)
+
+/** The window reloads: this extension host deactivates and a new one activates, with the same workspace state. */
+async function reload(before = () => {}) {
+  await ext.deactivate();
+  for (const d of context.subscriptions) d.dispose?.();
+  before();
+  context = { subscriptions: [], extensionUri: mock.vscode.Uri.file(root), workspaceState: context.workspaceState };
+  ext.activate(context);
+  threadsView = new mock.FakeView();
+  chatView = new mock.FakeView();
+  mock.state.providers.get("embarchChat.threads").provider.resolveWebviewView(threadsView);
+  mock.state.providers.get("embarchChat.chat").provider.resolveWebviewView(chatView);
+  threadsView.webview.fromPage({ t: "ready" });
+  chatView.webview.fromPage({ t: "ready" });
+}
+
+test("a reload brings the window's chats back, and one cut off mid-turn continues its step, labelled; after a close nothing comes back (decision 63)", { skip }, async () => {
+  process.env.FAKE_CLAUDE_TRANSCRIPT = "prompt";
+  try {
+    const sid = await startUntracked("deny");
+    const n = chatView.webview.posted.length;
+    chatView.webview.fromPage({ t: "send", text: "Run the bash command `touch should-not-exist.txt`. If it is refused, reply with just: refused" });
+    await waitFor(() => chatView.webview.posted.slice(n).some((m) => m.t === "event" && m.e.type === "control_request"), 5000, "the chat mid-turn, waiting on the owner");
+    await mock.state.commands.get("embarchChat.openInEditor")();
+    const tabsBefore = mock.state.panels.length;
+    const spawnsBefore = calls().length;
+    // The reload: its own process goes with the old host.
+    await reload(() => (process.env.FAKE_CLAUDE_FIXTURE = path.join(here, "fixtures", "wire", "reload.jsonl")));
+    const back = await waitFor(() => {
+      const s = lastSnapshot();
+      return s?.state.sessionId === sid && s.view.ours && s;
+    }, 15000, "the chat back in the sidebar, the window's own");
+    assert.ok(back.state.timeline.length > 0, "with its history, from the transcript");
+    assert.ok(mock.state.panels.length > tabsBefore && mock.state.panels.at(-1).title, "its tab back");
+    const note = await waitFor(() => chatView.webview.posted.find((m) => m.t === "event" && m.e.type === "_note" && m.e.text === core.RERUN_NOTE), 10000, "the rerun's label");
+    assert.ok(note);
+    await waitFor(() => chatView.webview.posted.some((m) => m.t === "event" && m.e.type === "result"), 10000, "the step's end");
+    const rerun = calls().slice(spawnsBefore).find((c) => c.argv.includes("--input-format"));
+    assert.equal(rerun.argv.find((a) => a.startsWith("--resume")), `--resume=${sid}`);
+    assert.equal(rerun.env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN, "1");
+    // A close, and a window opened later: nothing comes back (decision 5).
+    await reload(() => {
+      const k = "embarchChat.openChats";
+      const saved = context.workspaceState.get(k);
+      assert.ok(saved?.chats.some((c) => c.sid === sid), "written down at deactivate");
+      context.workspaceState.update(k, { ...saved, at: Date.now() - 5 * 60_000 });
+    });
+    await new Promise((r) => setTimeout(r, 500));
+    assert.ok(!chatView.webview.posted.some((m) => m.t === "snapshot" && m.state.sessionId === sid), "not back after a close");
+    assert.ok(mock.state.output.some((l) => /not brought back: it closed \d+ s ago/.test(l)));
+    assert.equal(context.workspaceState.get("embarchChat.openChats"), undefined, "and forgotten");
+  } finally {
+    delete process.env.FAKE_CLAUDE_TRANSCRIPT;
+  }
+});
+
+test("with continueAfterReload off, a chat cut off mid-turn comes back saying no reply follows, and nothing runs (decision 63)", { skip }, async () => {
+  process.env.FAKE_CLAUDE_TRANSCRIPT = "prompt";
+  mock.state.config["embarchChat.continueAfterReload"] = false;
+  try {
+    const sid = await startUntracked("deny");
+    const n = chatView.webview.posted.length;
+    chatView.webview.fromPage({ t: "send", text: "Run the bash command `touch should-not-exist.txt`. If it is refused, reply with just: refused" });
+    await waitFor(() => chatView.webview.posted.slice(n).some((m) => m.t === "event" && m.e.type === "control_request"), 5000, "mid-turn");
+    const spawnsBefore = calls().length;
+    await reload();
+    await waitFor(() => chatView.webview.posted.find((m) => m.t === "event" && m.e.type === "_note" && m.e.text === core.NO_REPLY_NOTE), 15000, "the no-reply note");
+    assert.equal(lastSnapshot().state.sessionId, sid);
+    assert.ok(!calls().slice(spawnsBefore).some((c) => c.argv.includes("--input-format")), "no process started");
+  } finally {
+    delete process.env.FAKE_CLAUDE_TRANSCRIPT;
+    delete mock.state.config["embarchChat.continueAfterReload"];
   }
 });

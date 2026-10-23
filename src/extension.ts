@@ -20,6 +20,7 @@ import { DIFF_SCHEME, DiffContent, registerProposals } from "./diff";
 import { hostHooks } from "./hostHooks";
 import { agentPid, jump } from "./jump";
 import { activateLauncher, deactivateLauncher, serverUrl } from "./launcher/launcher";
+import { ReloadMemory, restoreAfterReload } from "./reload";
 import { HostCtx, assistInput } from "./views/chatHost";
 import { CHAT_VIEW, ChatPanels, ChatViewProvider, THREADS_VIEW, ThreadsViewProvider } from "./views/views";
 import { claudeVersion, versionWarning } from "./wire/version";
@@ -28,6 +29,7 @@ import { isSessionId } from "./wire/transcript";
 let chats: ChatManager | undefined;
 let deskService: DeskService | undefined;
 let assistant: HaikuAssistant | undefined;
+let reloadMemory: ReloadMemory | undefined;
 
 function cfg() {
   const c = vscode.workspace.getConfiguration("embarchChat");
@@ -164,6 +166,24 @@ export function activate(context: vscode.ExtensionContext): void {
     setVisible: (v) => desk.setVisible(v),
   });
   context.subscriptions.push(vscode.window.registerWebviewViewProvider(THREADS_VIEW, threads));
+
+  // A reload brings this window's chats back, and a step it cut off goes on (decision 63).
+  reloadMemory = new ReloadMemory(context.workspaceState, manager, () => panels.sessions());
+  context.subscriptions.push(reloadMemory);
+  void restoreAfterReload({
+    state: context.workspaceState,
+    manager,
+    memory: reloadMemory,
+    claudePath: () => cfg().claudePath,
+    enabled: () => vscode.workspace.getConfiguration("embarchChat").get<boolean>("continueAfterReload", true),
+    log,
+    show: (sid) => {
+      manager.current = sid;
+      chatView.show(sid);
+      threads.push();
+    },
+    openTab: (sid) => panels.open(sid, titleOf(manager.get(sid))),
+  }).catch((e) => log(`reload: ${(e as Error).message}`));
 
   // ------------------------------------------------------------ the count
 
@@ -573,10 +593,13 @@ export function activate(context: vscode.ExtensionContext): void {
   desk.start();
 }
 
-/** Chats die with their window (decision 5). */
-export function deactivate(): void {
+/** Chats die with their window (decision 5) — written down first, for a reload to bring back (63). */
+export function deactivate(): Thenable<void> | undefined {
+  const saved = reloadMemory?.save();
+  reloadMemory?.dispose();
   assistant?.dispose();
   deskService?.dispose();
   chats?.dispose();
   deactivateLauncher();
+  return saved;
 }

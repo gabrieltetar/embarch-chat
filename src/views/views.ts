@@ -90,6 +90,11 @@ export class ChatPanels implements vscode.Disposable {
     return this.panels.has(sid);
   }
 
+  /** The chats open as tabs. */
+  sessions(): string[] {
+    return [...this.panels.keys()];
+  }
+
   visible(sid: string): boolean {
     return !!this.panels.get(sid)?.panel.visible;
   }

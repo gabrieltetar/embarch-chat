@@ -243,4 +243,22 @@ const vscode = {
   env: { openExternal: async (u) => (state.external.push(String(u)), true) },
 };
 
-module.exports = { vscode, state, scopes, FakeView, FakeWebview };
+/** A context's workspaceState: kept as JSON, as VS Code stores it. */
+class Memento {
+  constructor() {
+    this.data = {};
+  }
+  get(k, d) {
+    return k in this.data ? JSON.parse(this.data[k]) : d;
+  }
+  update(k, v) {
+    if (v === undefined) delete this.data[k];
+    else this.data[k] = JSON.stringify(v);
+    return Promise.resolve();
+  }
+  keys() {
+    return Object.keys(this.data);
+  }
+}
+
+module.exports = { vscode, state, scopes, FakeView, FakeWebview, Memento };

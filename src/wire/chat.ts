@@ -35,6 +35,12 @@ export interface Attachment {
   data: string;
 }
 
+/** Claude Code's own words for a step rerun after a reload, and for one that will not be (decision 63). */
+export const RERUN_NOTE = "Continuing the step that was interrupted when the window reloaded.";
+export const NO_REPLY_NOTE = "No reply was recorded for this message before the session was reloaded.";
+/** How old a step the CLI reruns, as Claude Code sets it (an hour). */
+export const RERUN_MAX_AGE_MS = 3_600_000;
+
 /** How many lines a followed transcript passes on to the page one by one; more go as a snapshot. */
 const FOLLOW_AS_EVENTS = 50;
 
@@ -76,6 +82,8 @@ export class Chat extends EventEmitter {
   turns = 0;
   /** Named with rename_session here: Claude's own ai-title no longer applies. */
   renamed = false;
+  /** The next process reruns a step a window reload cut off (decision 63). */
+  private rerun = false;
 
   constructor(readonly opts: ChatOptions) {
     super();
@@ -165,8 +173,13 @@ export class Chat extends EventEmitter {
 
   private ensureProcess(): ClaudeProcess {
     if (this.proc && !this.proc.exited) return this.proc;
-    const env = this.opts.env ?? chatEnv();
+    let env = this.opts.env ?? chatEnv();
     this.settleSession(env);
+    // The CLI's own rerun of an interrupted step, as Claude Code spawns it (63): this process only.
+    const rerun = this.rerun;
+    this.rerun = false;
+    if (rerun) env = { ...env, CLAUDE_CODE_RESUME_INTERRUPTED_TURN: "1", CLAUDE_CODE_RESUME_INTERRUPTED_TURN_MAX_AGE_MS: String(RERUN_MAX_AGE_MS) };
+    let label = rerun;
     // The panel's own hooks and MCP servers (61, 65), read as each process starts, in its one initialize.
     const hooks = this.opts.hooks?.() ?? {};
     const init = initializeRequest(hooks);
@@ -205,6 +218,11 @@ export class Chat extends EventEmitter {
         return;
       }
       if ((o.type === "user" && o.isReplay) || o.type === "result") this.hasSession = true;
+      // The rerun's first frame says so (`resume_reason`): the label goes before it.
+      if (label && typeof o.resume_reason === "string") {
+        label = false;
+        this.dispatch({ type: "_note", text: RERUN_NOTE, tone: "info" });
+      }
       this.dispatch(o);
       if (this.held !== null && isCompactEnd(o)) this.compactRan = true;
       if (o.type === "result") {
@@ -346,6 +364,23 @@ export class Chat extends EventEmitter {
     this.proc.answer(requestId, decision as unknown as Record<string, unknown>);
     this.dispatch({ type: "_answered", requestId, behavior: decision.behavior });
     this.touch();
+  }
+
+  /**
+   * After a window reload (decision 63): starts the process, sending
+   * nothing, with the CLI's own CLAUDE_CODE_RESUME_INTERRUPTED_TURN — the
+   * CLI reruns a step the reload cut off, if the transcript ends in one.
+   */
+  continueInterrupted(): void {
+    if (this.running || this.disposed) return;
+    this.rerun = true;
+    this.ensureProcess();
+    this.touch();
+  }
+
+  /** A line of the panel's own in the chat. */
+  note(text: string, tone: "info" | "error" = "info"): void {
+    this.dispatch({ type: "_note", text, tone });
   }
 
   /** Answers a dialog or an MCP server's elicitation (decision 66) as the CLI's schema has it. */

@@ -43,9 +43,9 @@ function cleanEnv() {
 }
 
 class Rec {
-  constructor(name, args, { persist = false, system = true } = {}) {
+  constructor(name, args, { persist = false, system = true, dir, env } = {}) {
     this.name = name;
-    this.dir = path.join(scratch, name);
+    this.dir = dir ?? path.join(scratch, name);
     fs.mkdirSync(this.dir, { recursive: true });
     fs.writeFileSync(path.join(this.dir, "note.txt"), "the secret is MANGO\n");
     this.lines = [];
@@ -57,7 +57,7 @@ class Rec {
     const full = [...base, ...(persist ? [] : ["--no-session-persistence"]), ...args];
     this.p = spawn("claude", full, {
       cwd: this.dir,
-      env: cleanEnv(),
+      env: { ...cleanEnv(), ...env },
       stdio: ["pipe", "pipe", "pipe"],
     });
     this.p.stderr.on("data", (d) => fs.appendFileSync(path.join(this.dir, "stderr.txt"), d));
@@ -371,6 +371,28 @@ const scenarios = {
     });
     await r.close();
     console.log(`hunks: config.txt is now ${JSON.stringify(fs.readFileSync(path.join(r.dir, "config.txt"), "utf8"))}`);
+  },
+  // A window reload mid-turn (decision 63): the extension host's deactivate
+  // kills the chat's process (SIGTERM) while its Bash call runs; the next
+  // process resumes with CLAUDE_CODE_RESUME_INTERRUPTED_TURN set, as Claude
+  // Code's continueAfterReload spawns it, writes only the panel's
+  // initialize, and the CLI continues the interrupted step on its own. The
+  // fixture (wire/reload.jsonl) is reload-resumed's recording.
+  async reload() {
+    const signal = process.env.RELOAD_SIGNAL ?? "SIGTERM";
+    const r = new Rec("reload", ["--tools", "Bash"], { persist: true });
+    r.user("Run the bash command `sleep 12; echo slept` and then reply with just: done");
+    await r.until((o) => o.type === "assistant" && o.message.content.some((b) => b.type === "tool_use"));
+    await new Promise((res) => setTimeout(res, 4000));
+    r.p.kill(signal);
+    await r.close();
+    const sid = r.lines.find((l) => l.o.type === "system" && l.o.subtype === "init").o.session_id;
+    const env = { CLAUDE_CODE_RESUME_INTERRUPTED_TURN: "1", CLAUDE_CODE_RESUME_INTERRUPTED_TURN_MAX_AGE_MS: "3600000" };
+    const r2 = new Rec("reload-resumed", ["--tools", "Bash", "--resume", sid], { persist: true, dir: r.dir, env });
+    r2.onControl = (o) => o.request.subtype === "hook_callback" && r2.respond(o, { continue: true });
+    r2.control("init-1", { subtype: "initialize", supportedDialogKinds: core.DIALOG_KINDS, ...core.initializeRequest({ beforeFileTool: async () => {} }) });
+    await r2.until((o) => o.type === "result", undefined, 60000).catch((e) => console.error(`reload: ${e.message}`));
+    await r2.close();
   },
   async persist() {
     const r = new Rec("persist", ["--tools", ""], { persist: true });

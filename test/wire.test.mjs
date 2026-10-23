@@ -1090,3 +1090,23 @@ test("an Edit with some of its changes rejected is allowed with an input that ma
   assert.equal(chat.state.pending.length, 0);
   chat.dispose();
 });
+
+test("after a reload, a chat cut off mid-turn starts its process with the CLI's own rerun and sends nothing; the rerun is labelled (decision 63)", async () => {
+  const { chat, events, spawns, inputs } = makeChat("reload", { existing: true, hooks: () => ({ beforeFileTool: async () => {} }) });
+  chat.continueInterrupted();
+  await turns(chat, 1);
+  const s = spawns()[0];
+  assert.equal(s.argv.find((a) => a.startsWith("--resume")), `--resume=${chat.sessionId}`);
+  assert.equal(s.env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN, "1");
+  assert.equal(s.env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN_MAX_AGE_MS, "3600000");
+  assert.deepEqual(inputs().map((o) => o.type), ["control_request"], "the initialize only: no message");
+  const shown = top(chat.state);
+  assert.deepEqual(shown.map((e) => e.kind), ["note", "tool", "text"]);
+  assert.equal(shown[0].text, core.RERUN_NOTE, "the label before the rerun's step");
+  assert.equal(shown[1].result, "slept");
+  assert.equal(events.filter((e) => e.type === "_note").length, 1, "labelled once");
+  chat.dispose();
+  // An ordinary resume never reruns, whatever the host's own environment says.
+  const env = core.chatEnv({ PATH: "/bin", CLAUDE_CODE_RESUME_INTERRUPTED_TURN: "1", claude_code_resume_prompt: "x" });
+  assert.deepEqual(env, { PATH: "/bin" });
+});

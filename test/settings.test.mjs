@@ -77,7 +77,7 @@ before(async () => {
   });
   mock.state.folders = [folder];
   ext = require("../dist/extension.js");
-  context = { subscriptions: [], extensionUri: mock.vscode.Uri.file(root) };
+  context = { subscriptions: [], extensionUri: mock.vscode.Uri.file(root), workspaceState: new mock.Memento() };
   ext.activate(context);
   chat = new mock.FakeView();
   mock.state.providers.get("embarchChat.chat").provider.resolveWebviewView(chat);
@@ -97,7 +97,7 @@ after(async () => {
 test("every path or URL setting is machine-scoped: user or remote settings only", () => {
   const props = Object.assign({}, ...pkg.contributes.configuration.map((s) => s.properties));
   const machine = Object.keys(props).filter((k) => props[k].scope === "machine");
-  for (const k of ["embarchChat.claudePath", "embarchChat.deskUrl", "embarchChat.deskTokenPath", "embarchChat.assistant", "embarchChat.idleMinutes", "embarchChat.autosave", "embarchChat.diagnosticsTool", "embarchUi.binaryPath", "embarchUi.host", "embarchUi.port", "embarchUi.configPath", "embarchUi.autoStart"]) {
+  for (const k of ["embarchChat.claudePath", "embarchChat.deskUrl", "embarchChat.deskTokenPath", "embarchChat.assistant", "embarchChat.idleMinutes", "embarchChat.autosave", "embarchChat.diagnosticsTool", "embarchChat.continueAfterReload", "embarchUi.binaryPath", "embarchUi.host", "embarchUi.port", "embarchUi.configPath", "embarchUi.autoStart"]) {
     assert.ok(machine.includes(k), `${k} is machine-scoped`);
   }
   for (const [k, v] of Object.entries(props)) {

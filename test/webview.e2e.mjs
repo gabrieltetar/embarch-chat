@@ -274,6 +274,14 @@ await check("an Edit's card follows the changes kept in its diff tab, and Allow 
   await shot("card-kept-changes");
 });
 
+await check("a step rerun after a reload shows under its label (decision 63)", async () => {
+  await send([snapshot(), { t: "event", e: { type: "_note", text: core.RERUN_NOTE, tone: "info" } }, ...events(outLines("reload"))]);
+  const notes = await text(".note");
+  assert.ok(notes.some((t) => t.includes("Continuing the step that was interrupted when the window reloaded.")), JSON.stringify(notes));
+  assert.deepEqual(await text(".tool .name"), ["Bash"]);
+  await shot("chat-reload-rerun");
+});
+
 await check("a permission prompt: Allow, Always allow, Deny with a message", async () => {
   const lines = outLines("deny");
   await send([snapshot(), sent("touch"), ...events(upTo(lines, (o) => o.type === "control_request"))]);
