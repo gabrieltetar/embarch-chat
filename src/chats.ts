@@ -9,7 +9,7 @@ import { EventEmitter } from "events";
 import * as fs from "fs";
 import { Chat } from "./wire/chat";
 import { chatStatus } from "./wire/reducer";
-import { findTranscript, isSessionId, readLines, readTranscript, transcriptEvents } from "./wire/transcript";
+import { FileMark, findTranscript, isSessionId, markFile, readLines, readTranscript, remark, sameFile, transcriptEvents } from "./wire/transcript";
 import type { WireMessage } from "./wire/types";
 import type { OwnChat } from "./desk/threads";
 import type { AssignBody } from "./desk/client";
@@ -39,8 +39,8 @@ export interface ChatRecord {
   draft?: string | null;
   createdMs: number;
   lastMs: number;
-  /** A viewer's transcript: read up to `end`; `named` when it holds a custom title. */
-  transcript?: { file: string; mtimeMs: number; size: number; end: number; named: boolean };
+  /** A viewer's transcript: read up to `end`; `named` when it holds a custom title; `mark` says it is still that file. */
+  transcript?: { file: string; mtimeMs: number; size: number; end: number; named: boolean; mark: FileMark | null };
 }
 
 export interface ChatSettings {
@@ -138,7 +138,7 @@ export class ChatManager extends EventEmitter {
 
   private loadTranscript(rec: ChatRecord, file: string): void {
     const { events, meta, end, mtimeMs } = readTranscript(file);
-    rec.transcript = { file, mtimeMs, size: meta.size, end, named: meta.named };
+    rec.transcript = { file, mtimeMs, size: meta.size, end, named: meta.named, mark: markFile(file, end) };
     if (meta.cwd && !rec.chat.opts.cwd) (rec.chat.opts as { cwd: string }).cwd = meta.cwd;
     rec.chat.state = { ...rec.chat.state, timeline: [], entries: {}, seen: {}, finalized: {}, unconfirmed: [], cwd: meta.cwd ?? rec.chat.state.cwd };
     rec.chat.preload(events);
@@ -158,10 +158,12 @@ export class ChatManager extends EventEmitter {
       const st = fs.statSync(file);
       const t = rec.transcript;
       if (t && st.mtimeMs === t.mtimeMs && st.size === t.size) return;
-      if (t && t.file === file && st.size >= t.end) {
+      // Read on from the offset only while it is the same file: rewritten
+      // (to any size) or replaced, it is read again from the start.
+      if (t && t.file === file && st.size >= t.end && sameFile(file, t.mark)) {
         const r = readLines(file, t.end);
         const { events, meta } = transcriptEvents(r.text, t.named);
-        rec.transcript = { file, mtimeMs: r.mtimeMs, size: r.size, end: r.end, named: meta.named };
+        rec.transcript = { file, mtimeMs: r.mtimeMs, size: r.size, end: r.end, named: meta.named, mark: remark(file, t.mark, r.end) };
         if (events.length) rec.chat.follow(events);
         return;
       }

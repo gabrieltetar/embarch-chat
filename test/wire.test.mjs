@@ -399,6 +399,55 @@ test("a message the CLI never took before it died goes back to the draft", async
   chat.dispose();
 });
 
+test("a transcript rewritten in place, larger or the same size, is read again from the start", () => {
+  const root = tmp("rewrite-");
+  const prev = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = root;
+  try {
+    const sid = "55555555-3333-4444-8555-666666666666";
+    const pdir = path.join(root, "projects", "-w");
+    fs.mkdirSync(pdir, { recursive: true });
+    const file = path.join(pdir, `${sid}.jsonl`);
+    const line = (o) => JSON.stringify(o) + "\n";
+    const user = (t) => line({ type: "user", cwd: "/w", message: { role: "user", content: t } });
+    const reply = (id, t) => line({ type: "assistant", message: { id, content: [{ type: "text", text: t }] } });
+    const texts = (rec) => rec.chat.state.timeline.map((id) => rec.chat.state.entries[id].text);
+    let mtime = Date.now() / 1000 - 100;
+    const write = (text) => {
+      fs.writeFileSync(file, text); // in place: the same inode
+      fs.utimesSync(file, mtime, (mtime += 10));
+    };
+    write(user("alpha first") + reply("a1", "alpha reply"));
+    const m = new core.ChatManager(() => ({ claudePath: FAKE, idleMs: 60000, log: () => {} }));
+    const idx = new core.TranscriptIndex(path.join(root, "projects"));
+    const rec = m.openViewer(sid, "/w", null, null, false);
+    assert.equal(idx.list(["/w"], 0)[0].firstPrompt, "alpha first");
+    // Rewritten larger: another first exchange, more after it.
+    write(user("bravo first") + reply("b1", "bravo reply") + user("bravo second"));
+    m.reloadViewer(sid);
+    assert.deepEqual(texts(rec), ["bravo first", "bravo reply", "bravo second"]);
+    assert.equal(idx.list(["/w"], 0)[0].firstPrompt, "bravo first");
+    // Rewritten to the very same size.
+    const size = fs.statSync(file).size;
+    write(user("delta first") + reply("b1", "delta reply") + user("delta second"));
+    assert.equal(fs.statSync(file).size, size);
+    m.reloadViewer(sid);
+    assert.deepEqual(texts(rec), ["delta first", "delta reply", "delta second"]);
+    assert.equal(idx.list(["/w"], 0)[0].firstPrompt, "delta first");
+    // An append still reads only what was added.
+    const got = [];
+    m.on("event", (_sid, e) => got.push(e.type));
+    m.on("snapshot", () => got.push("snapshot"));
+    fs.appendFileSync(file, reply("d2", "delta more"));
+    m.reloadViewer(sid);
+    assert.deepEqual(got, ["assistant"]);
+    m.dispose();
+  } finally {
+    if (prev === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+    else process.env.CLAUDE_CONFIG_DIR = prev;
+  }
+});
+
 test("a background subagent's permission prompt outlives the main turn's end", () => {
   let s = core.initialState("x");
   const fold = (es) => es.forEach((e) => (s = core.reduce(s, e)));

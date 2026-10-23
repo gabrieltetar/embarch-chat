@@ -3,6 +3,7 @@
 // Claude's own `ai-title` until the assistant names chats, and a thread
 // another window runs opens read-only from here (decision 31).
 
+import * as crypto from "crypto";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -136,6 +137,57 @@ export function readLines(file: string, from = 0): { text: string; end: number; 
   }
 }
 
+const HEAD = 4096;
+
+/**
+ * What says a transcript is still the file that was read: its inode, and a
+ * hash of its first bytes (up to 4 KB of what was read). An append changes
+ * neither; a rewrite — to the same size or a larger one — changes one, and
+ * the file is then read again from the start rather than from an offset
+ * into text that is no longer there.
+ */
+export interface FileMark {
+  dev: number;
+  ino: number;
+  len: number;
+  hash: string;
+}
+
+/** The mark of a file's first `upTo` bytes (at most 4 KB); null when it cannot be read. */
+export function markFile(file: string, upTo: number): FileMark | null {
+  try {
+    const fd = fs.openSync(file, "r");
+    try {
+      const st = fs.fstatSync(fd);
+      const len = Math.max(0, Math.min(HEAD, upTo, st.size));
+      const buf = Buffer.alloc(len);
+      let got = 0;
+      while (got < len) {
+        const n = fs.readSync(fd, buf, got, len - got, got);
+        if (!n) break;
+        got += n;
+      }
+      return { dev: st.dev, ino: st.ino, len: got, hash: crypto.createHash("sha1").update(buf.subarray(0, got)).digest("hex") };
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return null;
+  }
+}
+
+/** Whether `file` is still the one `mark` was taken of: only then may a read go on from an offset. */
+export function sameFile(file: string, mark: FileMark | null | undefined): boolean {
+  if (!mark) return false;
+  const now = markFile(file, mark.len);
+  return !!now && now.dev === mark.dev && now.ino === mark.ino && now.len === mark.len && now.hash === mark.hash;
+}
+
+/** The mark after reading on to `end`: taken again while it covers less than 4 KB, so it grows to its full length. */
+export function remark(file: string, mark: FileMark | null, end: number): FileMark | null {
+  return mark && (mark.len >= HEAD || end <= mark.len) ? mark : markFile(file, end);
+}
+
 export function readTranscript(file: string): { events: WireMessage[]; meta: TranscriptMeta & { named: boolean }; end: number; mtimeMs: number } {
   const r = readLines(file);
   const { events, meta } = transcriptEvents(r.text);
@@ -153,7 +205,7 @@ export function readTranscript(file: string): { events: WireMessage[]; meta: Tra
  * the largest run to tens of MB.
  */
 export class TranscriptIndex {
-  private cache = new Map<string, { mtimeMs: number; size: number; end: number; named: boolean; meta: TranscriptMeta }>();
+  private cache = new Map<string, { mtimeMs: number; size: number; end: number; named: boolean; meta: TranscriptMeta; mark: FileMark | null }>();
 
   constructor(private root = projectsRoot()) {}
 
@@ -184,8 +236,8 @@ export class TranscriptIndex {
           continue;
         }
         try {
-          if (hit && st.size > hit.size) {
-            // Grown: only what was added.
+          if (hit && st.size > hit.size && sameFile(file, hit.mark)) {
+            // Grown, and still the same file: only what was added.
             const r = readLines(file, hit.end);
             const { meta: add } = transcriptEvents(r.text, hit.named);
             const meta: TranscriptMeta = {
@@ -196,13 +248,13 @@ export class TranscriptIndex {
               lastMs: st.mtimeMs,
               size: r.size,
             };
-            this.cache.set(file, { mtimeMs: st.mtimeMs, size: st.size, end: r.end, named: add.named, meta });
+            this.cache.set(file, { mtimeMs: st.mtimeMs, size: st.size, end: r.end, named: add.named, meta, mark: remark(file, hit.mark, r.end) });
             out.push(meta);
             continue;
           }
           const { meta, end } = readTranscript(file);
           const m: TranscriptMeta = { sessionId: meta.sessionId, file, cwd: meta.cwd, title: meta.title, firstPrompt: meta.firstPrompt, lastMs: st.mtimeMs, size: meta.size };
-          this.cache.set(file, { mtimeMs: st.mtimeMs, size: st.size, end, named: meta.named, meta: m });
+          this.cache.set(file, { mtimeMs: st.mtimeMs, size: st.size, end, named: meta.named, meta: m, mark: markFile(file, end) });
           out.push(m);
         } catch {
           /* unreadable; skip */
