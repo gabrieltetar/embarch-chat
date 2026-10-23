@@ -608,7 +608,7 @@ export function Composer(p: Props) {
         </span>
         <span class="spacer" />
         {busy && (
-          <button title="Stop (Esc)" onClick={() => post({ t: "interrupt" })}>
+          <button title="Stop this turn (Esc); background tasks go on" onClick={() => post({ t: "interrupt" })}>
             Stop
           </button>
         )}

@@ -275,6 +275,27 @@ const scenarios = {
     await r.until(isResp("out-2"));
     await r.close();
   },
+  // Stop on a turn while a background task runs (item 71): what the
+  // interrupt leaves running, then the task's own Stop.
+  async bgstop() {
+    const r = new Rec("bgstop", ["--tools", "Bash"]);
+    r.user("Run the bash command `for i in $(seq 1 30); do echo tick $i; sleep 2; done` with run_in_background set to true. Reply with just: started", uuidOf(1));
+    const t = await r.until(taskStarted("local_bash"), undefined, 30000);
+    await r.result();
+    r.user("Write a 400-word story about a lighthouse keeper.", uuidOf(2));
+    await r.until(firstText);
+    r.control("int-1", { subtype: "interrupt" });
+    await r.until(isResp("int-1"));
+    await r.result();
+    await pause(1500);
+    r.control("out-1", { subtype: "get_task_output", task_id: t.task_id });
+    await r.until(isResp("out-1"));
+    r.control("stop-1", { subtype: "stop_task", task_id: t.task_id });
+    await r.until(isResp("stop-1"));
+    await r.until(taskEnded, undefined, 15000).catch(() => null);
+    await r.until(isResult, undefined, 20000).catch(() => null);
+    await r.close();
+  },
   // A subagent moved to the background (item 70), then stopped (item 71's "Stop agent").
   async agentbg() {
     const r = new Rec("agentbg", ["--tools", "Agent,Task,Bash"]);
@@ -284,6 +305,21 @@ const scenarios = {
     r.control("bg-1", { subtype: "background_tasks", tool_use_id: t.tool_use_id });
     await r.until(isResp("bg-1"));
     await r.result();
+    r.control("stop-1", { subtype: "stop_task", task_id: t.task_id });
+    await r.until(isResp("stop-1"));
+    await r.until(taskEnded, undefined, 15000).catch(() => null);
+    await r.until(isResult, undefined, 20000).catch(() => null);
+    await r.close();
+  },
+  // A Monitor's output (item 71): get_task_output reads Monitors as it reads shells.
+  async monitor() {
+    const r = new Rec("monitor", ["--tools", "Bash,Monitor"]);
+    r.user("Use the Monitor tool to watch the output of the command `for i in $(seq 1 30); do echo tick $i; sleep 2; done`. Reply with just: watching", uuidOf(1));
+    const t = await r.until((o) => o.type === "system" && o.subtype === "task_started", undefined, 30000);
+    await r.result();
+    await pause(3000);
+    r.control("out-1", { subtype: "get_task_output", task_id: t.task_id });
+    await r.until(isResp("out-1"));
     r.control("stop-1", { subtype: "stop_task", task_id: t.task_id });
     await r.until(isResp("stop-1"));
     await r.until(taskEnded, undefined, 15000).catch(() => null);

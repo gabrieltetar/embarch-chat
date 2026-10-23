@@ -1264,19 +1264,21 @@ await check("the prompt cache clock between turns: warm with the minutes left, k
   assert.deepEqual(await text(".status-line .cache.compacted"), ["Prompt cache does not cover the compacted conversation"]);
 });
 
-// ------------------------------------------------------------ work that runs on its own (port item 70)
+// ------------------------------------------------------------ work that runs on its own (port items 70, 71)
 
 const isTaskStarted = (o) => o.type === "system" && o.subtype === "task_started";
 const isResultLine = (o) => o.type === "result";
 /** A recording's lines without its permission prompts: they were allowed, and cards are not what these checks look at. */
 const allowed = (name) => outLines(name).filter((o) => o.type !== "control_request");
+/** The host's answer to the page's read of a task's output. */
+const taskOut = (taskId, output) => ({ t: "taskOutput", taskId, output, totalBytes: output.length, truncated: false });
 const postsOf = async (t) => (await posts()).filter((p) => p.t === t);
 
-await check("a running Bash call offers Run in background under its row; a click asks for it; the row then says where it runs and how it ended (port item 70)", async () => {
+await check("a running Bash call offers Run in background under its row; a click asks for it and opens the background tasks; the row then says where it runs and how it ended (port items 70, 71)", async () => {
   await fresh({}, false);
   const lines = allowed("runbg");
   const at = lines.findIndex(isTaskStarted);
-  const { tool_use_id: call } = lines[at];
+  const { tool_use_id: call, task_id: task } = lines[at];
   await send([sent("count the ticks"), ...events(lines.slice(0, at + 1))]);
   assert.deepEqual(await text(".timeline .tool:not(.run) > .bg-line button"), ["Run in background"]);
   await shot("bg-run-in-background");
@@ -1289,8 +1291,21 @@ await check("a running Bash call offers Run in background under its row; a click
   await send(events(lines.slice(at + 1, end + 1)));
   assert.equal((await text(".bg-line")).length, 0, "nothing more to move");
   assert.deepEqual(await text(".timeline .tool > .line .st.bg"), ["in the background"]);
-  // Stopped (the recording stopped it): the row says how it ended.
+  assert.deepEqual(await text(".status-line .bg-toggle"), ["▾ 1 background task"], "opened by the owner's own click");
+  assert.deepEqual(await text(".bg-task .kind"), ["shell"]);
+  assert.ok((await postsOf("taskOutput")).some((p) => p.taskId === task), "its output is asked for");
+  await send([taskOut(task, "tick 1\ntick 2\n\x1b[32mtick 3\x1b[0m\n")]);
+  assert.deepEqual(await text(".bg-task pre.out"), ["tick 1\ntick 2\ntick 3\n"], "plain text, escapes out");
+  await shot("bg-tasks-open");
+  await clearPosts();
+  await sleep(1300);
+  assert.ok((await postsOf("taskOutput")).some((p) => p.taskId === task), "read again a second later while it runs, as Claude Code's panel polls");
+  await click(".bg-task button", "Stop");
+  assert.deepEqual((await postsOf("stopTask")).map((p) => p.taskId), [task]);
+  // Stopped: the CLI's list empties; the row says how it ended.
   await send(events(lines.slice(end + 1)));
+  assert.equal((await text(".bg-task")).length, 0);
+  assert.equal((await text(".bg-toggle")).length, 0);
   assert.deepEqual(await text(".timeline .tool > .line .st.stopped"), ["stopped"]);
 });
 
@@ -1314,6 +1329,64 @@ await check("a folded run whose latest step runs in the foreground offers Run in
   for (const m of lines) st = core.reduce(st, m.e);
   await send([snapshot(st, { ...OURS, ours: false, readOnly: true, where: "a terminal" })]);
   assert.equal((await text(".bg-line")).length, 0);
+});
+
+await check("background tasks open from the status line: a subagent shows its progress and a Stop, no output to read; Stop on the turn says background tasks go on (port item 71)", async () => {
+  await fresh({}, false);
+  const lines = allowed("agentbg");
+  const end = lines.findIndex(isResultLine);
+  await send([sent("ask a subagent"), ...events(lines.slice(0, end + 1))]);
+  assert.deepEqual(await text(".status-line .bg-toggle"), ["▸ 2 background tasks"]);
+  assert.equal((await text(".bg-tasks")).length, 0, "closed until asked");
+  await click(".bg-toggle");
+  assert.deepEqual(await text(".bg-task .kind"), ["agent", "shell"]);
+  assert.match((await text(".bg-task .progress"))[0], /\S/, "the subagent's latest progress");
+  assert.equal(await exec("return !!document.querySelectorAll('.bg-task')[0].querySelector('pre, .task-out')"), false, "a subagent has no output to read");
+  assert.ok(!(await text(".timeline")).join("").includes("Async agent launched"), "the launch placeholder is not shown as its result");
+  await shot("bg-tasks-agent");
+  const agentTask = lines.find((o) => isTaskStarted(o) && o.task_type === "local_agent").task_id;
+  await clearPosts();
+  await click(".bg-task button", "Stop");
+  assert.deepEqual((await postsOf("stopTask")).map((p) => p.taskId), [agentTask]);
+  await click(".bg-toggle");
+  assert.equal((await text(".bg-tasks")).length, 0, "closes again");
+  await send([sent("and now this")]);
+  assert.match(await exec("return document.querySelector('.composer .bar button[title^=\"Stop\"]').title"), /background tasks go on/);
+});
+
+await check("the status area with everything at once: the usage banner, the background tasks open, the status line's switch and the prompt cache clock, in that order; Not responding with a task in the background (67, 68, 69, port item 71)", async () => {
+  await fresh({}, false);
+  const lines = allowed("bgstop");
+  const first = lines.findIndex(isResultLine);
+  // Between turns: a shell runs in the background, the cache warm, the weekly limit at 86 %.
+  await send([
+    sent("count the ticks"),
+    ...events(lines.slice(0, first + 1).map((o) => (o.type === "assistant" ? { ...o, timestamp: ago(60_000) } : o))),
+    limit({ status: "allowed_warning", rateLimitType: "seven_day", utilization: 0.86, resetsAt: inH(50) }),
+  ]);
+  await click(".bg-toggle");
+  await settle();
+  const task = lines.find(isTaskStarted).task_id;
+  await send([taskOut(task, "tick 1\ntick 2\ntick 3\n")]);
+  assert.deepEqual(await text(".bg-task pre.out"), ["tick 1\ntick 2\ntick 3\n"]);
+  const order = await exec(
+    "const at = (s) => { const e = document.querySelector(s); return e ? Math.round(e.getBoundingClientRect().top) : null; }; return [at('.limit-banner'), at('.bg-tasks'), at('.status-line'), at('.composer')]",
+  );
+  assert.ok(order.every((x) => x !== null), `all present: ${order}`);
+  assert.deepEqual([...order].sort((a, b) => a - b), order, "banner, tasks, status line, input, top to bottom");
+  assert.deepEqual(await text(".status-line > span"), ["▾ 1 background task", "Prompt cache warm, about 59 min left"]);
+  assert.equal(await exec("const l = document.querySelector('.status-line'); return l.scrollWidth <= l.clientWidth"), true, "one line, nothing cut");
+  await shot("status-all");
+  // A turn gone quiet for a minute: a step moved to the background is not a
+  // step of the turn — Not responding, the switch beside it — and one running
+  // in the foreground is (68).
+  const quietFor = (name, upto) => ({ ...core.reduceAll(core.initialState(SID), allowed(name).slice(0, upto)), cwd: "/work/rec/x", process: "running", busy: true, lastLineAt: Date.now() - 75_000 });
+  await send([snapshot(quietFor("bgstop", first + 1))]);
+  assert.deepEqual(await text(".status-line .stalled"), [" Not responding"], "a task in the background is not a step of the turn");
+  assert.ok((await text(".status-line .bg-toggle"))[0].includes("1 background task"));
+  await shot("status-stalled-bg");
+  await send([snapshot(quietFor("runbg", allowed("runbg").findIndex(isTaskStarted) + 1))]);
+  assert.deepEqual(await text(".status-line .stalled"), [], "a step running in the foreground is");
 });
 
 await check("reply chips after a turn: a click sends it; the handoff's chip asks for a fresh chat", async () => {

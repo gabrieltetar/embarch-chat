@@ -4,7 +4,8 @@
 // folded as they come and rendered once per frame. The timeline is in turns,
 // one per message of the owner's (decision 51), and runs of quiet steps fold
 // into one row (decision 50). Its history — fork, rewind, copy, export — is
-// history.tsx's (decisions 73 and 74).
+// history.tsx's (decisions 73 and 74). Background tasks open from the status
+// line (port item 71).
 
 import "../shared/style.css";
 import { render } from "preact";
@@ -21,6 +22,7 @@ import { Composer, returnToDraft } from "./composer";
 import { RunView, ToolCtx, ToolView, quiet, toolRenderers } from "./tools";
 import { foldRuns, liveTool } from "./runs";
 import { benchRenderer } from "./bench";
+import { BackgroundPanel, BackgroundToggle } from "./background";
 import { setAtlas } from "./atlas";
 import { LimitBannerView } from "./limits";
 import { Stamp, useNow } from "./clock";
@@ -131,7 +133,7 @@ function HeaderBar({ h, state, view }: { h: Header | null; state: ChatState; vie
   );
 }
 
-function StatusLine({ state, warning }: { state: ChatState; warning: string | null }) {
+function StatusLine({ state, warning, bg }: { state: ChatState; warning: string | null; bg: preact.ComponentChildren }) {
   const st = chatStatus(state);
   // A minute with no word from the CLI and no tool running: it may be stuck, not flashing (68); the cache clock by the half minute (69).
   const now = useNow(st === "busy" ? 1000 : 30_000, st === "busy" || !!state.cache);
@@ -148,7 +150,7 @@ function StatusLine({ state, warning }: { state: ChatState; warning: string | nu
   if (state.process === "starting") parts.push(<span key="s">Starting claude…</span>);
   if (state.process === "closed" && state.timeline.length) parts.push(<span key="cl">Closed when idle — the next message resumes it.</span>);
   if (state.process === "error") parts.push(<span key="e" class="err">{state.processError ?? "claude failed"}</span>);
-  if (state.background.length) parts.push(<span key="bg">{state.background.length} background task{state.background.length > 1 ? "s" : ""} running</span>);
+  if (state.background.length) parts.push(<span key="bg">{bg}</span>);
   // Between turns, whether a message now reads the conversation from the prompt cache (69).
   const cache = st !== "busy" ? cacheClock(state.cache, now) : null;
   if (cache) parts.push(<span key="pc" class={`cache ${cache.kind}`} title={cache.detail}>{cache.text}</span>);
@@ -173,6 +175,8 @@ function App() {
   const stick = useRef(true);
   // Esc twice at an idle input opens the rewind picker (decision 73).
   useEscEsc(!!model.view && !model.view.readOnly && !!model.state && !model.state.busy && !model.state.compacting);
+  // The chats whose background tasks are open (port item 71).
+  const [bgOpen, setBgOpen] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     const flush = () => {
@@ -235,6 +239,7 @@ function App() {
   const state = model.state;
   const cwd = state?.cwd ?? "";
   const turnRuns = !!state && (state.busy || state.compacting);
+  const sid = state?.sessionId ?? "";
   const acts = !!model.view && !model.view.readOnly;
   const ctx: ToolCtx = useMemo(
     () => ({
@@ -243,9 +248,15 @@ function App() {
       openDiff: (toolId: string) => post({ t: "openDiff", toolId }),
       cwd,
       live: turnRuns,
-      runInBackground: acts ? (toolUseId: string) => post({ t: "runInBackground", toolUseId }) : undefined,
+      // Moved there by the owner: the background tasks open, to show where it went.
+      runInBackground: acts
+        ? (toolUseId: string) => {
+            setBgOpen((o) => ({ ...o, [sid]: true }));
+            post({ t: "runInBackground", toolUseId });
+          }
+        : undefined,
     }),
-    [cwd, turnRuns, acts],
+    [cwd, turnRuns, sid, acts],
   );
 
   if (empty || !state || !model.view) {
@@ -394,7 +405,12 @@ function App() {
         }}
       />
       <LimitBannerView info={state.rateLimit} busy={busy} />
-      <StatusLine state={state} warning={model.warning} />
+      {bgOpen[sid] && <BackgroundPanel state={state} readOnly={view.readOnly} />}
+      <StatusLine
+        state={state}
+        warning={model.warning}
+        bg={<BackgroundToggle n={state.background.length} open={!!bgOpen[sid]} onToggle={() => setBgOpen((o) => ({ ...o, [sid]: !o[sid] }))} />}
+      />
       {view.readOnly ? (
         <div class="readonly">
           <span style="flex:1">{view.where ? `Runs in ${view.where}` : "Not run by this window"} — read-only here.</span>

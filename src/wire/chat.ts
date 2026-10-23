@@ -485,6 +485,23 @@ export class Chat extends EventEmitter {
     }
   }
 
+  /** Stops one background task — a shell, a Monitor, a subagent — and nothing else (port item 71). */
+  async stopTask(taskId: string): Promise<void> {
+    if (!this.running) return;
+    try {
+      await this.proc!.request("stop_task", { task_id: taskId });
+    } catch (e) {
+      this.dispatch({ type: "_note", text: `Task not stopped: ${(e as Error).message}`, tone: "error" });
+    }
+  }
+
+  /** The end of a shell's or a Monitor's output (the last 8 KiB), running or ended; read-only, no turn. */
+  async taskOutput(taskId: string): Promise<{ output: string; totalBytes: number; truncated: boolean }> {
+    if (!this.running) throw new Error("claude is not running");
+    const r = await this.proc!.request("get_task_output", { task_id: taskId }, 5000);
+    return { output: String(r.output ?? ""), totalBytes: Number(r.total_bytes ?? 0), truncated: Boolean(r.truncated) };
+  }
+
   async setMode(mode: string): Promise<void> {
     if (this.running) {
       try {

@@ -4,8 +4,8 @@
 // diff editor on a click (decision 8); a subagent's own steps nest under its
 // call. Two or more quiet steps in a row fold into one run row (decision 50,
 // runs.ts). `toolRenderers` is the seam for bench result cards (decision 15).
-// A step running in the foreground offers "Run in background" (port item 70;
-// background.tsx).
+// A step running in the foreground offers "Run in background"; one that runs
+// there shows its output as it goes (port items 70, 71; background.tsx).
 
 import { memo } from "preact/compat";
 import { useState } from "preact/hooks";
@@ -16,7 +16,7 @@ import { movable } from "../../src/wire/tasks";
 import { failedText, foldRuns, quietTool, runHead, runTally, toolIntent } from "./runs";
 import { Elapsed } from "./clock";
 import { vscodeApi } from "../shared/vscode";
-import { RunInBackground, backgroundStatus } from "./background";
+import { RunInBackground, TaskOutput, backgroundStatus } from "./background";
 
 export interface ToolCtx extends MdCtx {
   openDiff(toolId: string): void;
@@ -211,6 +211,8 @@ function ToolViewInner({ t, entries, ctx, render }: ToolProps) {
   const [open, setOpen] = useState<boolean>(editLike || sub || t.name === "TodoWrite" || !!custom);
   const d = editLike ? diffLines(t) : null;
   const bg = backgroundStatus(t);
+  // A step that went to the background: its tool result only says so; its output is the task's.
+  const output = bg && t.name !== "Agent" && t.name !== "Task";
   return (
     <div class={`tool ${t.status}`}>
       <div class="line" onClick={() => setOpen(!open)}>
@@ -244,7 +246,7 @@ function ToolViewInner({ t, entries, ctx, render }: ToolProps) {
           ) : (
             <>
               {t.name === "Bash" ? <pre class="out">$ {String(t.input.command ?? "")}</pre> : <pre class="out">{JSON.stringify(t.input, null, 2)}</pre>}
-              {t.result !== undefined && <Result text={t.result} />}
+              {output && ctx.runInBackground ? <TaskOutput taskId={t.task!} live={!t.taskEnd} /> : t.result !== undefined && <Result text={t.result} />}
               {/* The whole of either in an editor tab: search, minimap, log colours (decision 62). */}
               <div class="open-tab">
                 <button onClick={() => vscodeApi.postMessage({ t: "openContent", toolId: t.id, part: "input" })}>Open input</button>

@@ -178,7 +178,7 @@ a:hover {
 a:focus-visible {
   outline: 1px solid var(--focus);
 }
-/* A button that reads as a link: "Run in background". */
+/* A button that reads as a link: "Run in background", the background tasks' switch. */
 button.link-button {
   color: var(--link);
   background: transparent;
@@ -638,9 +638,9 @@ details.thinking .md {
   font-size: 0.88em;
   color: var(--muted);
 }
-/* Work that runs on its own (port item 70): "Run in background" under a step
-   in the foreground, as Claude Code's panel puts it under its card; a step
-   that runs there says so. */
+/* Work that runs on its own (port items 70, 71): "Run in background" under a
+   step in the foreground, as Claude Code's panel puts it under its card; a
+   step that runs there says so, and shows the task's output as it goes. */
 .bg-line {
   font-size: 0.88em;
   margin: 1px 0 0;
@@ -650,6 +650,12 @@ details.thinking .md {
 }
 .st.stopped {
   color: var(--muted);
+}
+.task-out {
+  font-size: 0.92em;
+}
+.task-out pre.out {
+  max-height: 160px;
 }
 
 .diff {
@@ -1118,6 +1124,57 @@ details.thinking .md {
   flex-wrap: wrap;
   gap: 0 8px;
   align-items: center;
+}
+/* The background tasks, opened from the status line (port item 71): each a
+   row with what it is, what it does, a Stop, and its output's tail. They
+   scroll rather than push the input down, as the cards do (55). */
+.bg-tasks {
+  padding: 0 var(--gap) 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.bg-task {
+  border-left: 2px solid var(--busy);
+  padding-left: 6px;
+  flex-shrink: 0;
+}
+.bg-task > .line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.bg-task .kind {
+  font-size: 0.85em;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.bg-task .what {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bg-task pre.out {
+  margin: 3px 0 0;
+  max-height: 120px;
+  overflow: auto;
+  font-family: var(--vscode-editor-font-family);
+  font-size: 0.88em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--vscode-textCodeBlock-background);
+  padding: 4px 6px;
+  border-radius: var(--radius);
+}
+.bg-task .progress {
+  font-size: 0.88em;
+  color: var(--muted);
 }
 .spinner {
   display: inline-block;

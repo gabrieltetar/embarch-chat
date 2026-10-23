@@ -62,7 +62,9 @@ export type HostToChat =
   /** What rewinding the files to before message `uuid` would change: the dry run the confirmation shows (decision 73). */
   | { t: "rewindCheck"; uuid: string; result: RewindResult }
   /** The conversation as plain text, for the export dialog (decision 74). */
-  | { t: "export"; text: string; filename: string };
+  | { t: "export"; text: string; filename: string }
+  /** The end of a background shell's or Monitor's output, for the page that asked (port item 71). */
+  | { t: "taskOutput"; taskId: string; output?: string; totalBytes?: number; truncated?: boolean; error?: string };
 
 /** What a rewind restores (decision 73), as Claude Code's panel offers it: the conversation always as a fork. */
 export type Restore = "both" | "conversation" | "code";
@@ -116,7 +118,10 @@ export type ChatToHost =
   /** The owner names the chat (decision 75). */
   | { t: "rename" }
   /** A step in the foreground goes on in the background (port item 70). */
-  | { t: "runInBackground"; toolUseId: string };
+  | { t: "runInBackground"; toolUseId: string }
+  /** One background task stopped, nothing else (port item 71). */
+  | { t: "stopTask"; taskId: string }
+  | { t: "taskOutput"; taskId: string };
 
 export type HostToList = {
   t: "groups";
