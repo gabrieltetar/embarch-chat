@@ -44,6 +44,9 @@ whose decision numbers the code cites.
   in the title bar; Accept — or the card's Allow — sends an input that
   makes only the kept changes (a Write's content, an Edit's `new_string`).
   An Edit with `replace_all` is taken whole.
+- **A compaction is one folded card**, Claude Code's "Compacted chat ·
+  manual · 12k tokens freed", with the summary the conversation goes on
+  from inside: what it kept (the board, the port) is a click away.
 - **An open file's unsaved changes are saved before Claude reads, edits or
   writes it**, as Claude Code's own panel does: a PreToolUse hook declared
   in the CLI's `initialize`, which the CLI calls back over stdio and waits

@@ -81,6 +81,8 @@ export interface NoteEntry {
   tone: "info" | "error" | "compact" | "interrupt";
   /** The owner's message that was not sent, kept with the note to copy. */
   kept?: string;
+  /** A compaction's summary, the line the CLI sends after its boundary (decision 76). */
+  summary?: string;
 }
 export type Entry = UserEntry | TextEntry | ThinkingEntry | ToolEntry | NoteEntry;
 
@@ -364,6 +366,16 @@ function note(s: ChatState, text: string, tone: NoteEntry["tone"], kept?: string
   return put(s, { kind: "note", id: `n:${s.seq}`, text, tone, ...(kept ? { kept } : {}) }, null);
 }
 
+/** The last thing in the timeline, the owner's own messages aside, is a compaction's card. */
+function justCompacted(s: ChatState): boolean {
+  for (let i = s.timeline.length - 1; i >= 0; i--) {
+    const e = s.entries[s.timeline[i]];
+    if (e?.kind === "user") continue;
+    return e?.kind === "note" && e.tone === "compact";
+  }
+  return false;
+}
+
 function resultText(c: unknown): string {
   if (typeof c === "string") return c;
   if (Array.isArray(c)) return c.map((b) => (b && typeof b === "object" && "text" in b ? String((b as { text: unknown }).text) : "")).join("\n");
@@ -443,6 +455,12 @@ function foldUser(s: ChatState, o: WireMessage): ChatState {
     }
     if ((content as ContentBlock[]).every((b) => b.type === "tool_result")) return s;
   }
+  // A compaction's summary, right after its boundary: `isCompactSummary` in a
+  // transcript, a synthetic message of plain text live (Claude Code's rule), 76.
+  if (!parent && (o.isCompactSummary || (o.isSynthetic && typeof content === "string"))) {
+    const last = s.entries[s.timeline[s.timeline.length - 1]];
+    if (last?.kind === "note" && last.tone === "compact" && last.summary === undefined) return patch(s, last.id, "note", () => ({ summary: textOf(content) }));
+  }
   if (o.isSynthetic || o.isMeta || o.isCompactSummary || parent) return s;
   const raw = textOf(content);
   if (raw.startsWith("[Request interrupted by user")) return note(s, "Interrupted", "interrupt");
@@ -454,6 +472,8 @@ function foldUser(s: ChatState, o: WireMessage): ChatState {
       return e?.kind === "user" && e.pending && e.text.startsWith("/");
     });
     if (cmd) s = confirm(s, cmd);
+    // /compact's own "Compacted" says again what its card says (76).
+    if (stdout[1].trim() === "Compacted" && justCompacted(s)) return s;
     return stdout[1].trim() ? note(s, stdout[1].trim(), "info") : s;
   }
   if (/^<local-command-stderr>/.test(raw.trim())) return note(s, raw.replace(/<\/?local-command-stderr>/g, "").trim(), "error");
@@ -501,11 +521,13 @@ function foldSystem(s: ChatState, o: WireMessage): ChatState {
       return n;
     }
     case "compact_boundary": {
-      const m = o.compact_metadata as { pre_tokens?: number; trigger?: string } | undefined;
-      const pre = m?.pre_tokens ? ` from ${Math.round(m.pre_tokens / 1000)}K tokens` : "";
+      // Live `compact_metadata`, in a transcript `compactMetadata`.
+      const m = (o.compact_metadata ?? o.compactMetadata) as { pre_tokens?: number; preTokens?: number; trigger?: string } | undefined;
+      const pre = m?.pre_tokens ?? m?.preTokens ?? 0;
       // The cache held the conversation before it; the next message writes a new one (69).
       const cache = s.cache ? { ...s.cache, compactedAt: stamp(o) ?? s.cache.at } : null;
-      return note({ ...s, compacting: false, cache }, `Compacted${pre}${m?.trigger === "auto" ? " (auto)" : ""}`, "compact");
+      // Claude Code's card line, its "freed" being the size before (76); the summary comes next.
+      return note({ ...s, compacting: false, cache }, `Compacted chat · ${m?.trigger === "manual" ? "manual" : "auto"} · ${Math.round(pre / 1000)}k tokens freed`, "compact");
     }
     case "session_title_changed":
       return typeof o.title === "string" ? { ...s, title: o.title } : s;

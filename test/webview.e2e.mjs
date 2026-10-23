@@ -320,6 +320,19 @@ await check("a plan: shown, approved", async () => {
   assert.ok((await posts()).some((p) => p.t === "allow"));
 });
 
+await check("a compaction is one folded card, Claude Code's line; it opens to the summary (decision 76)", async () => {
+  const lines = outLines("compact");
+  await send([snapshot(), sent("@note.txt what is the secret? One word."), ...events(upTo(lines, (o) => o.type === "result"))]);
+  await send([{ t: "event", e: { type: "_sent", n: 2, text: "/compact focus on: the secret word in note.txt" } }, ...events(lines.slice(lines.findIndex((o) => o.type === "result") + 1))]);
+  assert.deepEqual(await text("details.compacted > summary"), ["Compacted chat · manual · 1k tokens freed"]);
+  assert.equal(await exec("return document.querySelector('details.compacted').open"), false, "folded");
+  assert.ok(!(await text(".note")).includes("Compacted"), "no second line");
+  await click("details.compacted > summary");
+  const inside = (await text("details.compacted .compact-summary"))[0];
+  assert.ok(inside.includes("continued from a previous conversation") && inside.includes("MANGO"), inside);
+  await shot("chat-compacted");
+});
+
 await check("Edit and Write show diffs that open VS Code's diff editor", async () => {
   await send([snapshot(), sent("e"), ...events(outLines("edit"))]);
   const names = await text(".tool .name");
@@ -918,7 +931,7 @@ await check("the compact card adds /compact focus on: …; Enter sends the draft
   const firstResult = lines.findIndex((o) => o.type === "result");
   const rest = JSON.parse(JSON.stringify(lines.slice(firstResult + 1)).split("What was the secret word? One word.").join(split.rest.replace(/"/g, '\\"')));
   await send(events(rest));
-  assert.ok((await text(".note.compact")).length === 1, "compacted");
+  assert.ok((await text("details.compacted")).length === 1, "compacted");
   assert.equal((await text(".user.pending")).length, 0, "both echoed back");
   assert.equal(sid.length, 36);
 });

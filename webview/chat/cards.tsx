@@ -2,14 +2,15 @@
 // deny; Claude's question as a form with options and previews; a plan with
 // approve and keep planning. On the wire all three are `can_use_tool`; the
 // CLI's own dialogs and MCP elicitations are dialogs.tsx's (decision 66).
+// And the compaction's card, which stays in the timeline (76).
 //
 // A card never takes focus, and nothing typed in the input answers one. One
 // that comes while the owner types waits as a quiet line until the draft is
 // sent or cleared, the input is left, or the typing pauses (decision 55).
 
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { Pending } from "../../src/wire/reducer";
-import { Markdown } from "../shared/markdown";
+import type { NoteEntry, Pending } from "../../src/wire/reducer";
+import { Markdown, MdCtx } from "../shared/markdown";
 import { vscodeApi } from "../shared/vscode";
 import { ownerTyping } from "./composer";
 import { DialogCard, dialogLine } from "./dialogs";
@@ -219,5 +220,20 @@ export function PendingCards({ pending, ctx, readOnly, recall = () => {} }: { pe
         ),
       )}
     </div>
+  );
+}
+
+/**
+ * A compaction (decision 76), as Claude Code's card has it: one folded line —
+ * "Compacted chat · manual · 12k tokens freed" — and inside it the summary
+ * the conversation goes on from, so the owner can check what it kept (the
+ * board, the port, a pin) before the next step.
+ */
+export function CompactCard({ e, ctx }: { e: NoteEntry; ctx: MdCtx }) {
+  return (
+    <details class="compacted">
+      <summary>{e.text}</summary>
+      <div class="compact-summary">{e.summary ? <Markdown text={e.summary} ctx={ctx} /> : <p class="muted">Conversation was compacted to free up context.</p>}</div>
+    </details>
   );
 }

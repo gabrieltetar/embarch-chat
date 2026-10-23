@@ -518,6 +518,22 @@ button.link-button:focus-visible {
 .note.compact::after {
   content: " — ";
 }
+/* A compaction (76): one muted line, folded, its summary inside. */
+details.compacted > summary {
+  align-self: center;
+  text-align: center;
+  font-size: 0.88em;
+  color: var(--muted);
+  cursor: pointer;
+}
+details.compacted .compact-summary {
+  margin-top: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  max-height: 400px;
+  overflow: auto;
+}
 
 details.thinking > summary {
   color: var(--muted);

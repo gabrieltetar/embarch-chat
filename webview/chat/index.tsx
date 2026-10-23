@@ -18,7 +18,7 @@ import type { ChatView, Header, HostToChat, MentionItem } from "../shared/protoc
 import type { Chip, PastPrompt } from "../../src/assistant/edits";
 import type { LibraryEntry } from "../../src/library/entries";
 import { duration, vscodeApi } from "../shared/vscode";
-import { PendingCards } from "./cards";
+import { CompactCard, PendingCards } from "./cards";
 import { Composer, EditorChip, returnToDraft } from "./composer";
 import { RunView, ToolCtx, ToolView, quiet, toolRenderers } from "./tools";
 import { foldRuns, liveTool } from "./runs";
@@ -321,6 +321,7 @@ function App() {
       case "tool":
         return <ToolView t={e} entries={entries} ctx={ctx} render={renderEntry} />;
       case "note":
+        if (e.tone === "compact") return <CompactCard e={e} ctx={ctx} />;
         return (
           <div class={`note ${e.tone}`}>
             {e.text}

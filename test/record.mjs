@@ -423,6 +423,16 @@ const scenarios = {
     await r.result();
     await r.close();
   },
+  // The compaction card's summary (decision 76), in a persisted session:
+  // its transcript records the boundary and summary as a resume reads them.
+  async compactsum() {
+    const r = new Rec("compactsum", ["--tools", ""], { persist: true });
+    r.user("@note.txt what is the secret? One word.");
+    await r.result();
+    r.user("/compact keep the secret word");
+    await r.result();
+    await r.close();
+  },
   // Local slash commands: the CLI answers each with a text and a result and
   // echoes nothing back, unlike a prompt (or /compact's stdout).
   async slash() {

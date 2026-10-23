@@ -322,7 +322,7 @@ test("versions outside the tested range warn in one line", async () => {
 
 test("a transcript folds into the same state, titled by Claude's ai-title", () => {
   const dir = path.join(here, "fixtures", "transcripts");
-  const file = path.join(dir, fs.readdirSync(dir)[0]);
+  const file = path.join(dir, "9508f515-9746-4b6f-b73a-b9780a28f8a4.jsonl");
   const { events, meta } = core.readTranscript(file);
   assert.equal(meta.title, "PELICAN");
   let s = core.initialState(meta.sessionId);
