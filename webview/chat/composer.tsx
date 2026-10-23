@@ -18,7 +18,9 @@
 // alone sends; a long paste is remembered so the CLI can mark it; what shows
 // nothing is stripped from a paste, and from the draft before it goes.
 // `/btw <question>` asks aside (57): it goes to the side questions above
-// the input, never into the conversation. The editor's open file or
+// the input, never into the conversation. The 💬 beside the 📚 does the
+// same as a mode: tagged "Side question", every Enter asks aside until Esc
+// or a second click leaves it, the draft kept. The editor's open file or
 // selection shows as a chip under the input and goes with the message
 // (60), unless its × was clicked or it already went with an earlier one.
 // A terminal picked from the @ list is a chip too: its output is read when
@@ -60,7 +62,7 @@ interface Props {
   library: LibraryEntry[];
   /** The Haiku assistant runs (a setting). */
   assistant: boolean;
-  /** This window runs the chat: a side question can be asked (57). */
+  /** This window runs the chat and it has a conversation: a side question can be asked (57). */
   canAsk: boolean;
   /** The editor's open file or selection (60). */
   editor: EditorChip | null;
@@ -151,6 +153,11 @@ export function Composer(p: Props) {
   const [menu, setMenu] = useState<null | "bulb" | "library">(null);
   const [preview, setPreview] = useState<Card | null>(null);
   const [holding, setHolding] = useState(false);
+  /** Side-question mode (57): Enter asks aside. */
+  const [asideMode, setAsideMode] = useState(false);
+  const aside = asideMode && p.canAsk;
+  const asideNow = useRef(aside);
+  asideNow.current = aside;
   const [images, setImages] = useState<Image[]>([]);
   /** Terminals picked from the @ list (58). */
   const [terminals, setTerminals] = useState<string[]>([]);
@@ -327,7 +334,8 @@ export function Composer(p: Props) {
   /** The draft moved: the instant wave now, Haiku's after their pauses (26). */
   const changed = (v: string, end: boolean, prev: Ghost | null) => {
     const s = a.current;
-    const on = props.current.assistant;
+    // A side question is not a draft for the conversation: the assistant leaves it be.
+    const on = props.current.assistant && !asideNow.current;
     clearTimeout(s.ghostTimer);
     clearTimeout(s.cardsTimer);
     const command = /^\/\S*\s*$/.test(v);
@@ -532,7 +540,7 @@ export function Composer(p: Props) {
   /** `/btw <question>` (57): asked beside the chat; the draft clears, images and pastes stay for the next message. */
   const askAside = (q: string) => {
     if (!q) return setNotice("/btw takes a question: /btw which port did it pick?");
-    if (!props.current.canAsk) return setNotice("A side question needs the chat to run here: send it a message first.");
+    if (!props.current.canAsk) return setNotice("A side question needs a conversation this window runs: send it a message first.");
     post({ t: "btw", question: q });
     a.current.undo = [];
     clearText();
@@ -546,7 +554,7 @@ export function Composer(p: Props) {
     // The DOM, not the last render: keys typed and Enter in one frame would
     // otherwise send the text from before them.
     const t = (ta.current?.value ?? text).trim();
-    if (!t && !images.length && !terminals.length) return;
+    if (!t && (aside || (!images.length && !terminals.length))) return;
     // What shows nothing comes out first, and the owner looks again (Claude Code's rule).
     const clean = stripInvisible(t);
     if (clean.removed) {
@@ -557,6 +565,7 @@ export function Composer(p: Props) {
     }
     const btw = /^\/btw(?:\s+([\s\S]*))?$/i.exec(t);
     if (btw) return askAside((btw[1] ?? "").trim());
+    if (aside) return askAside(t);
     const s = a.current;
     if (s.hold !== null || !t) return doSend(t);
     // Just before send, the cards judge the whole prompt (26) — unless they already have.
@@ -660,9 +669,25 @@ export function Composer(p: Props) {
     }
     if (e.key === "Escape") {
       if (menu) setMenu(null);
+      // Leaving the mode never stops Claude: that is the next Esc.
+      else if (aside) setAsideMode(false);
       else if (shown) setGhost(null);
       else if (busy) post({ t: "interrupt" });
     }
+  };
+
+  /** The 💬: into side-question mode and out, the draft kept, the input focused. */
+  const toggleAside = () => {
+    const on = !aside;
+    setAsideMode(on);
+    if (on) {
+      // Haiku's waves are for messages to the conversation.
+      clearTimeout(a.current.ghostTimer);
+      clearTimeout(a.current.cardsTimer);
+      cancelStale();
+      setGhost(null);
+    }
+    ta.current?.focus();
   };
 
   const shown = ghost && atEnd && !pop && !preview ? ghostRest(text, ghost.base, ghost.completion) : null;
@@ -723,6 +748,11 @@ export function Composer(p: Props) {
       )}
       {menu === "bulb" && bulbGroups.length > 0 && <CategoryMenu kind="bulb" groups={bulbGroups} anchor={bulbBtn.current} onPick={applyCard} onHover={setPreview} onClose={() => (setMenu(null), setPreview(null))} />}
       {menu === "library" && libGroups.length > 0 && <CategoryMenu kind="library" groups={libGroups} anchor={libBtn.current} onPick={pickEntry} onClose={() => setMenu(null)} />}
+      {aside && (
+        <div class="aside-tag" title="Enter asks Claude aside: the answer shows above, and neither joins the conversation. Esc or 💬 leaves, the draft kept.">
+          💬 Side question <span class="muted">· answered beside the chat · Esc leaves</span>
+        </div>
+      )}
       <div class="field">
         <div class="overlay" ref={overlay} aria-hidden="true">
           {after !== null ? (
@@ -743,8 +773,8 @@ export function Composer(p: Props) {
           ref={ta}
           rows={1}
           value={text}
-          class={after !== null ? "previewing" : ""}
-          placeholder={placeholder}
+          class={`${after !== null ? "previewing" : ""} ${aside ? "aside" : ""}`}
+          placeholder={aside ? "Ask aside — Claude keeps working" : placeholder}
           onInput={(e) => {
             const el = e.target as HTMLTextAreaElement;
             const v = el.value;
@@ -845,6 +875,15 @@ export function Composer(p: Props) {
           <button ref={libBtn} class="icon library" title="Library" disabled={!library.length} onClick={() => setMenu(menu === "library" ? null : "library")}>
             📚
           </button>
+          <button
+            class={`icon btw ${aside ? "on" : ""}`}
+            title={p.canAsk ? (aside ? "Side question mode: Enter asks aside — click or Esc to leave" : "Side question (/btw) — answered beside the chat, not added to it") : "Side questions need a conversation this window runs: send it a message first"}
+            aria-pressed={aside}
+            disabled={!p.canAsk}
+            onClick={toggleAside}
+          >
+            💬
+          </button>
         </span>
         <span class="spacer" />
         {busy && (
@@ -852,8 +891,13 @@ export function Composer(p: Props) {
             Stop
           </button>
         )}
-        <button class="primary" disabled={!text.trim() && !images.length && !terminals.length} onClick={send} title={p.waiting ? "Queued: Claude takes it after your answer to the card above" : busy ? "Queued: it waits above the input until Claude reads it, at its next step" : "Send (Enter)"}>
-          {busy ? "Queue" : "Send"}
+        <button
+          class="primary"
+          disabled={!text.trim() && (aside || (!images.length && !terminals.length))}
+          onClick={send}
+          title={aside ? "Ask aside (Enter): not added to the conversation" : p.waiting ? "Queued: Claude takes it after your answer to the card above" : busy ? "Queued: it waits above the input until Claude reads it, at its next step" : "Send (Enter)"}
+        >
+          {aside ? "Ask" : busy ? "Queue" : "Send"}
         </button>
       </div>
     </div>

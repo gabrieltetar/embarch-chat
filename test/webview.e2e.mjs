@@ -1824,13 +1824,60 @@ await check("/btw asks aside while Claude works: the answer shows above the inpu
   assert.match((await text(".paste-notice"))[0], /takes a question/);
 });
 
+await check("the 💬 beside the 📚 puts the input in side-question mode while Claude works: Enter asks aside, Esc or a second click leaves, the draft kept (57)", async () => {
+  const ESC = "\uE00C";
+  const lines = outLines("btw");
+  await fresh({}, false);
+  await send([sent("Run the bash command"), ...events(upTo(lines, (o) => o.type === "assistant" && o.message.content.some((b) => b.type === "tool_use")))]);
+  const btn = ".composer .assist-slot button.btw";
+  assert.deepEqual(await exec(`const b=document.querySelector('${btn}'); return [b.textContent, b.disabled, b.title]`), ["💬", false, "Side question (/btw) — answered beside the chat, not added to it"]);
+  const mode = () => exec("return [!!document.querySelector('.composer .aside-tag'), document.querySelector('.composer textarea').classList.contains('aside'), document.querySelector('.composer .bar button.primary').textContent, document.activeElement === document.querySelector('.composer textarea')]");
+  await click(btn);
+  await settle();
+  assert.deepEqual(await mode(), [true, true, "Ask", true], "tagged, Ask, the input focused");
+  await type("which port did it pick?");
+  await shot("btw-button");
+  await type(ENTER);
+  let ps = await posts();
+  assert.deepEqual(ps.filter((p) => p.t === "btw").map((p) => p.question), ["which port did it pick?"]);
+  assert.equal(ps.filter((p) => p.t === "send").length, 0, "nothing to the conversation");
+  assert.equal(await value(), "");
+  assert.equal((await mode())[0], true, "still in the mode for a follow-up");
+  // Esc leaves the mode, draft kept, Claude not stopped; the next Esc stops it as before.
+  await type("half a draft");
+  await clearPosts();
+  await type(ESC);
+  assert.deepEqual((await mode()).slice(0, 3), [false, false, "Queue"]);
+  assert.equal(await value(), "half a draft");
+  assert.ok(!(await posts()).some((p) => p.t === "interrupt"), "leaving the mode is not Stop");
+  await type(ESC);
+  assert.ok((await posts()).some((p) => p.t === "interrupt"));
+  // A second click leaves it too, the draft kept; Enter then queues for the conversation.
+  await click(btn);
+  await click(btn);
+  await settle();
+  assert.equal((await mode())[0], false);
+  assert.equal(await value(), "half a draft");
+  await clearPosts();
+  await type(ENTER);
+  assert.deepEqual((await sends()).map((p) => p.text), ["half a draft"]);
+  assert.ok(!(await posts()).some((p) => p.t === "btw"));
+});
+
+await check("the 💬 is off where /btw cannot run: no conversation yet, a chat this window does not run", async () => {
+  await fresh({ process: "none" }, false);
+  assert.equal(await exec("return document.querySelector('.composer .assist-slot button.btw').disabled"), true, "a new chat before its first message");
+  await send([snapshot({ sessionId: "22222222-0000-4000-8000-0000000000fe", timeline: ["x"], entries: { x: { kind: "user", id: "x", text: "hi", images: 0 } } }, { ...OURS, ours: false, resumable: true })]);
+  assert.equal(await exec("return document.querySelector('.composer .assist-slot button.btw').disabled"), true, "a chat another window or terminal ran");
+});
+
 await check("/btw on a chat this window does not run says it needs the chat here", async () => {
   await fresh({}, false);
   await send([snapshot({ sessionId: "22222222-0000-4000-8000-0000000000ff" }, { ...OURS, ours: false, resumable: true })]);
   await clearPosts();
   await type("/btw anything?" + ENTER);
   assert.equal((await posts()).filter((p) => p.t === "btw").length, 0);
-  assert.match((await text(".paste-notice"))[0], /needs the chat to run here/);
+  assert.match((await text(".paste-notice"))[0], /needs a conversation this window runs/);
 });
 
 const SEL = { kind: "selection", path: "/work/rec/x/src/main.c", startLine: 10, endLine: 24, text: Array.from({ length: 15 }, (_, i) => `int v${i + 10};`).join("\n") };
@@ -1933,6 +1980,56 @@ await check("what went with a message shows as rows under it: a selection and a 
   await click(".user div.ctx-row a", "README.md");
   const opens = (await posts()).filter((p) => p.t === "openFile");
   assert.deepEqual(opens, [{ t: "openFile", path: SEL.path, line: 10 }, { t: "openFile", path: "/work/rec/x/README.md" }]);
+});
+
+// ------------------------------------------------------------ with the rest of the input (55, 72, 73)
+
+await check("Esc in side-question mode leaves the mode, and never counts toward Esc twice's rewind (57, 73)", async () => {
+  await basicChat();
+  await click(".composer .assist-slot button.btw");
+  await settle();
+  await type(ESC + ESC);
+  assert.equal(await exec("return !!document.querySelector('.composer .aside-tag')"), false, "the first Esc left the mode");
+  assert.equal((await text(".dialog.rewind")).length, 0, "and the pair opened no rewind");
+  await sleep(700);
+  await type(ESC + ESC);
+  assert.equal((await text(".dialog.rewind")).length, 1, "out of the mode, Esc twice is the rewind again");
+  await click(".dialog.rewind button", "Close");
+});
+
+await check("/btw, /rewind, /copy and /export are all in the / list", async () => {
+  await fresh({ slashCommands: ["compact"] }, false);
+  await type("/");
+  const items = await text(".popup div");
+  for (const c of ["/rewind", "/copy", "/export", "/btw"]) assert.ok(items.some((t) => t.startsWith(c)), `${c} in ${items.join(" | ")}`);
+});
+
+await check("above the input at once — a held card, side questions, a queued message with what goes with it, side-question mode, the chips — each in its own place", async () => {
+  await fresh({}, false);
+  await send([sent("tea or coffee"), ...events(askLines.slice(0, askAt))]);
+  // Sent while Claude works: it waits above the input (72), with the editor's selection.
+  await send(events([{ type: "_sent", n: 2, text: "Also end your reply with the word: kiwi", images: 0, context: [SEL] }]));
+  await send(events([
+    { type: "_side", id: "q:1", question: "which port did it pick?" },
+    { type: "_side", id: "q:1", response: "`/dev/ttyACM0`, the first one it found." },
+  ]));
+  await send([{ t: "editor", editor: { ...SEL, label: "src/main.c#L10-24" } }]);
+  await pasteIn({ files: [{ name: "shot.png", type: "image/png", data: PNG }] });
+  await type("@term");
+  await send([{ t: "mentions", q: "term", items: [{ insert: "west build", label: "west build", detail: "terminal output", terminal: "west build" }] }]);
+  await type(ENTER);
+  await click(".composer .assist-slot button.btw");
+  // Typing when the card comes: it waits as one quiet line (55).
+  await type("and the baud");
+  await send(events([askLines[askAt]]));
+  const box = await exec(`return ['.card.held', '.side', '.queue', '.composer .aside-tag', '.composer textarea', '.composer .attachments', '.composer .bar']
+    .map((s) => { const e = document.querySelector(s); if (!e) return [s, null]; const r = e.getBoundingClientRect(); return [s, Math.round(r.top), Math.round(r.bottom)]; });`);
+  await shot("above-input-all");
+  for (const [sel, top] of box) assert.notEqual(top, null, `${sel} on screen`);
+  for (let i = 1; i < box.length; i++) assert.ok(box[i][1] >= box[i - 1][2] - 1, `${box[i][0]} below ${box[i - 1][0]}: ${JSON.stringify(box)}`);
+  assert.match((await text(".queue .queued-with"))[0], /^with lines 10–24 of main\.c$/);
+  assert.equal((await text(".composer .ctx-chip")).length, 2, "the selection and the terminal");
+  assert.equal(await exec("return document.querySelectorAll('.composer .attachments .thumb').length"), 1);
 });
 
 // ------------------------------------------------------------ the list

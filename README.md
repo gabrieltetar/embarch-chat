@@ -144,7 +144,10 @@ whose decision numbers the code cites.
 - **`/btw <question>` asks a side question** while Claude works: the CLI's
   `side_question` answers it from the conversation and the turn in
   progress; question and answer show above the input and never join the
-  conversation. Clear drops them.
+  conversation. Clear drops them. **The 💬 beside the 📚** does the same as a
+  mode: the input is tagged "Side question", every Enter asks aside, and Esc
+  or a second click leaves it with the draft kept; it is off until the chat
+  has a conversation this window runs.
 
 - **Keys**, after Claude Code's own: **Ctrl+Alt+Esc** focuses the chat's
   input from an editor (with lines selected, it brings them as an

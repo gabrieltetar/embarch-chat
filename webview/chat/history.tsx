@@ -436,7 +436,8 @@ export function useEscEsc(enabled: boolean): void {
     const key = (ev: KeyboardEvent) => {
       if (ev.key !== "Escape") return;
       const ta = document.querySelector<HTMLTextAreaElement>(".composer textarea");
-      const free = on.current && !ta?.value && !document.querySelector(".popup, .menu, .dialog-back, .msg-menu");
+      // Not while the input asks aside (57): that Esc leaves the side-question mode.
+      const free = on.current && !ta?.value && !ta?.classList.contains("aside") && !document.querySelector(".popup, .menu, .dialog-back, .msg-menu");
       if (!free) {
         last.current = 0;
         return;

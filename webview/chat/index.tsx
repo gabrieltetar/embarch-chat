@@ -443,7 +443,7 @@ function App() {
           prompts={prompts}
           library={library.entries}
           assistant={library.assistant && view.ours}
-          canAsk={view.ours}
+          canAsk={view.ours && (state.timeline.length > 0 || state.process === "running")}
           editor={editor}
           chips={chips?.sid === state.sessionId && view.ours ? chips.chips : []}
           onSend={(text, opts) => {

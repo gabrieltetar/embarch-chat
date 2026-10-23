@@ -1683,3 +1683,21 @@ a.cite:hover {
   border-radius: var(--radius);
   font-size: 0.95em;
 }
+/* The 💬 (57): side-question mode, tagged above the input and on its border. */
+.assist-slot button.btw:not(.on) {
+  filter: grayscale(1);
+}
+.assist-slot button.btw.on {
+  background: var(--selected);
+  outline: 1px solid var(--focus);
+}
+.aside-tag {
+  font-size: 0.88em;
+  color: var(--link);
+  margin-bottom: 3px;
+}
+/* The same box as the overlay over it: a shadow, not a wider border. */
+.composer textarea.aside {
+  border-color: var(--focus);
+  box-shadow: inset 2px 0 0 var(--focus);
+}
