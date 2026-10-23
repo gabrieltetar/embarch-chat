@@ -142,12 +142,13 @@ old one while both are installed, and says so in its log).
 
 ## Settings
 
-Every path or address below is **machine-scoped**: VS Code takes it from
-your user settings, or in a WSL window from the **Remote [WSL]** settings
+Every setting below is **machine-scoped**: VS Code takes it from your user
+settings, or in a WSL window from the **Remote [WSL]** settings
 (`~/.vscode-server/data/Machine/settings.json`), never from a workspace's
 `.vscode/settings.json` — a cloned repo cannot point the chat at another
 `claude`, the desk's token at another server, or the launcher at another
-binary. In a WSL window a value set in the local user settings does not
+binary, turn the assistant back on after you turned it off, or keep chats'
+processes up. In a WSL window a value set in the local user settings does not
 apply; set it in the Remote settings. The desk URL must be this machine's
 (`127.0.0.1`, `::1` or `localhost`): the extension calls nothing else.
 The extension does not run in an untrusted workspace.

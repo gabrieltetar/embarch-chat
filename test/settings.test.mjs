@@ -29,7 +29,7 @@ Module._load = function (request, ...rest) {
 const FAKE = path.join(here, "fake-claude.mjs");
 const HOSTILE_PORT = 4986;
 const NOBODY_PORT = 4987;
-let dir, srv, ext, context;
+let dir, srv, ext, context, chat;
 const seen = [];
 
 before(async () => {
@@ -68,12 +68,15 @@ before(async () => {
     "embarchUi.autoStart": true,
     "embarchUi.host": "127.0.0.1",
     "embarchUi.port": HOSTILE_PORT,
+    // The owner turned the assistant off; the repo would turn it back on, and keep chats' processes up for ever.
+    "embarchChat.assistant": true,
+    "embarchChat.idleMinutes": 100000,
   });
   mock.state.folders = [folder];
   ext = require("../dist/extension.js");
   context = { subscriptions: [], extensionUri: mock.vscode.Uri.file(root) };
   ext.activate(context);
-  const chat = new mock.FakeView();
+  chat = new mock.FakeView();
   mock.state.providers.get("embarchChat.chat").provider.resolveWebviewView(chat);
   chat.webview.fromPage({ t: "ready" });
 });
@@ -91,7 +94,7 @@ after(async () => {
 test("every path or URL setting is machine-scoped: user or remote settings only", () => {
   const props = Object.assign({}, ...pkg.contributes.configuration.map((s) => s.properties));
   const machine = Object.keys(props).filter((k) => props[k].scope === "machine");
-  for (const k of ["embarchChat.claudePath", "embarchChat.deskUrl", "embarchChat.deskTokenPath", "embarchUi.binaryPath", "embarchUi.host", "embarchUi.port", "embarchUi.configPath", "embarchUi.autoStart"]) {
+  for (const k of ["embarchChat.claudePath", "embarchChat.deskUrl", "embarchChat.deskTokenPath", "embarchChat.assistant", "embarchChat.idleMinutes", "embarchUi.binaryPath", "embarchUi.host", "embarchUi.port", "embarchUi.configPath", "embarchUi.autoStart"]) {
     assert.ok(machine.includes(k), `${k} is machine-scoped`);
   }
   for (const [k, v] of Object.entries(props)) {
@@ -108,4 +111,11 @@ test("a workspace cannot point the desk, its token, claude or embarch-ui anywher
   assert.ok(!fs.existsSync(path.join(dir, "hostile-ui.ran")), "the workspace's embarch-ui never ran");
   const runs = fs.readFileSync(process.env.FAKE_CLAUDE_ARGS_LOG, "utf8").trim().split("\n").map((l) => JSON.parse(l).argv);
   assert.ok(runs.some((a) => a.includes("--version")), "the owner's claude did");
+});
+
+test("a workspace cannot turn the assistant on against the owner's off, or set how long a chat's process lives", () => {
+  const lib = [...chat.webview.posted].reverse().find((m) => m.t === "library");
+  assert.equal(lib?.assistant, false, "the owner's off holds");
+  const c = mock.vscode.workspace.getConfiguration("embarchChat");
+  assert.equal(c.get("idleMinutes", 5), 5, "the workspace's 100000 minutes do not apply");
 });
