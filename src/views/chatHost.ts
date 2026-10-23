@@ -50,6 +50,8 @@ export interface HostCtx {
   freshChat: (sid: string) => void;
   /** Makes a resumable thread this window's (32) for the owner's message; false when it may not be resumed here (the message then stays in the refusal's note). */
   resume: (sid: string, text: string) => Promise<boolean>;
+  /** The owner names a chat (decision 75). */
+  rename: (sid: string) => Promise<void>;
 }
 
 /** The chat's card in two lines (decision 18), from the desk's view. */
@@ -250,6 +252,8 @@ export class ChatHost implements vscode.Disposable {
         return;
       case "freshChat":
         return this.ctx.freshChat(chat.sessionId);
+      case "rename":
+        return this.ctx.rename(chat.sessionId);
       case "allow": {
         const p = pending(m.requestId);
         // Every change rejected in the diff tab: Allow has nothing left to allow (64).

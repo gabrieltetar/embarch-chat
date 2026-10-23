@@ -43,6 +43,8 @@ interface SavedChat {
   running: boolean;
   tab: boolean;
   reruns: number;
+  /** A name the owner gave before the chat's first message, not yet sent (decision 75). */
+  title?: string;
 }
 
 interface Saved {
@@ -97,6 +99,7 @@ export class ReloadMemory implements vscode.Disposable {
         running: r.chat.running && (st.busy || st.compacting || st.pending.length > 0),
         tab: tabs.has(sid),
         reruns: this.rerunsOf(sid),
+        ...(r.chat.pendingName ? { title: r.chat.pendingName } : {}),
       });
     }
     const saved: Saved | undefined = chats.length ? { at: Date.now(), current: this.manager.current, chats } : undefined;
@@ -137,9 +140,13 @@ export async function restoreAfterReload(o: RestoreCtx): Promise<void> {
   const back = saved.chats.filter((c) => c.running || c.tab || c.sid === saved.current);
   o.log(`window reloaded: ${back.length} chat(s) back`);
   for (const c of back) {
-    // Read-only until nothing else runs it (31); a reload's own process is gone by then.
-    const rec = o.manager.openViewer(c.sid, c.cwd, c.itemId, c.itemTitle, true);
+    // A chat no message was sent to has no transcript to resume: it comes
+    // back new, with a name the owner gave it (decision 75). Any other is
+    // read-only until nothing else runs it (31); a reload's own process is gone by then.
+    const fresh = !findTranscript(c.sid, c.cwd || undefined);
+    const rec = fresh ? o.manager.create(c.sid, c.cwd, c.itemId, c.itemTitle, { untracked: c.untracked }) : o.manager.openViewer(c.sid, c.cwd, c.itemId, c.itemTitle, true);
     if (!rec) continue;
+    if (fresh && c.title) void rec.chat.renameByHand(c.title);
     rec.untracked = c.untracked;
     o.memory.noteRerun(c.sid, c.reruns);
     if (c.tab) o.openTab(c.sid);

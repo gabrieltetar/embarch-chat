@@ -1,7 +1,8 @@
 // The thread list (decision 9): the window's desk's threads by work item,
 // waiting-on-you first, Untracked last. A + on a group starts a chat on that
 // item; the top + picks one (decision 10). Threads this window does not run
-// open read-only, with Jump (decision 31).
+// open read-only, with Jump (decision 31). A thread nothing else runs can be
+// renamed by hand (decision 75).
 
 import "../shared/style.css";
 import { render } from "preact";
@@ -33,6 +34,11 @@ function Row({ t, selected, now }: { t: Thread; selected: boolean; now: number }
         </div>
       </div>
       <span class="acts">
+        {(t.ours || !t.live) && (
+          <button class="icon rename" title="Rename" onClick={(e) => (e.stopPropagation(), post({ t: "rename", sid: t.sessionId }))}>
+            ✎
+          </button>
+        )}
         <button class="icon" title="Open in an editor tab" onClick={(e) => (e.stopPropagation(), post({ t: "openInEditor", sid: t.sessionId }))}>
           Tab
         </button>

@@ -95,6 +95,12 @@ export class ChatPanels implements vscode.Disposable {
     return [...this.panels.keys()];
   }
 
+  /** The chat whose tab is the active editor, if one is. */
+  active(): string | null {
+    for (const [sid, p] of this.panels) if (p.panel.active) return sid;
+    return null;
+  }
+
   visible(sid: string): boolean {
     return !!this.panels.get(sid)?.panel.visible;
   }
@@ -110,6 +116,7 @@ export interface ListCtx {
   jump: (sid: string) => void;
   newChat: (itemId?: string) => void;
   refresh: () => void;
+  rename: (sid: string) => void;
   data: () => HostToList;
   setVisible: (v: boolean) => void;
 }
@@ -146,6 +153,8 @@ export class ThreadsViewProvider implements vscode.WebviewViewProvider {
           return this.ctx.newChat(m.itemId);
         case "refresh":
           return this.ctx.refresh();
+        case "rename":
+          return this.ctx.rename(m.sid);
       }
     });
     this.ctx.setVisible(view.visible);

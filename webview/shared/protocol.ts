@@ -96,7 +96,9 @@ export type ChatToHost =
   /** The next keystroke cancels a stale call (26). */
   | { t: "assistCancel" }
   /** A chip that acts: a fresh chat with this chat's handoff (36). */
-  | { t: "freshChat" };
+  | { t: "freshChat" }
+  /** The owner names the chat (decision 75). */
+  | { t: "rename" };
 
 export type HostToList = {
   t: "groups";
@@ -115,7 +117,9 @@ export type ListToHost =
   | { t: "openInEditor"; sid: string }
   | { t: "jump"; sid: string }
   | { t: "newChat"; itemId?: string }
-  | { t: "refresh" };
+  | { t: "refresh" }
+  /** The owner names a thread (decision 75). */
+  | { t: "rename"; sid: string };
 
 export const MODELS = [
   { id: "default", label: "Default model" },

@@ -119,6 +119,11 @@
         "category": "EmbArch Chat"
       },
       {
+        "command": "embarchChat.renameChat",
+        "title": "Rename Chat",
+        "category": "EmbArch Chat"
+      },
+      {
         "command": "embarchUi.start",
         "title": "EmbArch UI: Start",
         "category": "EmbArch UI"
@@ -181,6 +186,12 @@
         {
           "command": "embarchChat.toggleChange",
           "when": "false"
+        }
+      ],
+      "webview/context": [
+        {
+          "command": "embarchChat.renameChat",
+          "when": "webviewId == 'embarchChat.chatTab' || webviewId == 'embarchChat.chat'"
         }
       ]
     },

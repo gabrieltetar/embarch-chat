@@ -1338,6 +1338,22 @@ await check("the 📚: one submenu per category; a click puts /<name> in the dra
   assert.deepEqual(await text(".popup div"), ["/embarch-chat:build-flash-verifyBench"]);
 });
 
+// ------------------------------------------------------------ history (decision 75)
+
+const basicChat = async (view) => {
+  const sid = await fresh();
+  await send([...(view ? [snapshot({ sessionId: sid }, view)] : []), sent("Run the bash command `echo hello-from-bash` and then reply with just: done"), ...events(outLines("basic"))]);
+  await clearPosts();
+};
+
+await check("the header's ✎ asks the host to rename the chat; a thread run elsewhere has none", async () => {
+  await basicChat();
+  await click(".header .rename");
+  assert.ok((await posts()).some((p) => p.t === "rename"));
+  await basicChat({ ...OURS, ours: false, readOnly: true });
+  assert.equal((await text(".header .rename")).length, 0);
+});
+
 // ------------------------------------------------------------ the list
 
 await go("/list.html");
@@ -1387,6 +1403,16 @@ await check("the list: groups by item, waiting first, + per group, rows open", a
   assert.ok(ps.some((p) => p.t === "open" && p.sid === "a"));
   assert.ok(ps.some((p) => p.t === "newChat" && p.itemId === "w2"));
   await shot("list");
+});
+
+await check("the list's ✎ names a thread this window runs or nothing runs; one run elsewhere has none", async () => {
+  await send([listMsg]);
+  await clearPosts();
+  const renamable = await exec("return [...document.querySelectorAll('.thread')].filter((t) => t.querySelector('.rename')).map((t) => t.querySelector('.ttitle').textContent)");
+  assert.deepEqual(renamable.sort(), ["My chat", "Yesterday's chat"]);
+  await exec("[...document.querySelectorAll('.thread')].find((t) => t.textContent.includes('My chat')).querySelector('.rename').click()");
+  await settle();
+  assert.deepEqual((await posts()).filter((p) => p.t !== "ready"), [{ t: "rename", sid: "o" }], "it does not open the thread too");
 });
 
 await check("the list says so when the desk is down", async () => {

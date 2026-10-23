@@ -1087,6 +1087,9 @@ details.thinking .md {
   margin-left: 6px;
   font-size: 0.9em;
 }
+.header .rename {
+  opacity: 0.7;
+}
 .readonly {
   padding: 8px var(--gap);
   border-top: 1px solid var(--border);

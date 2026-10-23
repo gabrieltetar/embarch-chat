@@ -69,6 +69,11 @@ function HeaderBar({ h, state, view }: { h: Header | null; state: ChatState; vie
           {title}
           {h && state.title && <span class="muted"> · {state.title}</span>}
         </span>
+        {!view.readOnly && (
+          <button class="icon rename" title="Rename this chat" onClick={() => post({ t: "rename" })}>
+            ✎
+          </button>
+        )}
         {h?.stateName && (
           <select
             title={err ?? "Issue status"}

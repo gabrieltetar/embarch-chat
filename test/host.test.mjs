@@ -579,3 +579,56 @@ test("with continueAfterReload off, a chat cut off mid-turn comes back saying no
     delete mock.state.config["embarchChat.continueAfterReload"];
   }
 });
+
+// ------------------------------------------------------------ history (decision 75)
+
+test("Rename from the list: the owner's name, given before the first turn, is the chat's — Haiku's never replaces it — and the list shows it", { skip }, async () => {
+  const sid = await startUntracked("suggest");
+  mock.state.inputBox = async (opts) => (opts.prompt === "Rename the chat" ? "Blink bring-up" : undefined);
+  const n = chatView.webview.posted.length;
+  const titled = (t) => chatView.webview.posted.slice(n).some((m) => m.t === "event" && m.e.type === "_title" && m.e.title === t);
+  threadsView.webview.fromPage({ t: "rename", sid });
+  await waitFor(() => titled("Blink bring-up"), 3000, "the name");
+  await waitFor(() => lastGroups()?.groups.some((g) => g.threads.some((t) => t.sessionId === sid && t.title === "Blink bring-up")), 5000, "the name in the list");
+  chatView.webview.fromPage({ t: "send", text: "I am setting up a small Node project in this folder. Run `echo setup` with bash, then suggest what I should do first, in two sentences." });
+  await waitFor(() => posted((m) => m.t === "chips" && m.sid === sid && m.chips.some((c) => c.source === "haiku")), 8000, "the turn's chips");
+  await new Promise((r) => setTimeout(r, 300));
+  assert.ok(!titled(core.parseTurn(haikuAnswer("turn")).name), "Haiku's name never came");
+  assert.ok(lastGroups().groups.some((g) => g.threads.some((t) => t.sessionId === sid && t.title === "Blink bring-up")));
+});
+
+test("Rename from the chat's header or its tab's menu asks with the name it has; a thread something else runs is not renamed here", { skip }, async () => {
+  let asked = null;
+  mock.state.inputBox = async (opts) => ((asked = opts.value), "From the header");
+  chatView.webview.fromPage({ t: "rename" });
+  await waitFor(() => posted((m) => m.t === "event" && m.e.type === "_title" && m.e.title === "From the header"), 3000, "the header's name");
+  assert.equal(asked, "Blink bring-up");
+  // The webview's context menu hands the command its own argument, not a session.
+  mock.state.inputBox = async () => "From the tab";
+  await mock.state.commands.get("embarchChat.renameChat")({ webview: "embarchChat.chatTab" });
+  await waitFor(() => posted((m) => m.t === "event" && m.e.type === "_title" && m.e.title === "From the tab"), 3000, "the tab's name");
+  // The terminal session above runs elsewhere: read-only here (31).
+  let prompted = false;
+  mock.state.inputBox = async () => ((prompted = true), "nope");
+  threadsView.webview.fromPage({ t: "rename", sid: "7e7e7e7e-0000-4000-8000-00000000abcd" });
+  await waitFor(() => mock.state.messages.some(([k, m]) => k === "info" && /Something else runs this chat/.test(m)), 3000, "the refusal");
+  assert.equal(prompted, false);
+});
+
+test("a chat named before its first message comes back after a reload with its name, and its first message starts it by its id (decisions 63, 75)", { skip }, async () => {
+  const sid = await startUntracked("basic");
+  mock.state.inputBox = async () => "Named, not started";
+  chatView.webview.fromPage({ t: "rename" });
+  await waitFor(() => posted((m) => m.t === "event" && m.e.type === "_title" && m.e.title === "Named, not started"), 3000, "the name");
+  await reload(() => (process.env.FAKE_CLAUDE_FIXTURE = path.join(here, "fixtures", "wire", "basic.jsonl")));
+  await waitFor(() => {
+    const s = lastSnapshot();
+    return s?.state.sessionId === sid && s.view.ours && s.state.title === "Named, not started";
+  }, 15000, "the chat back, the window's own, with its name");
+  const spawnsBefore = calls().length;
+  chatView.webview.fromPage({ t: "send", text: "Run the bash command `echo hello-from-bash` and then reply with just: done" });
+  await waitFor(() => chatView.webview.posted.some((m) => m.t === "event" && m.e.type === "result"), 5000, "its first turn");
+  const run = calls().slice(spawnsBefore).find((c) => c.argv.includes("--input-format"));
+  assert.equal(run.argv[run.argv.indexOf("--session-id") + 1], sid, "started by its id, not resumed: it had no transcript");
+  assert.ok(!run.argv.some((a) => a.startsWith("--resume")));
+});

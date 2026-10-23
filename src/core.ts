@@ -7,6 +7,7 @@ export * from "./wire/host";
 export * from "./wire/chat";
 export * from "./wire/version";
 export * from "./wire/transcript";
+export * from "./wire/history";
 export * from "./desk/client";
 export * from "./desk/threads";
 export * from "./atlas";

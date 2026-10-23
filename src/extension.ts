@@ -24,7 +24,8 @@ import { ReloadMemory, restoreAfterReload } from "./reload";
 import { HostCtx, assistInput } from "./views/chatHost";
 import { CHAT_VIEW, ChatPanels, ChatViewProvider, THREADS_VIEW, ThreadsViewProvider } from "./views/views";
 import { claudeVersion, versionWarning } from "./wire/version";
-import { isSessionId } from "./wire/transcript";
+import { findTranscript, isSessionId } from "./wire/transcript";
+import { appendTitle } from "./wire/history";
 
 let chats: ChatManager | undefined;
 let deskService: DeskService | undefined;
@@ -150,6 +151,7 @@ export function activate(context: vscode.ExtensionContext): void {
     library,
     freshChat: (sid) => void freshChat(sid),
     resume: (sid, text) => resume(sid, text),
+    rename: (sid) => renameChat(sid),
   };
 
   const chatView = new ChatViewProvider(context.extensionUri, ctx);
@@ -162,6 +164,7 @@ export function activate(context: vscode.ExtensionContext): void {
     jump: (sid) => void jumpTo(sid),
     newChat: (itemId) => void newChat(itemId),
     refresh: () => void desk.refresh(),
+    rename: (sid) => void renameChat(sid),
     data: () => ({ t: "groups", groups: desk.groups, desk: desk.desk?.name ?? null, error: desk.error, notice: desk.notice, selected: manager.current, now: Date.now() }),
     setVisible: (v) => desk.setVisible(v),
   });
@@ -521,8 +524,10 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!rec?.ours) return;
     void haiku.turnEnded(sid, () => assistInput(ctx, rec, ""), {
       onScreen: onScreen(sid),
-      firstTurn: n === 1 && !rec.chat.opts.existing,
+      // A name the owner gave is not Haiku's to replace (decision 75).
+      firstTurn: n === 1 && !rec.chat.opts.existing && !rec.chat.handNamed,
       rename: async (name) => {
+        if (rec.chat.handNamed) return;
         log(`[${sid.slice(0, 8)}] named "${name}"`);
         await rec.chat.rename(name);
       },
@@ -543,6 +548,47 @@ export function activate(context: vscode.ExtensionContext): void {
     haiku.handoffTaken(sid);
     haiku.sent(fresh.chat.sessionId);
     fresh.chat.send(text);
+  }
+
+  // ------------------------------------------------------------ names
+
+  /**
+   * The owner names a chat (decision 75), from the list, the chat's header or
+   * its tab. A chat of this window's takes it as its own (renameByHand); a
+   * past one nothing runs gets Claude Code's custom-title line in its
+   * transcript. Either way it is Claude's own record of the name (decision
+   * 12), so a reload keeps it. A thread something else runs is read-only
+   * here (decision 31).
+   */
+  async function renameChat(sid: string): Promise<void> {
+    if (!isSessionId(sid)) return;
+    const rec = manager.get(sid);
+    const t = desk.thread(sid)?.thread;
+    if (!rec?.ours && t?.live) {
+      void vscode.window.showInformationMessage("Something else runs this chat: rename it where it runs.");
+      return;
+    }
+    const current = rec?.chat.state.title ?? t?.title ?? "";
+    const title = (
+      await vscode.window.showInputBox({ prompt: "Rename the chat", value: current, valueSelection: [0, current.length], validateInput: (v) => (v.trim() ? null : "A name, please") })
+    )?.trim();
+    if (!title || title === current) return;
+    if (rec?.ours) await rec.chat.renameByHand(title);
+    else {
+      // Asked again at the moment it writes: two writers on one transcript is what this prevents.
+      const pid = await agentPid(cfg().claudePath, sid);
+      const file = findTranscript(sid, rec?.chat.opts.cwd || t?.cwd || undefined);
+      if (typeof pid === "number" || !file) {
+        void vscode.window.showErrorMessage(`Not renamed: ${file ? "something else runs this chat now" : "no transcript for this chat on this machine"}.`);
+        return;
+      }
+      appendTitle(file, sid, title);
+      rec?.chat.noteTitle(title);
+    }
+    log(`[${sid.slice(0, 8)}] named "${title}" by hand`);
+    panels.retitle(sid, title);
+    desk.rebuild();
+    void desk.refresh();
   }
 
   // ------------------------------------------------------------ the mailbox
@@ -587,6 +633,11 @@ export function activate(context: vscode.ExtensionContext): void {
       if (w.length) await open(w[0].sessionId);
     }),
     vscode.commands.registerCommand("embarchChat.refresh", () => desk.refresh()),
+    // The chat's tab or the sidebar's, from their context menu or the palette (Claude Code's renameSessionTab).
+    vscode.commands.registerCommand("embarchChat.renameChat", (sid?: unknown) => {
+      const target = typeof sid === "string" ? sid : (panels.active() ?? manager.current);
+      if (target) return renameChat(target);
+    }),
     vscode.commands.registerCommand("embarchChat.showLog", () => output.show()),
   );
 

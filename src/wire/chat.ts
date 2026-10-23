@@ -9,6 +9,7 @@ import * as fs from "fs";
 import { ClaudeProcess, SpawnSpec, chatEnv } from "./process";
 import { HostHooks, answererFor, initializeRequest } from "./host";
 import { findTranscript, holdsMessage, projectsRoot } from "./transcript";
+import { appendTitle } from "./history";
 import { ChatState, Pending, chatStatus, initialState, reduce, reduceAll, textOf } from "./reducer";
 import type { ContextUsage, PermissionDecision, WireMessage } from "./types";
 import { DIALOG_CANCELLED, answerable, unansweredNote } from "./dialogs";
@@ -84,6 +85,15 @@ export class Chat extends EventEmitter {
   renamed = false;
   /** The next process reruns a step a window reload cut off (decision 63). */
   private rerun = false;
+  /** Named by the owner (decision 75): Haiku's name does not come (decision 12). */
+  handNamed = false;
+  /** A name for a chat with no session yet, given once its first turn has ended. */
+  private pendingTitle: string | null = null;
+
+  /** The owner's name still waiting for the chat's first turn: what a reload must carry (decision 63). */
+  get pendingName(): string | null {
+    return this.pendingTitle;
+  }
 
   constructor(readonly opts: ChatOptions) {
     super();
@@ -240,6 +250,11 @@ export class Chat extends EventEmitter {
         } else {
           this.turns++;
           this.emit("turn", o, this.turns);
+        }
+        if (this.pendingTitle !== null) {
+          const t = this.pendingTitle;
+          this.pendingTitle = null;
+          void this.rename(t);
         }
         void this.refreshContext();
       } else if (o.type === "system" && (o.subtype === "background_tasks_changed" || o.subtype === "task_notification")) {
@@ -461,6 +476,34 @@ export class Chat extends EventEmitter {
     } catch (e) {
       this.log(`rename: ${(e as Error).message}`);
     }
+  }
+
+  /**
+   * The owner's own name (decision 75), which wins over Haiku's (decision 12)
+   * and over Claude's ai-title on every read: the running process takes it
+   * with rename_session; a closed chat's transcript gets the custom-title
+   * line Claude Code's own panel appends; a chat with no transcript yet
+   * keeps it until its first turn ends.
+   */
+  async renameByHand(title: string): Promise<void> {
+    this.handNamed = true;
+    this.renamed = true;
+    this.noteTitle(title);
+    if (this.running && (this.closing || this.proc!.closing)) {
+      // Closing: the name goes into its transcript once the process, which writes there too, has gone.
+      this.once("closed", () => void this.renameByHand(title));
+      return;
+    }
+    if (this.running && this.hasSession) {
+      this.pendingTitle = null;
+      await this.rename(title);
+      return;
+    }
+    const file = this.hasSession ? findTranscript(this.sessionId, this.opts.cwd || undefined, projectsRoot(this.opts.env ?? chatEnv())) : null;
+    if (file) {
+      appendTitle(file, this.sessionId, title);
+      this.pendingTitle = null;
+    } else this.pendingTitle = title;
   }
 
   async refreshContext(): Promise<void> {
