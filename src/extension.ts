@@ -161,11 +161,12 @@ export function activate(context: vscode.ExtensionContext): void {
       const t = found?.thread;
       const item = found?.group.item ?? null;
       const resumable = !!t && !t.live && desk.isWindowFolder(t.cwd);
-      const prev = manager.current;
       manager.openViewer(sid, t?.cwd ?? null, item?.id ?? null, item ? (item.issueKey ? `${item.issueKey} ${item.title}` : item.title) : null, resumable);
-      if (prev && prev !== sid) manager.release(prev);
     } else if (rec.viewer) manager.reloadViewer(sid);
+    const prev = manager.current;
     await show(sid);
+    // A read-only view nothing shows any more is dropped; the transcript stays.
+    if (prev && prev !== sid && !panels.has(prev)) manager.release(prev);
   }
 
   function openInEditor(sid: string): void {
