@@ -25,10 +25,10 @@ import { CategoryMenu, MenuGroup } from "./menus";
 
 const post = (m: unknown) => vscodeApi.postMessage(m);
 
-/** The waves' pauses (26), and how long a send waits for its cards. */
+/** The waves' pauses (26), and how long a send waits for its cards: a cards call took 3.8 s live. */
 export const GHOST_MS = 300;
 export const CARDS_MS = 2000;
-const HOLD_MS = 2500;
+const HOLD_MS = 4500;
 /** A draft this short sends at once: the owner's most-sent replies are one word (14). */
 const HOLD_MIN_WORDS = 6;
 
