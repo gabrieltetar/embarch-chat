@@ -7,7 +7,8 @@
 // whose type starts with "_" (a message sent, a prompt answered, the process
 // starting or closing, a control response folded in).
 
-import type { ContentBlock, ContextUsage, PermissionRequest, WireMessage } from "./types";
+import type { ContentBlock, ContextUsage, DialogRequest, ElicitationRequest, PermissionRequest, WireMessage } from "./types";
+import { answerable, unansweredNote } from "./dialogs";
 
 export type ProcessState = "none" | "starting" | "running" | "closed" | "error";
 
@@ -67,8 +68,13 @@ export interface Pending {
   toolUseId?: string;
   description?: string;
   suggestions?: unknown[];
-  /** How the panel shows it: a question form, a plan, or allow/deny. */
-  form: "question" | "plan" | "permission";
+  /**
+   * How the panel shows it: a question form, a plan, or allow/deny — all
+   * `can_use_tool`; or an MCP server's elicitation (`toolName` the server,
+   * `input` the request) or one of the CLI's dialogs (`toolName` its kind,
+   * `input` its payload), decision 66.
+   */
+  form: "question" | "plan" | "permission" | "elicitation" | "dialog";
 }
 
 export interface StreamBlock {
@@ -164,6 +170,24 @@ function formOf(toolName: string): Pending["form"] {
   if (toolName === "AskUserQuestion") return "question";
   if (toolName === "ExitPlanMode") return "plan";
   return "permission";
+}
+
+/** What waits on the owner, from one of the CLI's requests `answerable` takes (decision 66). */
+function pendingOf(requestId: string, r: PermissionRequest | ElicitationRequest | DialogRequest): Pending {
+  if (r.subtype === "elicitation") {
+    const { subtype: _, ...input } = r;
+    return { requestId, toolName: r.mcp_server_name, input, form: "elicitation" };
+  }
+  if (r.subtype === "request_user_dialog") return { requestId, toolName: r.dialog_kind, input: r.payload ?? {}, toolUseId: r.tool_use_id || undefined, form: "dialog" };
+  return {
+    requestId,
+    toolName: r.tool_name,
+    input: r.input ?? {},
+    toolUseId: r.tool_use_id,
+    description: r.description,
+    suggestions: r.permission_suggestions,
+    form: formOf(r.tool_name),
+  };
 }
 
 /** A slash command's echo, `<command-name>/x</command-name><command-args>y</command-args>`, as the owner typed it. */
@@ -434,17 +458,10 @@ export function reduce(s: ChatState, o: WireMessage): ChatState {
     case "stream_event":
       return foldStream(s, o);
     case "control_request": {
-      const r = o.request as PermissionRequest | undefined;
-      if (!r || r.subtype !== "can_use_tool") return s;
-      const p: Pending = {
-        requestId: o.request_id as string,
-        toolName: r.tool_name,
-        input: r.input ?? {},
-        toolUseId: r.tool_use_id,
-        description: r.description,
-        suggestions: r.permission_suggestions,
-        form: formOf(r.tool_name),
-      };
+      const r = o.request as PermissionRequest | ElicitationRequest | DialogRequest | undefined;
+      // Any other request was refused on arrival (chat.ts): one line says so, and nothing waits (66).
+      if (!answerable(r)) return note(s, unansweredNote(r), "info");
+      const p = pendingOf(o.request_id as string, r!);
       if (s.pending.some((x) => x.requestId === p.requestId)) return s;
       let n: ChatState = { ...s, pending: [...s.pending, p] };
       if (p.toolUseId) n = patch(n, p.toolUseId, "tool", () => ({ status: "awaiting" }));

@@ -10,6 +10,7 @@ import { ClaudeProcess, SpawnSpec, chatEnv } from "./process";
 import { findTranscript, holdsMessage, projectsRoot } from "./transcript";
 import { ChatState, Pending, chatStatus, initialState, reduce, reduceAll, textOf } from "./reducer";
 import type { ContextUsage, PermissionDecision, WireMessage } from "./types";
+import { DIALOG_CANCELLED, answerable, unansweredNote } from "./dialogs";
 
 export interface ChatOptions {
   sessionId: string;
@@ -180,6 +181,14 @@ export class Chat extends EventEmitter {
     proc.on("message", (o: WireMessage) => {
       if (this.proc !== proc) return;
       if (this.state.process !== "running") this.dispatch({ type: "_process", state: "running" });
+      // A request nothing here can show is refused at once, never left to wait (decision 66).
+      if (o.type === "control_request" && !answerable(o.request as { subtype?: string } | undefined)) {
+        const r = o.request as { subtype?: string; dialog_kind?: string } | undefined;
+        this.log(`refused ${r?.subtype}${r?.dialog_kind ? ` (${r.dialog_kind})` : ""}`);
+        // An undeclared dialog is cancelled, as Claude Code's own panel answers one; anything else is an error.
+        if (r?.subtype === "request_user_dialog") proc.answer(String(o.request_id), DIALOG_CANCELLED);
+        else proc.refuse(String(o.request_id), unansweredNote(r));
+      }
       if (o.type === "prompt_suggestion") {
         if (typeof o.suggestion === "string") this.emit("suggestion", o.suggestion);
         return;
@@ -326,6 +335,12 @@ export class Chat extends EventEmitter {
     this.proc.answer(requestId, decision as unknown as Record<string, unknown>);
     this.dispatch({ type: "_answered", requestId, behavior: decision.behavior });
     this.touch();
+  }
+
+  /** Answers a dialog or an MCP server's elicitation (decision 66) as the CLI's schema has it. */
+  respond(p: Pending, response: Record<string, unknown>): void {
+    if (p.form !== "dialog" && p.form !== "elicitation") return;
+    this.answer(p.requestId, response as unknown as PermissionDecision);
   }
 
   /** Allow as asked, or with the CLI's own "don't ask again" suggestions. */

@@ -31,7 +31,7 @@ function makeChat(name, opts = {}) {
     existing: opts.existing ?? false,
     idleMs: opts.idleMs ?? 60000,
     mode: opts.mode,
-    env: { ...process.env, FAKE_CLAUDE_FIXTURE: fixture(name), FAKE_CLAUDE_ARGS_LOG: argsLog },
+    env: { ...process.env, FAKE_CLAUDE_FIXTURE: opts.fixture ?? fixture(name), FAKE_CLAUDE_ARGS_LOG: argsLog },
   });
   const events = [];
   chat.on("event", (e) => events.push(e));
@@ -705,5 +705,128 @@ test("a held /compact that fails gives its rest back too", async () => {
   chat.send("auto");
   await t;
   assert.deepEqual(sent(), ["/compact focus on: the widget", "auto"]);
+  chat.dispose();
+});
+
+// ---- what the CLI asks besides permission prompts (decision 66)
+
+/**
+ * A recording with lines put in after its first init line. The CLI sends a
+ * `request_user_dialog` only for a kind it has reason to show — auto mode's
+ * billing notice never shows on a Pro, Max or Team plan, a refusal needs a
+ * flagged message — so those lines are built from the CLI's own schema
+ * (2.1.287), not recorded; so is a request no CLI sends yet.
+ */
+function withLines(name, extra) {
+  const lines = fs.readFileSync(fixture(name), "utf8").trim().split("\n");
+  const at = lines.findIndex((l) => JSON.parse(l).o.subtype === "init") + 1;
+  const file = path.join(tmp("fixture-"), `${name}.jsonl`);
+  fs.writeFileSync(file, [...lines.slice(0, at), ...extra.map((e) => JSON.stringify(e)), ...lines.slice(at)].join("\n") + "\n");
+  return file;
+}
+const cliAsks = (id, request) => ({ d: "out", o: { type: "control_request", request_id: id, request } });
+const panelAnswers = (id, response) => ({ d: "in", o: { type: "control_response", response: { subtype: "success", request_id: id, response } } });
+
+test("the first line declares the dialogs the panel renders, before the message", async () => {
+  const { chat, dir } = makeChat("basic");
+  const inputs = path.join(dir, "in.jsonl");
+  chat.opts.env.FAKE_CLAUDE_INPUT_LOG = inputs;
+  chat.send("Run the bash command `echo hello-from-bash` and then reply with just: done");
+  await turns(chat, 1);
+  const sent = fs.readFileSync(inputs, "utf8").trim().split("\n").map((l) => JSON.parse(l).o);
+  assert.equal(sent[0].type, "control_request");
+  assert.deepEqual(sent[0].request, { subtype: "initialize", supportedDialogKinds: ["auto_mode_server_fallback", "refusal_fallback_prompt"] });
+  assert.equal(sent[1].type, "user");
+  chat.dispose();
+});
+
+test("an MCP server's elicitation waits on the owner as a form; Accept's typed values and Decline reach the server", async () => {
+  const { chat } = makeChat("elicit");
+  const elicitation = async () => {
+    await waitFor(() => chat.state.pending.length === 1);
+    chat.allow(chat.state.pending[0]); // the MCP tool's own permission prompt
+    await waitFor(() => chat.state.pending[0]?.form === "elicitation");
+    return chat.state.pending[0];
+  };
+  chat.send("Call the pick_port tool once, then reply with just the tool's result text.");
+  let p = await elicitation();
+  assert.equal(p.toolName, "bench");
+  assert.equal(p.input.message, "Which serial port should the test use?");
+  assert.equal(core.chatStatus(chat.state), "waiting");
+  assert.equal(chat.holdReason(), "waits on the owner");
+  const fields = core.formFields(p.input.requested_schema);
+  assert.deepEqual(
+    fields.map((f) => [f.name, f.type, f.required]),
+    [["port", "string", true], ["baud", "integer", false], ["parity", "enum", false], ["verbose", "boolean", false]],
+  );
+  const form = core.formContent(fields, { port: "/dev/ttyACM0", baud: "115200", parity: "none", verbose: false });
+  assert.deepEqual(form.content, { port: "/dev/ttyACM0", baud: 115200, parity: "none", verbose: false });
+  chat.respond(p, { action: "accept", content: form.content });
+  await turns(chat, 1);
+  assert.match(entries(chat.state, "tool")[0].result, /^action=accept content=\{"port":"\/dev\/ttyACM0","baud":115200/);
+  chat.send("Call the pick_port tool once more, then reply with just the tool's result text.");
+  p = await elicitation();
+  chat.respond(p, { action: "decline" });
+  await turns(chat, 1);
+  assert.equal(entries(chat.state, "tool")[1].result, "action=decline");
+  assert.equal(chat.state.pending.length, 0);
+  chat.dispose();
+});
+
+test("an elicitation form takes the schema's types: a missing required field or a bad number is named; a field it cannot draw is no form", () => {
+  const fields = core.formFields({ type: "object", properties: { port: { type: "string", title: "Serial port" }, baud: { type: "integer" } }, required: ["port"] });
+  assert.deepEqual(core.formContent(fields, { baud: "9600" }), { error: "Serial port is required" });
+  assert.deepEqual(core.formContent(fields, { port: "COM3", baud: "96.5" }), { error: "baud must be a whole number" });
+  assert.deepEqual(core.formContent(fields, { port: " COM3 " }), { content: { port: "COM3" } });
+  assert.equal(core.formFields({ type: "object", properties: { pins: { type: "array" } } }), null);
+});
+
+test("the CLI's own dialogs wait as cards and answer as Claude Code's panel does: Continue, Switch to the fallback model", async () => {
+  const file = withLines("basic", [
+    cliAsks("cli-dialog-1", {
+      subtype: "request_user_dialog",
+      dialog_kind: "auto_mode_server_fallback",
+      payload: { title: "Auto mode is using billed classifier requests", paragraphs: ["Continue to keep going in auto mode, or Stop to end this turn."], helpUrl: "https://code.claude.com/docs/en/auto-mode-classifier-billing" },
+    }),
+    panelAnswers("cli-dialog-1", { behavior: "completed", result: "continue" }),
+    cliAsks("cli-dialog-2", { subtype: "request_user_dialog", dialog_kind: "refusal_fallback_prompt", payload: { originalModel: "claude-opus-5-5", fallbackModel: "claude-opus-4-8", apiRefusalCategory: null } }),
+    panelAnswers("cli-dialog-2", { behavior: "completed", result: "retry_fallback" }),
+  ]);
+  const { chat } = makeChat("basic", { fixture: file });
+  chat.send("Run the bash command `echo hello-from-bash` and then reply with just: done");
+  await waitFor(() => chat.state.pending.length === 1);
+  let p = chat.state.pending[0];
+  assert.deepEqual([p.form, p.toolName, p.input.helpUrl], ["dialog", "auto_mode_server_fallback", "https://code.claude.com/docs/en/auto-mode-classifier-billing"]);
+  assert.equal(core.chatStatus(chat.state), "waiting");
+  chat.respond(p, core.dialogChoice("continue"));
+  await waitFor(() => chat.state.pending[0]?.toolName === "refusal_fallback_prompt");
+  p = chat.state.pending[0];
+  assert.equal(p.input.fallbackModel, "claude-opus-4-8");
+  chat.respond(p, core.dialogChoice("retry_fallback"));
+  await turns(chat, 1);
+  assert.equal(chat.state.pending.length, 0);
+  assert.equal(top(chat.state).at(-1).text, "done");
+  chat.dispose();
+});
+
+test("a request the panel cannot show is answered at once — an error, or a dialog cancelled — and one line says so", async () => {
+  const file = withLines("basic", [
+    cliAsks("cli-x-1", { subtype: "ui_prompt_read", surface: "panel" }),
+    { d: "in", o: { type: "control_response", response: { subtype: "error", request_id: "cli-x-1", error: "x" } } },
+    cliAsks("cli-x-2", { subtype: "request_user_dialog", dialog_kind: "cost_threshold", payload: {} }),
+    panelAnswers("cli-x-2", { behavior: "cancelled" }),
+  ]);
+  const { chat } = makeChat("basic", { fixture: file });
+  chat.send("Run the bash command `echo hello-from-bash` and then reply with just: done");
+  await turns(chat, 1);
+  assert.equal(chat.state.pending.length, 0, "nothing waits on the owner");
+  assert.deepEqual(
+    entries(chat.state, "note").map((n) => [n.tone, n.text]),
+    [
+      ["info", 'Claude Code asked this panel for "ui_prompt_read", which it cannot show: declined.'],
+      ["info", 'Claude Code asked this panel for a "cost_threshold" dialog, which it cannot show: declined.'],
+    ],
+  );
+  assert.equal(top(chat.state).at(-1).text, "done", "the turn went on");
   chat.dispose();
 });

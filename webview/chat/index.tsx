@@ -332,7 +332,17 @@ function App() {
           );
         })}
       </div>
-      <PendingCards pending={state.pending} ctx={ctx} readOnly={view.readOnly} />
+      <PendingCards
+        pending={state.pending}
+        ctx={ctx}
+        readOnly={view.readOnly}
+        recall={() => {
+          // A flagged message back into the draft, to edit and retry (66).
+          const last = [...state.timeline].reverse().find((id) => entries[id]?.kind === "user");
+          const u = last ? entries[last] : undefined;
+          if (u?.kind === "user" && u.text.trim()) returnToDraft(state.sessionId, u.text);
+        }}
+      />
       <StatusLine state={state} warning={model.warning} />
       {view.readOnly ? (
         <div class="readonly">

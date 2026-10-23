@@ -203,7 +203,8 @@ export class ChatHost implements vscode.Disposable {
     const rec = this.sid ? this.ctx.chats.get(this.sid) : undefined;
     if (!rec) return;
     const chat = rec.chat;
-    const pending = (id: string) => chat.state.pending.find((p) => p.requestId === id);
+    // A permission, question or plan prompt; a dialog or an elicitation takes `respond` (66).
+    const pending = (id: string) => chat.state.pending.find((p) => p.requestId === id && p.form !== "dialog" && p.form !== "elicitation");
     switch (m.t) {
       case "send": {
         if (!rec.ours) {
@@ -250,6 +251,11 @@ export class ChatHost implements vscode.Disposable {
       case "answer": {
         const p = pending(m.requestId);
         if (p) chat.answerQuestion(p, m.answers);
+        return;
+      }
+      case "respond": {
+        const p = chat.state.pending.find((x) => x.requestId === m.requestId);
+        if (p) chat.respond(p, m.response);
         return;
       }
       case "interrupt":

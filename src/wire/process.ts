@@ -7,6 +7,7 @@ import * as cp from "child_process";
 import { EventEmitter } from "events";
 import type { WireMessage } from "./types";
 import { isSessionId } from "./transcript";
+import { DIALOG_KINDS } from "./dialogs";
 
 export interface SpawnSpec {
   claudePath: string;
@@ -116,6 +117,11 @@ export class ClaudeProcess extends EventEmitter {
       this.failWaiters(new Error(`claude exited (${code ?? signal})`));
       this.emit("exit", { code, signal, stderr: this.stderrTail.trim() });
     });
+    // The first line, as Claude Code's panel sends it: the dialogs this panel
+    // renders, which the CLI sends only once declared (decision 66).
+    this.request("initialize", { supportedDialogKinds: DIALOG_KINDS }).catch(() => {
+      /* an old CLI, or one that died: the user message initializes with defaults */
+    });
   }
 
   private onData(d: string): void {
@@ -192,10 +198,16 @@ export class ClaudeProcess extends EventEmitter {
     });
   }
 
-  /** Answers one of the CLI's `can_use_tool` prompts. */
+  /** Answers one of the CLI's requests: a `can_use_tool` prompt, a dialog, an elicitation. */
   answer(requestId: string, response: Record<string, unknown>): boolean {
     this.answered.add(requestId);
     return this.write({ type: "control_response", response: { subtype: "success", request_id: requestId, response } });
+  }
+
+  /** Refuses a request of the CLI's this panel does not handle, at once, so nothing waits on it (decision 66). */
+  refuse(requestId: string, error: string): boolean {
+    this.answered.add(requestId);
+    return this.write({ type: "control_response", response: { subtype: "error", request_id: requestId, error } });
   }
 
   /** Ends stdin so the CLI finishes and exits; kills it if it lingers. */

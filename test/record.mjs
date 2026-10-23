@@ -18,6 +18,10 @@ import { createRequire } from "node:module";
 // The handoff card's own words (src/assistant/edits.ts), so the recording asks as the panel does.
 const core = createRequire(import.meta.url)("../test-out/core.js");
 const HANDOFF_REQUEST = (draft) => core.handoffRequest(draft);
+// The one-tool MCP server whose tool asks with an elicitation (decision 66).
+const ELICIT_MCP = path.join(path.dirname(new URL(import.meta.url).pathname), "mcp-elicit.mjs");
+const mcpConfig = (env = {}) => JSON.stringify({ mcpServers: { bench: { command: process.execPath, args: [ELICIT_MCP], env } } });
+const isElicit = (o) => o.type === "control_request" && o.request?.subtype === "elicitation";
 
 const [, , scratch, ...only] = process.argv;
 if (!scratch) {
@@ -277,6 +281,37 @@ const scenarios = {
     r.user("Read note.txt and tell me the secret in one word.");
     await r.result();
     r.user(HANDOFF_REQUEST("Next: write the secret into a file named answer.txt."));
+    await r.result();
+    await r.close();
+  },
+  // An MCP server's elicitation (decision 66), with the panel's initialize
+  // first, declaring the dialogs it renders: a form accepted, then one
+  // declined. The line after the initialize's answer is the account's
+  // rate_limit_event (decision 67), kept with neutral numbers by sanitize.mjs.
+  async elicit() {
+    const r = new Rec("elicit", ["--tools", "", "--mcp-config", mcpConfig()]);
+    r.control("init-1", { subtype: "initialize", supportedDialogKinds: core.DIALOG_KINDS });
+    await r.until(isResp("init-1"));
+    r.user("Call the pick_port tool once, then reply with just the tool's result text.");
+    const ask = await r.until(isElicit);
+    r.respond(ask, { action: "accept", content: { port: "/dev/ttyACM0", baud: 115200, parity: "none", verbose: false } });
+    await r.result();
+    r.user("Call the pick_port tool once more, then reply with just the tool's result text.");
+    r.respond(await r.until(isElicit), { action: "decline" });
+    await r.result();
+    await r.close();
+  },
+  // Not a fixture: what the CLI does when nobody answers an elicitation
+  // (the panel before decision 66, which sent no initialize either) — it
+  // waits 20 s and writes down whatever comes, then declines.
+  async elicitbare() {
+    const r = new Rec("elicitbare", ["--tools", "", "--mcp-config", mcpConfig({ ELICIT_MODE: "url" })]);
+    r.user("Call the pick_port tool once, then reply with just the tool's result text.");
+    const ask = await r.until(isElicit);
+    const t0 = Date.now();
+    const late = await r.until((o) => o.type !== "stream_event", undefined, 20000).catch(() => null);
+    fs.writeFileSync(path.join(scratch, "elicitbare.probe.txt"), `elicitation unanswered for ${Date.now() - t0} ms; next line: ${late ? JSON.stringify(late).slice(0, 300) : "none"}\n`);
+    r.respond(ask, { action: "decline" });
     await r.result();
     await r.close();
   },

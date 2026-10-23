@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // Turns a raw recording from record.mjs into a fixture safe for a public
 // repo: machine paths become /work, the init line keeps only what the
-// panel reads, and account-level lines (rate limits) are dropped.
+// panel reads, a rate limit keeps its shape with neutral numbers, and the
+// answer to the panel's initialize (the account, its commands and models)
+// keeps only the session's state.
 //
 //   node test/sanitize.mjs <recording.jsonl> <fixture.jsonl> <scratch-dir>
 
@@ -28,6 +30,19 @@ const swaps = [
 const KEEP_INIT = ["type", "subtype", "session_id", "uuid", "cwd", "model", "permissionMode", "tools", "agents", "claude_code_version", "output_style", "apiKeySource", "capabilities", "mcp_servers"];
 const NEUTRAL_COMMANDS = ["compact", "context", "cost", "init", "review", "security-review", "simplify"];
 const NEUTRAL_COST = "Total cost:            $0.0000\nTotal duration (API):  0s\nTotal duration (wall): 1s\nUsage:                 0 input, 0 output, 0 cache read, 0 cache write";
+
+/** A rate limit's shape, the account's numbers and billing set aside: half a week used, a far-off reset (decision 67). */
+const RESETS_AT = 1900000000;
+function neutralLimit(i) {
+  const out = { status: i.status, resetsAt: RESETS_AT, rateLimitType: i.rateLimitType };
+  if (i.utilization !== undefined) out.utilization = 0.5;
+  if (i.rateLimitGraceActive) out.rateLimitGraceActive = true;
+  if (i.unifiedWindows) out.unifiedWindows = Object.fromEntries(Object.keys(i.unifiedWindows).map((k) => [k, { utilization: 0.5, resetsAt: RESETS_AT }]));
+  return out;
+}
+/** The initialize request ids the panel sent: their answers name the account. */
+const inits = new Set();
+const KEEP_INITIALIZE = ["current_permission_mode", "session_state", "output_style"];
 
 const scrub = (s) => {
   for (const [from, to] of swaps) {
@@ -73,7 +88,12 @@ for (const line of fs.readFileSync(src, "utf8").split("\n")) {
     continue;
   }
   flush();
-  if (o.type === "rate_limit_event") continue;
+  if (o.type === "rate_limit_event") o.rate_limit_info = neutralLimit(o.rate_limit_info ?? {});
+  if (e.d === "in" && o.type === "control_request" && o.request?.subtype === "initialize") inits.add(o.request_id);
+  if (e.d === "out" && o.type === "control_response" && inits.has(o.response?.request_id)) {
+    const r = o.response.response ?? {};
+    o.response.response = Object.fromEntries(KEEP_INITIALIZE.filter((k) => k in r).map((k) => [k, r[k]]));
+  }
   // /cost answers with the account's own usage and limits: a neutral answer instead.
   delete o.usage_report;
   if (o.type === "assistant" && ["cost", "usage"].includes(o.local_command_run?.command)) {

@@ -1029,6 +1029,121 @@ await check("in a short panel a card scrolls, and the input stays where it was",
   }
 });
 
+// Decision 66: what the CLI asks besides permission prompts. The form is
+// recorded (elicit); the link and the CLI's own dialogs are built from the
+// CLI's schema — elicitbare's recorded link, the dialogs' payloads — since
+// those cannot be had on demand.
+const elicitLines = outLines("elicit");
+const elicitUpTo = upTo(elicitLines, (o) => o.request?.subtype === "elicitation").filter((o) => o.request?.subtype !== "can_use_tool");
+const cliAsks = (request_id, request) => ({ t: "event", e: { type: "control_request", request_id, request } });
+const responded = async () => (await posts()).filter((p) => p.t === "respond");
+const AUTO = {
+  subtype: "request_user_dialog",
+  dialog_kind: "auto_mode_server_fallback",
+  payload: {
+    title: "Auto mode is using billed classifier requests",
+    paragraphs: ["Claude Code's built-in classifier is answering for auto mode in this session, and its requests are billed.", "Continue to keep going in auto mode, or Stop to end this turn."],
+    helpUrl: "https://code.claude.com/docs/en/auto-mode-classifier-billing",
+  },
+};
+const REFUSAL = { subtype: "request_user_dialog", dialog_kind: "refusal_fallback_prompt", payload: { originalModel: "claude-opus-5-5", fallbackModel: "claude-opus-4-8", apiRefusalCategory: null } };
+
+await check("an MCP server's form: its fields, a required one named, Accept sends the values typed; Decline", async () => {
+  await fresh({}, false);
+  await send([sent("pick a port"), ...events(elicitUpTo)]);
+  assert.equal((await text(".card")).length, 1, "the tool's own permission was answered: one card");
+  assert.deepEqual(await text(".card .card-title span"), ["bench asks"]);
+  assert.ok((await text(".card p"))[0].includes("Which serial port should the test use?"));
+  assert.deepEqual(await text(".card .field-label"), ["Serial port (required)", "Baud rate", "Parity", "Verbose log"]);
+  assert.equal(await exec("return document.querySelectorAll('.card .field input')[1].value"), "115200", "the schema's default");
+  await click(".card button", "Accept");
+  assert.deepEqual(await text(".card .actions .err"), ["Serial port is required"]);
+  assert.deepEqual(await responded(), [], "nothing sent without the required field");
+  await exec("const i=document.querySelector('.card .field input'); i.value='/dev/ttyACM0'; i.dispatchEvent(new Event('input', {bubbles:true}))");
+  await settle();
+  await shot("dialog-elicitation");
+  await click(".card button", "Accept");
+  const r = await responded();
+  assert.deepEqual(r.map((x) => x.response), [{ action: "accept", content: { port: "/dev/ttyACM0", baud: 115200, verbose: false } }]);
+  assert.equal(r[0].requestId, elicitUpTo.at(-1).request_id);
+  await clearPosts();
+  await click(".card button", "Decline");
+  assert.deepEqual((await responded()).map((x) => x.response), [{ action: "decline" }]);
+});
+
+await check("an MCP server's link: shown, Open opens it and accepts; × cancels", async () => {
+  await fresh({}, false);
+  await send([
+    sent("sign in"),
+    cliAsks("r-url", { subtype: "elicitation", mcp_server_name: "bench", message: "Sign in to the test bench to continue.", mode: "url", url: "https://example.com/bench/sign-in", elicitation_id: "bench-sign-in-1" }),
+  ]);
+  assert.deepEqual(await text(".card .url"), ["https://example.com/bench/sign-in"]);
+  await click(".card button", "Open");
+  const ps = await posts();
+  assert.deepEqual(ps.find((p) => p.t === "openLink"), { t: "openLink", url: "https://example.com/bench/sign-in" });
+  assert.deepEqual(ps.find((p) => p.t === "respond").response, { action: "accept" });
+  await clearPosts();
+  await click(".card button.close");
+  assert.deepEqual((await responded()).map((x) => x.response), [{ action: "cancel" }]);
+});
+
+await check("auto mode's billing notice: its title and words, Learn more, Continue or Stop as Claude Code answers", async () => {
+  await fresh({}, false);
+  await send([sent("go on"), cliAsks("r-auto", AUTO)]);
+  assert.deepEqual(await text(".card .card-title"), ["Auto mode is using billed classifier requests"]);
+  assert.equal((await text(".card p")).length, 3, "two paragraphs and Learn more");
+  await click(".card a", "Learn more");
+  assert.deepEqual((await posts()).find((p) => p.t === "openLink"), { t: "openLink", url: AUTO.payload.helpUrl });
+  await shot("dialog-auto-mode");
+  await click(".card button", "Continue");
+  await click(".card button", "Stop");
+  assert.deepEqual(
+    (await responded()).map((x) => [x.requestId, x.response]),
+    [
+      ["r-auto", { behavior: "completed", result: "continue" }],
+      ["r-auto", { behavior: "completed", result: "interrupt" }],
+    ],
+  );
+});
+
+await check("a flagged message: Session paused; Switch to the fallback, or Edit prompt puts the message back in the draft; × cancels", async () => {
+  await fresh({}, false);
+  await send([sent("why does the board reset"), cliAsks("r-refusal", REFUSAL)]);
+  assert.deepEqual(await text(".card .card-title span"), ["Session paused"]);
+  assert.ok((await text(".card p"))[0].startsWith("Opus 5.5's safeguards flagged this message."), (await text(".card p"))[0]);
+  assert.deepEqual(await text(".card .actions button"), ["Switch to Opus 4.8", "Edit prompt and retry with Opus 5.5"]);
+  await shot("dialog-refusal");
+  await click(".card button", "Switch to");
+  await click(".card button", "Edit prompt");
+  await click(".card button.close");
+  assert.deepEqual(
+    (await responded()).map((x) => x.response),
+    [
+      { behavior: "completed", result: "retry_fallback" },
+      { behavior: "completed", result: "edit_prompt" },
+      { behavior: "cancelled" },
+    ],
+  );
+  assert.equal(await value(), "why does the board reset", "the message is back in the draft");
+});
+
+await check("a dialog that comes while the owner types waits as a quiet line, as any card (55)", async () => {
+  await fresh({}, false);
+  await send([sent("go on")]);
+  await type("half a thought");
+  await send([cliAsks("r-auto-2", AUTO)]);
+  assert.deepEqual(await text(".card.held .held-what"), ["Auto mode: Continue or Stop?"]);
+  await click(".card.held button", "Show");
+  assert.equal((await text(".card.dialog")).length, 1);
+});
+
+await check("a request the panel cannot show leaves one line in the timeline, and no card", async () => {
+  await fresh({}, false);
+  await send([sent("go on"), cliAsks("r-x", { subtype: "ui_prompt_read", surface: "panel" })]);
+  assert.deepEqual(await text(".note.info"), ['Claude Code asked this panel for "ui_prompt_read", which it cannot show: declined.']);
+  assert.equal((await text(".card")).length, 0);
+});
+
 await check("reply chips after a turn: a click sends it; the handoff's chip asks for a fresh chat", async () => {
   const sid = await fresh();
   const chips = [

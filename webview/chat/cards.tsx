@@ -1,6 +1,7 @@
 // What waits on the owner (decision 8): a permission prompt with allow and
 // deny; Claude's question as a form with options and previews; a plan with
-// approve and keep planning. On the wire all three are `can_use_tool`.
+// approve and keep planning. On the wire all three are `can_use_tool`; the
+// CLI's own dialogs and MCP elicitations are dialogs.tsx's (decision 66).
 //
 // A card never takes focus, and nothing typed in the input answers one. One
 // that comes while the owner types waits as a quiet line until the draft is
@@ -11,6 +12,7 @@ import type { Pending } from "../../src/wire/reducer";
 import { Markdown } from "../shared/markdown";
 import { vscodeApi } from "../shared/vscode";
 import { ownerTyping } from "./composer";
+import { DialogCard, dialogLine } from "./dialogs";
 import { DiffView, ToolCtx, toolLabel, toolSummary } from "./tools";
 
 const post = (m: unknown) => vscodeApi.postMessage(m);
@@ -163,7 +165,9 @@ function HeldCard({ p, ctx, onShow }: { p: Pending; ctx: ToolCtx; onShow: () => 
       ? `Claude asks: ${qs[0]?.question ?? ""}${qs.length > 1 ? ` (+${qs.length - 1})` : ""}`
       : p.form === "plan"
         ? "Claude's plan is ready"
-        : `Allow ${toolLabel(p.toolName)}? ${toolSummary(p.toolName, p.input, ctx.cwd)}`;
+        : p.form === "dialog" || p.form === "elicitation"
+          ? dialogLine(p)
+          : `Allow ${toolLabel(p.toolName)}? ${toolSummary(p.toolName, p.input, ctx.cwd)}`;
   return (
     <div class="card held" role="status" title="Waits while you type: it opens once you send or clear the draft, leave the input, or pause">
       <span class="held-what">{what}</span>
@@ -173,7 +177,7 @@ function HeldCard({ p, ctx, onShow }: { p: Pending; ctx: ToolCtx; onShow: () => 
   );
 }
 
-export function PendingCards({ pending, ctx, readOnly }: { pending: Pending[]; ctx: ToolCtx; readOnly: boolean }) {
+export function PendingCards({ pending, ctx, readOnly, recall = () => {} }: { pending: Pending[]; ctx: ToolCtx; readOnly: boolean; recall?: () => void }) {
   // The owner's typing, read as each card first shows (55): it re-renders when that ends.
   const [, bump] = useState(0);
   useEffect(() => {
@@ -207,6 +211,8 @@ export function PendingCards({ pending, ctx, readOnly }: { pending: Pending[]; c
           <QuestionCard key={p.requestId} p={p} ctx={ctx} />
         ) : p.form === "plan" ? (
           <PlanCard key={p.requestId} p={p} ctx={ctx} />
+        ) : p.form === "dialog" || p.form === "elicitation" ? (
+          <DialogCard key={p.requestId} p={p} ctx={ctx} recall={recall} />
         ) : (
           <PermissionCard key={p.requestId} p={p} ctx={ctx} />
         ),

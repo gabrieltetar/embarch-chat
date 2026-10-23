@@ -70,6 +70,8 @@ export type ChatToHost =
   | { t: "allow"; requestId: string; always?: boolean }
   | { t: "deny"; requestId: string; message?: string }
   | { t: "answer"; requestId: string; answers: Record<string, string> }
+  /** A dialog's or an MCP elicitation's answer, as the CLI's schema has it (decision 66). */
+  | { t: "respond"; requestId: string; response: Record<string, unknown> }
   | { t: "interrupt" }
   | { t: "mode"; mode: string }
   | { t: "model"; model: string }

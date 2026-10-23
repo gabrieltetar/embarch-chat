@@ -56,6 +56,29 @@ export interface PermissionRequest {
   blocked_path?: string;
 }
 
+/** An MCP server's question for the owner, passed on by the CLI (decision 66). */
+export interface ElicitationRequest {
+  subtype: "elicitation";
+  mcp_server_name: string;
+  message: string;
+  mode?: "form" | "url";
+  url?: string;
+  elicitation_id?: string;
+  /** A JSON schema: an object of flat fields (string, number, integer, boolean, enum). */
+  requested_schema?: Record<string, unknown>;
+  title?: string;
+  display_name?: string;
+  description?: string;
+}
+
+/** A blocking dialog of the CLI's own, sent only for a kind the panel declared in `initialize` (decision 66). */
+export interface DialogRequest {
+  subtype: "request_user_dialog";
+  dialog_kind: string;
+  payload: Record<string, unknown>;
+  tool_use_id?: string;
+}
+
 /** What the owner answers a `can_use_tool` with. */
 export type PermissionDecision =
   | { behavior: "allow"; updatedInput: Record<string, unknown>; updatedPermissions?: unknown[] }

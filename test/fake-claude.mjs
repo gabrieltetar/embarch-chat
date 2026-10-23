@@ -218,8 +218,10 @@ for (; pos < entries.length; pos++) {
     idMap.set(want.request_id, got.request_id);
   }
   if (want.type === "control_response") {
-    const w = want.response.response?.behavior;
-    const g = got.response?.response?.behavior;
+    // A permission's or a dialog's behavior, an elicitation's action, and an error answer's subtype (decision 66).
+    const answerOf = (r) => r?.response?.behavior ?? r?.response?.action ?? (r?.subtype === "error" ? "error" : undefined);
+    const w = answerOf(want.response);
+    const g = answerOf(got.response);
     if (got.response?.request_id !== want.response.request_id) fail(`answer for ${got.response?.request_id}, expected ${want.response.request_id}`);
     if (w !== g) fail(`permission answered ${g}, the recording answered ${w}`);
     if (want.response.response?.updatedInput?.answers && !got.response.response?.updatedInput?.answers) fail("a question answered without answers");
