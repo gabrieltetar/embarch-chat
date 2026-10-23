@@ -405,3 +405,31 @@ test("an open file with unsaved changes is saved before Claude reads it (decisio
   assert.ok(mock.state.output.some((l) => l.includes("autosave: /work/rec/autosave/note.txt saved before Read")));
   mock.state.textDocuments.length = 0;
 });
+
+test("with the diagnostics tool on, a chat's Claude reads the Problems panel through the panel's own MCP server (decision 65)", { skip }, async () => {
+  const input = path.join(dir, "input-diagnostics.jsonl");
+  process.env.FAKE_CLAUDE_INPUT_LOG = input;
+  mock.state.config["embarchChat.diagnosticsTool"] = true;
+  const range = { start: { line: 11, character: 14 }, end: { line: 11, character: 15 } };
+  mock.state.diagnostics.push([mock.vscode.Uri.file("/work/rec/diagnostics/src/main.c"), [{ message: "expected ';' before '}' token", severity: 0, range, source: "gcc" }]]);
+  mock.state.diagnostics.push([mock.vscode.Uri.file("/work/rec/diagnostics/src/clean.c"), []]);
+  try {
+    await startUntracked("diagnostics");
+    const n = chatView.webview.posted.length;
+    chatView.webview.fromPage({ t: "send", text: "Read note.txt, then call the getDiagnostics tool with no arguments, then reply in one line: the secret word, and how many errors and how many warnings it reports." });
+    const ask = await waitFor(() => chatView.webview.posted.slice(n).find((m) => m.t === "event" && m.e.type === "control_request"), 5000, "the tool's permission prompt");
+    chatView.webview.fromPage({ t: "allow", requestId: ask.e.request_id });
+    await waitFor(() => chatView.webview.posted.slice(n).some((m) => m.t === "event" && m.e.type === "result"), 5000, "the turn's end");
+    const sent = fs.readFileSync(input, "utf8").trim().split("\n").map((l) => JSON.parse(l).o);
+    const init = sent.find((o) => o.type === "control_request" && o.request.subtype === "initialize").request;
+    assert.deepEqual(init.sdkMcpServers, ["embarch-chat"]);
+    assert.ok(init.hooks.PreToolUse, "autosave's hook beside it");
+    assert.deepEqual(init.supportedDialogKinds, core.DIALOG_KINDS, "and the dialogs, in the one initialize (66)");
+    const call = sent.map((o) => o.response?.response?.mcp_response?.result?.content?.[0]?.text).find(Boolean);
+    assert.deepEqual(JSON.parse(call), [{ uri: "file:/work/rec/diagnostics/src/main.c", diagnostics: [{ message: "expected ';' before '}' token", severity: "Error", range, source: "gcc" }] }], "VS Code's own diagnostics, the clean file left out");
+  } finally {
+    delete process.env.FAKE_CLAUDE_INPUT_LOG;
+    delete mock.state.config["embarchChat.diagnosticsTool"];
+    mock.state.diagnostics.length = 0;
+  }
+});

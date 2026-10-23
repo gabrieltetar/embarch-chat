@@ -330,6 +330,30 @@ const scenarios = {
     await r.result();
     await r.close();
   },
+  // The panel's own MCP server (decision 65): named in initialize, then the
+  // CLI speaks MCP to it as `mcp_message` control requests. Its Problems
+  // panel is made up: one file, an error and a warning.
+  async diagnostics() {
+    const r = new Rec("diagnostics", ["--tools", "Read"]);
+    const problems = [
+      {
+        uri: `file://${r.dir}/src/main.c`,
+        diagnostics: [
+          { message: "expected ';' before '}' token", severity: 0, range: { start: { line: 11, character: 14 }, end: { line: 11, character: 15 } }, source: "gcc" },
+          { message: "unused variable 'count'", severity: 1, range: { start: { line: 4, character: 6 }, end: { line: 4, character: 11 } }, source: "clangd", code: "-Wunused-variable" },
+        ],
+      },
+    ];
+    const tool = { ...core.DIAGNOSTICS_TOOL, call: async (args) => core.formatDiagnostics(args.uri ? problems.filter((f) => f.uri === args.uri) : problems, !!args.uri) };
+    // With autosave's hook beside it, and the dialogs: the one initialize the panel sends, all three parts.
+    const hooks = { beforeFileTool: async () => {}, mcp: { [core.PANEL_MCP_SERVER]: core.mcpServer({ name: core.PANEL_MCP_SERVER, version: "0.1.0" }, [tool]) } };
+    const answer = core.answererFor(hooks, console.log);
+    r.onControl = (o) => answer(o.request)?.then((resp) => r.respond(o, resp));
+    r.control("init-1", { subtype: "initialize", supportedDialogKinds: core.DIALOG_KINDS, ...core.initializeRequest(hooks) });
+    r.user("Read note.txt, then call the getDiagnostics tool with no arguments, then reply in one line: the secret word, and how many errors and how many warnings it reports.");
+    await r.result();
+    await r.close();
+  },
   async persist() {
     const r = new Rec("persist", ["--tools", ""], { persist: true });
     r.user("Remember the word PELICAN. Reply with just: noted");

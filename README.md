@@ -40,6 +40,11 @@ whose decision numbers the code cites.
   writes it**, as Claude Code's own panel does: a PreToolUse hook declared
   in the CLI's `initialize`, which the CLI calls back over stdio and waits
   on (at most 5 s).
+- **Claude can read the Problems panel** when `embarchChat.diagnosticsTool`
+  is on (off by default): Claude Code's own `getDiagnostics` IDE tool,
+  served by the extension as an MCP server over the chat's stdio — named in
+  `initialize`, spoken to as `mcp_message` control requests; no process, no
+  port, no lock file.
 - **A chat is on its work item before it starts**: the extension picks the
   session id, assigns it on the desk as this panel's, then starts `claude`.
 - **A chat's process closes 5 minutes after its last input or reply**,
@@ -173,6 +178,7 @@ The extension does not run in an untrusted workspace.
 | `embarchChat.deskTokenPath` | `"~/.config/embarch-desk/desk-token"` | The desk's token. |
 | `embarchChat.assistant` | `true` | The Haiku assistant: ghost text, cards, chips, naming. Off, the instant prefix match and the CLI's own suggestion remain. |
 | `embarchChat.autosave` | `true` | Save an open file's unsaved changes before Claude reads, edits or writes it. |
+| `embarchChat.diagnosticsTool` | `false` | Give Claude `getDiagnostics`, the Problems panel (its definition rides in every chat's tool list). |
 | `embarchUi.binaryPath` | `"embarch-ui"` | The embarch-ui binary the launcher starts. |
 | `embarchUi.host` / `embarchUi.port` | `127.0.0.1` / `4890` | Where embarch-ui serves (also the Desk link). |
 | `embarchUi.configPath` | `""` | An embarch-ui TOML config, as `EMBARCH_UI_CONFIG`. |

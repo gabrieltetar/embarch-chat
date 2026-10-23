@@ -992,3 +992,77 @@ test("the panel's autosave hook: declared in initialize ahead of the first messa
   assert.equal(bare.inputs()[1].type, "user");
   bare.chat.dispose();
 });
+
+// ------------------------------------------------------------ the panel's own MCP server (decision 65)
+
+const PROBLEMS = [
+  {
+    uri: "file:///work/rec/diagnostics/src/main.c",
+    diagnostics: [
+      { message: "expected ';' before '}' token", severity: 0, range: { start: { line: 11, character: 14 }, end: { line: 11, character: 15 } }, source: "gcc" },
+      { message: "unused variable 'count'", severity: 1, range: { start: { line: 4, character: 6 }, end: { line: 4, character: 11 } }, source: "clangd", code: "-Wunused-variable" },
+    ],
+  },
+];
+
+test("one initialize carries the dialogs, autosave's hook and the panel's own MCP server; its getDiagnostics is called over the chat's stdio as Claude Code's IDE tool is (decisions 61, 65, 66)", async () => {
+  const asked = [];
+  const saved = [];
+  const tool = { ...core.DIAGNOSTICS_TOOL, call: async (args) => (asked.push(args), core.formatDiagnostics(PROBLEMS, false)) };
+  const server = core.mcpServer({ name: core.PANEL_MCP_SERVER, version: "0.1.0" }, [tool]);
+  const { chat, events, inputs } = makeChat("diagnostics", { hooks: () => ({ beforeFileTool: async (t) => void saved.push(t), mcp: { [core.PANEL_MCP_SERVER]: server } }) });
+  chat.send("Read note.txt, then call the getDiagnostics tool with no arguments, then reply in one line: the secret word, and how many errors and how many warnings it reports.");
+  await waitFor(() => chat.state.pending.length === 1);
+  assert.equal(chat.state.pending[0].toolName, "mcp__embarch-chat__getDiagnostics");
+  chat.allow(chat.state.pending[0]);
+  await turns(chat, 1);
+  const sent = inputs();
+  assert.deepEqual(Object.keys(sent[0].request), ["subtype", "supportedDialogKinds", "hooks", "sdkMcpServers"]);
+  assert.deepEqual(sent[0].request.sdkMcpServers, ["embarch-chat"]);
+  assert.equal(sent.filter((o) => o.request?.subtype === "initialize").length, 1, "one initialize");
+  assert.deepEqual(saved, ["Read"], "autosave's hook, beside the server");
+  const mcp = sent.filter((o) => o.type === "control_response" && o.response.response?.mcp_response).map((o) => o.response.response.mcp_response);
+  assert.equal(mcp[0].result.serverInfo.name, "embarch-chat", "the MCP handshake");
+  assert.deepEqual(mcp[2].result.tools.map((t) => t.name), ["getDiagnostics"]);
+  assert.deepEqual(asked, [{}]);
+  const text = mcp[3].result.content[0].text;
+  assert.deepEqual(JSON.parse(text)[0].diagnostics.map((d) => [d.severity, d.message]), [
+    ["Error", "expected ';' before '}' token"],
+    ["Warning", "unused variable 'count'"],
+  ]);
+  assert.ok(!events.some((e) => e.type === "control_request" && ["mcp_message", "hook_callback"].includes(e.request?.subtype)), "the panel's own traffic, never refused (66)");
+  assert.ok(!Object.values(chat.state.entries).some((e) => e.kind === "note"), "no refusal note");
+  assert.deepEqual(entries(chat.state, "tool").map((t) => t.status), ["done", "done"]);
+  assert.equal(top(chat.state).at(-1).text, "MANGO, 1 error, 1 warning.");
+  chat.dispose();
+});
+
+test("the MCP server answers what it does not serve with an error, a notification with nothing, and a failing tool as a tool error", async () => {
+  const server = core.mcpServer({ name: "x", version: "1" }, [{ name: "boom", description: "", inputSchema: { type: "object" }, call: async () => { throw new Error("no editor"); } }]);
+  assert.equal(await server({ jsonrpc: "2.0", method: "notifications/initialized" }), null);
+  assert.equal((await server({ jsonrpc: "2.0", id: 1, method: "resources/list" })).error.code, -32601);
+  assert.equal((await server({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "nope" } })).error.code, -32602);
+  const r = await server({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "boom", arguments: {} } });
+  assert.deepEqual(r.result, { content: [{ type: "text", text: "no editor" }], isError: true });
+  // An unknown server or hook is an error answer, never silence the CLI would wait on.
+  const answer = core.answererFor({}, () => {});
+  await assert.rejects(answer({ subtype: "mcp_message", server_name: "x", message: {} }));
+  await assert.rejects(answer({ subtype: "hook_callback", callback_id: "hook_9", input: {} }));
+  assert.equal(answer({ subtype: "elicitation" }), null, "anything else goes on as a message");
+});
+
+test("diagnostics as Claude Code shapes them: severity by name, a code from its value, clean files left out unless asked, a cap that says so", () => {
+  const files = [
+    ...PROBLEMS,
+    { uri: "file:///work/clean.c", diagnostics: [] },
+    { uri: "file:///work/b.c", diagnostics: [{ message: "m", severity: 3, range: PROBLEMS[0].diagnostics[0].range, code: { value: 42 } }] },
+  ];
+  const all = JSON.parse(core.formatDiagnostics(files, false));
+  assert.deepEqual(all.map((f) => f.uri), ["file:///work/rec/diagnostics/src/main.c", "file:///work/b.c"]);
+  assert.deepEqual(all[1].diagnostics[0], { message: "m", severity: "Hint", range: PROBLEMS[0].diagnostics[0].range, code: "42" });
+  assert.deepEqual(JSON.parse(core.formatDiagnostics([files[1]], true)), [{ uri: "file:///work/clean.c", diagnostics: [] }]);
+  const many = Array.from({ length: 2000 }, (_, i) => ({ uri: `file:///work/f${i}.c`, diagnostics: PROBLEMS[0].diagnostics }));
+  const cut = JSON.parse(core.formatDiagnostics(many, false));
+  assert.ok(cut.length < 2000);
+  assert.match(cut.at(-1).note, /^\d+ more file\(s\) left out/);
+});

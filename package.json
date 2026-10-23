@@ -187,6 +187,12 @@
             "default": true,
             "scope": "machine",
             "description": "Before Claude reads, edits or writes a file, save that file's unsaved changes in the editor, as Claude Code's own panel does (decision 61). Off, Claude works on the copy on disk. User or Remote settings only — a workspace cannot set it."
+          },
+          "embarchChat.diagnosticsTool": {
+            "type": "boolean",
+            "default": false,
+            "scope": "machine",
+            "description": "Give Claude a getDiagnostics tool that reads VS Code's Problems panel, unsaved edits included — Claude Code's own IDE tool, served by this extension over the chat's stdio (decision 65). Off by default; on, its definition rides in every chat's tool list. Takes effect when a chat's process next starts. User or Remote settings only — a workspace cannot turn it on."
           }
         }
       },

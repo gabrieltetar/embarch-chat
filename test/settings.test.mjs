@@ -72,6 +72,8 @@ before(async () => {
     // The owner turned the assistant off; the repo would turn it back on, and keep chats' processes up for ever.
     "embarchChat.assistant": true,
     "embarchChat.idleMinutes": 100000,
+    // And would hand every chat its Problems panel, which the owner keeps off.
+    "embarchChat.diagnosticsTool": true,
   });
   mock.state.folders = [folder];
   ext = require("../dist/extension.js");
@@ -95,7 +97,7 @@ after(async () => {
 test("every path or URL setting is machine-scoped: user or remote settings only", () => {
   const props = Object.assign({}, ...pkg.contributes.configuration.map((s) => s.properties));
   const machine = Object.keys(props).filter((k) => props[k].scope === "machine");
-  for (const k of ["embarchChat.claudePath", "embarchChat.deskUrl", "embarchChat.deskTokenPath", "embarchChat.assistant", "embarchChat.idleMinutes", "embarchChat.autosave", "embarchUi.binaryPath", "embarchUi.host", "embarchUi.port", "embarchUi.configPath", "embarchUi.autoStart"]) {
+  for (const k of ["embarchChat.claudePath", "embarchChat.deskUrl", "embarchChat.deskTokenPath", "embarchChat.assistant", "embarchChat.idleMinutes", "embarchChat.autosave", "embarchChat.diagnosticsTool", "embarchUi.binaryPath", "embarchUi.host", "embarchUi.port", "embarchUi.configPath", "embarchUi.autoStart"]) {
     assert.ok(machine.includes(k), `${k} is machine-scoped`);
   }
   for (const [k, v] of Object.entries(props)) {
@@ -119,4 +121,5 @@ test("a workspace cannot turn the assistant on against the owner's off, or set h
   assert.equal(lib?.assistant, false, "the owner's off holds");
   const c = mock.vscode.workspace.getConfiguration("embarchChat");
   assert.equal(c.get("idleMinutes", 5), 5, "the workspace's 100000 minutes do not apply");
+  assert.equal(c.get("diagnosticsTool", false), false, "the workspace cannot give Claude the Problems panel");
 });

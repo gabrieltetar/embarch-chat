@@ -102,6 +102,8 @@ const state = {
   output: [],
   /** The editor's open documents: { uri, isDirty, save() }. */
   textDocuments: [],
+  /** The Problems panel: [uri, diagnostics] pairs. */
+  diagnostics: [],
 };
 
 const vscode = {
@@ -179,6 +181,9 @@ const vscode = {
     registerTextDocumentContentProvider: () => disposable(),
     findFiles: async () => [],
     openTextDocument: async (p) => (state.opened.push(String(p)), null),
+  },
+  languages: {
+    getDiagnostics: (uri) => (uri ? (state.diagnostics.find(([u]) => u.fsPath === uri.fsPath)?.[1] ?? []) : state.diagnostics),
   },
   commands: {
     registerCommand: (id, fn) => {
