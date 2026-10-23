@@ -50,6 +50,9 @@ interface SavedChat {
   fork?: { from: string; at: string };
   /** A turn finished unseen: it comes back unread, as Claude Code keeps its marks. */
   unread?: boolean;
+  /** The chat's own effort and Ultracode: a step continued after the reload runs at them too. */
+  effort?: string;
+  ultracode?: boolean;
 }
 
 interface Saved {
@@ -107,6 +110,8 @@ export class ReloadMemory implements vscode.Disposable {
         ...(r.chat.pendingName ? { title: r.chat.pendingName } : {}),
         ...(r.chat.pendingFork ? { fork: r.chat.pendingFork } : {}),
         ...(r.unread ? { unread: true } : {}),
+        ...(st.effort ? { effort: st.effort } : {}),
+        ...(st.ultracode ? { ultracode: true } : {}),
       });
     }
     const saved: Saved | undefined = chats.length ? { at: Date.now(), current: this.manager.current, chats } : undefined;
@@ -159,6 +164,8 @@ export async function restoreAfterReload(o: RestoreCtx): Promise<void> {
     if (fresh && c.title) void rec.chat.renameByHand(c.title);
     rec.untracked = c.untracked;
     if (c.unread) rec.unread = true;
+    // No process runs it yet: the next one starts with them.
+    if (c.effort || c.ultracode) void rec.chat.setEffort(c.effort ?? null, !!c.ultracode);
     o.memory.noteRerun(c.sid, c.reruns);
     if (c.tab) o.openTab(c.sid);
     void bringBack(o, c);

@@ -1201,6 +1201,36 @@ details.thinking .md {
   color: var(--muted);
   font-size: 0.86em;
 }
+.pop-row {
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.pop-row:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+.pop-row.on {
+  background: var(--active);
+  color: var(--on-active);
+}
+.effort-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 0 8px 4px;
+}
+.effort-row button {
+  padding: 0 6px;
+}
+.effort-row button.on {
+  color: var(--on-accent);
+  background: var(--accent);
+}
+.ultracode {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+}
 .mcp-row {
   display: flex;
   align-items: center;

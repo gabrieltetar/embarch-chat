@@ -35,7 +35,7 @@ import type { Attachment } from "../../src/wire/message";
 import type { EditorItem } from "../../src/editorContext";
 import { IMAGE_TYPES, looksBinary, pasteToMark, pastesIn, rememberPaste, stripInvisible, strippedNotice } from "../../src/wire/message";
 import type { HostToChat, MentionItem } from "../shared/protocol";
-import { MODELS, MODES } from "../shared/protocol";
+import { MODES } from "../shared/protocol";
 import { vscodeApi } from "../shared/vscode";
 import { CategoryMenu, MenuGroup } from "./menus";
 
@@ -54,7 +54,6 @@ interface Props {
   /** A card waits on the owner: a message sent now goes in after its answer (55). */
   waiting: boolean;
   mode: string;
-  model: string | null;
   slashCommands: string[];
   placeholder: string;
   mentions: { q: string; items: MentionItem[] } | null;
@@ -67,7 +66,7 @@ interface Props {
   /** The editor's open file or selection (60). */
   editor: EditorChip | null;
   chips: Chip[];
-  /** The pills beside the mode select (footer.tsx). */
+  /** The pills beside the mode select (footer.tsx): the model pill, MCP. */
   footer?: preact.ComponentChildren;
   onSend: (text: string, opts: SendOpts) => void;
   onChip: (chip: Chip) => void;
@@ -145,7 +144,7 @@ function setTyping(v: boolean): void {
 }
 
 export function Composer(p: Props) {
-  const { sid, busy, mode, model, slashCommands, placeholder, mentions, library, chips, onChip } = p;
+  const { sid, busy, mode, slashCommands, placeholder, mentions, library, chips, onChip } = p;
   const [text, setTextState] = useState(() => (vscodeApi.getState() as Saved | undefined)?.drafts?.[sid] ?? "");
   const [pop, setPop] = useState<Pop | null>(null);
   const [ghost, setGhost] = useState<Ghost | null>(null);
@@ -862,13 +861,6 @@ export function Composer(p: Props) {
             </option>
           ))}
           {!MODES.some((m) => m.id === mode) && <option value={mode}>{mode}</option>}
-        </select>
-        <select title="Model" value={MODELS.some((m) => m.id === model) ? (model as string) : "default"} onChange={(e) => post({ t: "model", model: (e.target as HTMLSelectElement).value })}>
-          {MODELS.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.id === "default" && model && !MODELS.some((x) => x.id === model) ? model : m.label}
-            </option>
-          ))}
         </select>
         {p.footer}
         <span class="assist-slot">

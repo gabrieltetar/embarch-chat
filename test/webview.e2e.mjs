@@ -591,12 +591,56 @@ await check("mode and model switch, context meter and Compact", async () => {
   assert.ok((await text(".meter"))[0].includes("75%"));
   await clearPosts();
   await exec("const s=document.querySelectorAll('.composer select')[0]; s.value='plan'; s.dispatchEvent(new Event('change'))");
-  await exec("const s=document.querySelectorAll('.composer select')[1]; s.value='opus'; s.dispatchEvent(new Event('change'))");
+  // The model is in Claude Code's model pill now: its list opens over the input.
+  await click(".composer .pill.model");
+  await settle();
+  await exec("[...document.querySelectorAll('.model-pop .pop-row')].find((e) => e.textContent.startsWith('Opus')).dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))");
   await click(".meter button", "Compact");
   const ps = await posts();
   assert.ok(ps.some((p) => p.t === "mode" && p.mode === "plan"));
   assert.ok(ps.some((p) => p.t === "model" && p.model === "opus"));
   assert.ok(ps.some((p) => p.t === "compact"));
+});
+
+await check("the model pill: model, effort and Ultracode for this chat, as Claude Code's — the levels the model takes, Ultracode where the CLI offers it, none of it on Haiku (its changelog L2008, L1858, L416)", async () => {
+  const lines = outLines("effort");
+  const models = core.modelInfos(lines.find((o) => o.type === "control_response" && o.response.response?.models).response.response.models);
+  const applied = (effort, ultracode, model = "claude-sonnet-5-5", ultracodeAvailable = true) => ({ model, effort, ultracode, ultracodeAvailable });
+  // Picked before the first message: nothing runs, so the pill shows the pick.
+  await send([snapshot({ process: "none", effort: "low" })]);
+  assert.deepEqual(await text(".composer .pill.model"), ["Default · low"]);
+  await send([snapshot({ model: "claude-sonnet-5-5", models, applied: applied("low", false), effort: "low" })]);
+  assert.deepEqual(await text(".composer .pill.model"), ["Sonnet · low"]);
+  await click(".composer .pill.model");
+  await settle();
+  assert.deepEqual(await text(".model-pop .pop-row"), ["Default model", "Opus", "Sonnet", "Haiku"], "the panel's list, as before");
+  assert.deepEqual(await text(".model-pop .pop-row.on"), ["Sonnet"]);
+  assert.deepEqual(await text(".model-pop .effort-row button"), ["Default", "low", "medium", "high", "xhigh", "max"]);
+  assert.deepEqual(await text(".model-pop .effort-row button.on"), ["low"]);
+  assert.equal(await exec("return document.querySelector('.model-pop .ultracode input').checked"), false);
+  await shot("model-pop");
+  await clearPosts();
+  await click(".model-pop .effort-row button", "high");
+  await click(".model-pop .ultracode input");
+  assert.deepEqual((await posts()).filter((p) => p.t === "effort"), [
+    { t: "effort", effort: "high", ultracode: false },
+    { t: "effort", effort: "low", ultracode: true },
+  ]);
+  // The CLI says what runs: the pill follows it.
+  await send([{ t: "event", e: { type: "_effort", effort: "high", ultracode: true } }, { t: "event", e: { type: "_applied", applied: applied("high", true) } }]);
+  assert.deepEqual(await text(".composer .pill.model"), ["Sonnet · high · Ultracode"]);
+  await clearPosts();
+  await click(".model-pop .effort-row button", "Default");
+  assert.deepEqual((await posts()).filter((p) => p.t === "effort"), [{ t: "effort", effort: null, ultracode: true }], "back to the model's own level");
+  // Haiku takes no effort, and the CLI offers no Ultracode on it.
+  await send([{ t: "event", e: { type: "_model", model: "haiku" } }, { t: "event", e: { type: "_applied", applied: applied(null, false, "claude-haiku-4-5-20251001", false) } }]);
+  assert.deepEqual(await text(".composer .pill.model"), ["Haiku"]);
+  assert.deepEqual(await text(".model-pop .effort-row button"), []);
+  assert.ok((await text(".model-pop .pop-note"))[0].includes("takes no effort level"));
+  assert.equal(await exec("return document.querySelectorAll('.model-pop .ultracode').length"), 0);
+  await exec("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))");
+  await settle();
+  assert.equal((await text(".model-pop")).length, 0);
 });
 
 await check("a message refused with its chat keeps its text on screen, with Copy", async () => {

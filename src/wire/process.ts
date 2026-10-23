@@ -28,6 +28,8 @@ export interface SpawnSpec {
   extraArgs?: string[];
   /** What else the one `initialize` declares: the panel's own hooks and MCP servers (decisions 61, 65). */
   initialize?: Record<string, unknown>;
+  /** The chat's own flag settings (`--settings`): its effort and Ultracode, for this process only. */
+  settings?: Record<string, unknown>;
 }
 
 /** The official panel's flags (proposal, "What is possible"), plus streaming and prompt suggestions. */
@@ -54,6 +56,7 @@ export function claudeArgs(spec: SpawnSpec): string[] {
     args.push(`--resume=${from}`, "--fork-session", "--session-id", spec.sessionId, "--resume-session-at", at);
   } else args.push(...(spec.resume ? [`--resume=${spec.sessionId}`] : ["--session-id", spec.sessionId]));
   if (spec.model) args.push("--model", spec.model);
+  if (spec.settings && Object.keys(spec.settings).length) args.push("--settings", JSON.stringify(spec.settings));
   if (spec.extraArgs) args.push(...spec.extraArgs);
   return args;
 }
@@ -84,8 +87,9 @@ interface Waiter {
 export type ControlAnswerer = (request: Record<string, unknown>) => Promise<Record<string, unknown>> | null;
 
 /**
- * Events: `message` (a parsed stdout line), `exit` ({code, signal, stderr}),
- * `error` (spawn failure).
+ * Events: `message` (a parsed stdout line), `initialized` (the answer to the
+ * panel's `initialize`: the models and the levels each takes, ...), `exit`
+ * ({code, signal, stderr}), `error` (spawn failure).
  */
 export class ClaudeProcess extends EventEmitter {
   private child: cp.ChildProcess | undefined;
@@ -145,9 +149,12 @@ export class ClaudeProcess extends EventEmitter {
     // The first line, as Claude Code's panel sends it, and the only
     // initialize: the dialogs this panel renders, which the CLI sends only
     // once declared (decision 66), and the panel's hooks and MCP servers.
-    this.request("initialize", { supportedDialogKinds: DIALOG_KINDS, ...this.spec.initialize }).catch(() => {
-      /* an old CLI, or one that died: the user message initializes with defaults */
-    });
+    this.request("initialize", { supportedDialogKinds: DIALOG_KINDS, ...this.spec.initialize }).then(
+      (r) => this.emit("initialized", r),
+      () => {
+        /* an old CLI, or one that died: the user message initializes with defaults */
+      },
+    );
   }
 
   private onData(d: string): void {

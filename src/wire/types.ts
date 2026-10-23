@@ -107,3 +107,21 @@ export interface ContextUsage {
   percentage: number;
   categories: Array<{ name: string; tokens: number; kind?: string }>;
 }
+
+/** A model of initialize's `models` answer, trimmed to what the model pill reads. */
+export interface ModelInfo {
+  /** The alias the CLI takes (`default`, `opus`, ...). */
+  value: string;
+  resolved?: string;
+  /** The effort levels it takes; empty when it takes none (Haiku). */
+  levels: string[];
+}
+
+/** `get_settings`'s `applied`: what the CLI runs at now. */
+export interface AppliedSettings {
+  model?: string;
+  /** Null: the model takes no effort. */
+  effort: string | null;
+  ultracode: boolean;
+  ultracodeAvailable: boolean;
+}

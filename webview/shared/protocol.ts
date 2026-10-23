@@ -103,6 +103,8 @@ export type ChatToHost =
   | { t: "interrupt" }
   | { t: "mode"; mode: string }
   | { t: "model"; model: string }
+  /** The chat's effort (null: the model's default) and Ultracode, Claude Code's model pill's. */
+  | { t: "effort"; effort: string | null; ultracode: boolean }
   | { t: "compact" }
   | { t: "openDiff"; toolId?: string; requestId?: string }
   /** A pending plan as a tab to comment on; a comment taken back from its card (77). */

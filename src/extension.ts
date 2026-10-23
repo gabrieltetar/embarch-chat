@@ -636,6 +636,9 @@ export function activate(context: vscode.ExtensionContext): void {
     const fresh = await startChat(body, cwd, rec.itemTitle, { fork });
     if (!fresh) return;
     log(`[${sid.slice(0, 8)}] forked before ${uuid.slice(0, 8)}: ${fresh.chat.sessionId}`);
+    // The fork runs at this chat's effort and Ultracode (82): its process starts with them.
+    const { effort, ultracode } = rec.chat.state;
+    if (effort || ultracode) await fresh.chat.setEffort(effort, ultracode);
     if (fork) {
       const name = rec.chat.state.title ?? "Chat";
       fresh.chat.note(`Forked from “${name}”. Your message from there is in the draft.`);

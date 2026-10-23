@@ -674,6 +674,19 @@ test("the MCP pill's asks reach the chat's CLI: the servers as it has them now, 
   }
 });
 
+test("the model pill's effort reaches the chat: its next process starts at it, never in the owner's settings", { skip }, async () => {
+  const sid = await startUntracked("basic");
+  const n = chatView.webview.posted.length;
+  const spawnsBefore = calls().length;
+  chatView.webview.fromPage({ t: "effort", effort: "low", ultracode: false });
+  await waitFor(() => chatView.webview.posted.slice(n).some((m) => m.t === "event" && m.e.type === "_effort" && m.e.effort === "low"), 3000, "the pick on the page");
+  chatView.webview.fromPage({ t: "send", text: "Run the bash command `echo hello-from-bash` and then reply with just: done" });
+  await waitFor(() => chatView.webview.posted.slice(n).some((m) => m.t === "event" && m.e.type === "result"), 5000, "the turn");
+  const argv = calls().slice(spawnsBefore).find((c) => c.argv.includes("--input-format")).argv;
+  assert.equal(argv[argv.indexOf("--settings") + 1], '{"effortLevel":"low"}');
+  assert.equal(lastSnapshot().state.sessionId, sid);
+});
+
 // ------------------------------------------------------------ a window reload (decision 63)
 
 /** The window reloads: this extension host deactivates and a new one activates, with the same workspace state. */
@@ -834,6 +847,9 @@ test("Fork conversation from here: a new chat on the same item with the conversa
   await waitFor(() => results() >= 1, 5000, "the first turn");
   chatView.webview.fromPage({ t: "send", text: "Also remember the word OTTER. Reply with just: noted" });
   await waitFor(() => results() >= 2, 5000, "the second turn");
+  // The parent runs at high effort with Ultracode (82): so will its fork.
+  chatView.webview.fromPage({ t: "effort", effort: "high", ultracode: true });
+  await waitFor(() => chatView.webview.posted.slice(n0).some((m) => m.t === "event" && m.e.type === "_effort" && m.e.effort === "high"), 3000, "the parent's effort");
   // Claude's transcript of it, as the CLI wrote it for the recording.
   const text = fs.readFileSync(PARENT_FIXTURE, "utf8").replaceAll("6c563cde-6794-42ea-b651-dbbcb0946fdc", parent).replaceAll("/work/rec/fork", folder);
   const file = path.join(process.env.CLAUDE_CONFIG_DIR, "projects", folder.replace(/[^a-zA-Z0-9]/g, "-"), `${parent}.jsonl`);
@@ -866,6 +882,7 @@ test("Fork conversation from here: a new chat on the same item with the conversa
   assert.equal(run.argv[run.argv.indexOf("--session-id") + 1], fork);
   assert.equal(run.argv[run.argv.indexOf("--resume-session-at") + 1], second.parentUuid);
   assert.equal(run.env.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING, "true");
+  assert.deepEqual(JSON.parse(run.argv[run.argv.indexOf("--settings") + 1]), { effortLevel: "high", ultracode: true }, "the parent's effort and Ultracode");
   // A fork keeps its name: Haiku names no fork (12).
   await new Promise((r) => setTimeout(r, 300));
   const haikuName = core.parseTurn(haikuAnswer("turn")).name;

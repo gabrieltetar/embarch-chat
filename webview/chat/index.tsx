@@ -27,7 +27,7 @@ import { BackgroundPanel, BackgroundToggle } from "./background";
 import { Queued } from "./queue";
 import { setAtlas } from "./atlas";
 import { LimitBannerView } from "./limits";
-import { McpPill, footerCommand } from "./footer";
+import { McpPill, ModelPill, footerCommand } from "./footer";
 import { Stamp, useNow } from "./clock";
 import { dayKey, elapsedText, stalled } from "./time";
 import { cacheClock } from "../../src/wire/limits";
@@ -440,7 +440,6 @@ function App() {
           busy={busy}
           waiting={state.pending.length > 0}
           mode={state.mode}
-          model={state.model}
           slashCommands={commands}
           placeholder={placeholder}
           mentions={mentions}
@@ -450,7 +449,12 @@ function App() {
           canAsk={view.ours && (state.timeline.length > 0 || state.process === "running")}
           editor={editor}
           chips={chips?.sid === state.sessionId && view.ours ? chips.chips : []}
-          footer={view.ours && <McpPill state={state} />}
+          footer={
+            <>
+              <ModelPill state={state} />
+              {view.ours && <McpPill state={state} />}
+            </>
+          }
           onSend={(text, opts) => {
             if (localCommand(text, live.current)) return;
             if (view.ours && footerCommand(text)) return;

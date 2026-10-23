@@ -7,7 +7,7 @@
 // whose type starts with "_" (a message sent, a prompt answered, the process
 // starting or closing, a control response folded in).
 
-import type { ContentBlock, ContextUsage, DialogRequest, ElicitationRequest, PermissionRequest, RateLimitInfo, WireMessage } from "./types";
+import type { AppliedSettings, ContentBlock, ContextUsage, DialogRequest, ElicitationRequest, ModelInfo, PermissionRequest, RateLimitInfo, WireMessage } from "./types";
 import { answerable, unansweredNote } from "./dialogs";
 import type { ContextItem } from "./message";
 import { readMessage, sameText } from "./message";
@@ -188,6 +188,13 @@ export interface ChatState {
   side: SideQuestion[];
   /** The CLI's MCP servers, last known; null until a process says. */
   mcp: McpServer[] | null;
+  /** The models the CLI offers and the effort levels each takes, from initialize; null until a process says. */
+  models: ModelInfo[] | null;
+  /** The owner's effort for this chat (null: the model's own default) and Ultracode, given to each process it starts. */
+  effort: string | null;
+  ultracode: boolean;
+  /** What the running process runs at (`get_settings`); null while none runs. */
+  applied: AppliedSettings | null;
   seq: number;
 }
 
@@ -222,6 +229,10 @@ export function initialState(sessionId: string, mode = "auto"): ChatState {
     cache: null,
     side: [],
     mcp: null,
+    models: null,
+    effort: null,
+    ultracode: false,
+    applied: null,
     seq: 0,
   };
 }
@@ -739,7 +750,7 @@ export function reduce(s: ChatState, o: WireMessage): ChatState {
         ...s,
         process: o.state as ProcessState,
         processError: (o.error as string) ?? null,
-        ...(o.state === "closed" || o.state === "error" ? { busy: false, streaming: null, pending: [], compacting: false } : {}),
+        ...(o.state === "closed" || o.state === "error" ? { busy: false, streaming: null, pending: [], compacting: false, applied: null } : {}),
       };
     case "_answered": {
       const p = s.pending.find((x) => x.requestId === o.requestId);
@@ -760,6 +771,12 @@ export function reduce(s: ChatState, o: WireMessage): ChatState {
       return { ...s, context: o.usage as ContextUsage };
     case "_mcp":
       return { ...s, mcp: mcpServers(o.servers) };
+    case "_models":
+      return { ...s, models: o.models as ModelInfo[] };
+    case "_applied":
+      return { ...s, applied: o.applied as AppliedSettings };
+    case "_effort":
+      return { ...s, effort: typeof o.effort === "string" ? o.effort : null, ultracode: o.ultracode === true };
     case "_model":
       return { ...s, model: String(o.model) };
     case "_mode":

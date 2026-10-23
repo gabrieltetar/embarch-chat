@@ -636,6 +636,35 @@ const scenarios = {
     await ask({ subtype: "mcp_status" });
     await r.close();
   },
+  // Effort and Ultracode per chat (Claude Code's model pill, its changelog
+  // L2008, L416), on Sonnet — Haiku takes no effort — as the panel does it:
+  // the owner picked "low" before the first message, so the process starts
+  // with it in its flag settings (`--settings`); the levels each model
+  // takes come with initialize's answer, and what the CLI runs at from
+  // `get_settings`, asked once that answer is in. A change is
+  // `apply_flag_settings` with the whole layer (it replaces what was
+  // there); a model switch reads the settings again: on Haiku no effort,
+  // and no Ultracode to offer.
+  async effort() {
+    // The last --model wins over the base's Haiku.
+    const r = new Rec("effort", ["--tools", "", "--model", "sonnet", "--settings", JSON.stringify({ effortLevel: "low" })]);
+    r.control("init-1", { subtype: "initialize", supportedDialogKinds: core.DIALOG_KINDS });
+    r.user("Reply with just: ok");
+    await r.until(isResp("init-1"));
+    let n = 0;
+    const ask = async (request) => {
+      const id = `ef-${++n}`;
+      r.control(id, request);
+      return r.until(isResp(id));
+    };
+    await ask({ subtype: "get_settings" });
+    await r.result();
+    await ask({ subtype: "apply_flag_settings", settings: { effortLevel: "high", ultracode: true } });
+    await ask({ subtype: "get_settings" });
+    await ask({ subtype: "set_model", model: "haiku" });
+    await ask({ subtype: "get_settings" });
+    await r.close();
+  },
   // Some of a proposed Edit's changes (decision 64): in ask mode the Edit's
   // permission is answered with an input that keeps the first of its two
   // changes and not the second, as the diff tab's Accept sends it.

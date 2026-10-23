@@ -1081,6 +1081,49 @@ test("MCP servers as Claude Code's /mcp lists them: from the init line, then mcp
   chat.dispose();
 });
 
+test("effort and Ultracode per chat, as Claude Code's model pill sets them: picked before the first message, the process starts with them; changed live as one flag-settings layer; read back after a model switch (its changelog L2008, L416)", async () => {
+  const { chat, spawns, inputs } = makeChat("effort");
+  await chat.setEffort("low", false);
+  assert.equal(chat.state.effort, "low");
+  assert.equal(chat.state.applied, null, "nothing runs yet");
+  chat.send("Reply with just: ok");
+  await turns(chat, 1);
+  // The chat's own flag settings, never the owner's settings files.
+  const argv = spawns()[0].argv;
+  assert.deepEqual(JSON.parse(argv[argv.indexOf("--settings") + 1]), { effortLevel: "low" });
+  // The levels each model takes, from initialize's answer, and what the process runs at.
+  assert.deepEqual(chat.state.models.map((m) => [m.value, m.levels.length]), [
+    ["default", 5],
+    ["opus", 5],
+    ["sonnet", 5],
+    ["haiku", 0],
+  ]);
+  await waitFor(() => chat.state.applied);
+  assert.deepEqual(chat.state.applied, { model: "claude-sonnet-5-5", effort: "low", ultracode: false, ultracodeAvailable: true });
+  await chat.setEffort("high", true);
+  assert.deepEqual([chat.state.effort, chat.state.ultracode], ["high", true]);
+  assert.deepEqual(chat.state.applied, { model: "claude-sonnet-5-5", effort: "high", ultracode: true, ultracodeAvailable: true });
+  await chat.setModel("haiku");
+  assert.deepEqual(chat.state.applied, { model: "claude-haiku-4-5-20251001", effort: null, ultracode: false, ultracodeAvailable: false }, "Haiku: no effort, no Ultracode");
+  assert.deepEqual([chat.state.effort, chat.state.ultracode], ["high", true], "the chat's choice stays, for a model that takes it");
+  const sent = inputs().filter((o) => o.type === "control_request" && ["apply_flag_settings", "get_settings", "set_model"].includes(o.request.subtype));
+  assert.deepEqual(sent.map((o) => o.request.subtype), ["get_settings", "apply_flag_settings", "get_settings", "set_model", "get_settings"]);
+  assert.deepEqual(sent[1].request.settings, { effortLevel: "high", ultracode: true }, "the whole layer");
+  // A process that ends: what ran is unknown until the next one says.
+  chat.closeProcess();
+  await once(chat, "closed");
+  assert.equal(chat.state.applied, null);
+  chat.dispose();
+});
+
+test("the claude args carry the chat's flag settings only when it has some", () => {
+  const spec = { claudePath: "claude", cwd: "/w", sessionId: "11111111-2222-4333-8444-555555555555", resume: false, permissionMode: "auto" };
+  assert.ok(!core.claudeArgs(spec).includes("--settings"));
+  assert.ok(!core.claudeArgs({ ...spec, settings: {} }).includes("--settings"));
+  const a = core.claudeArgs({ ...spec, settings: { effortLevel: "xhigh", ultracode: true } });
+  assert.equal(a[a.indexOf("--settings") + 1], '{"effortLevel":"xhigh","ultracode":true}');
+});
+
 test("the MCP server answers what it does not serve with an error, a notification with nothing, and a failing tool as a tool error", async () => {
   const server = core.mcpServer({ name: "x", version: "1" }, [{ name: "boom", description: "", inputSchema: { type: "object" }, call: async () => { throw new Error("no editor"); } }]);
   assert.equal(await server({ jsonrpc: "2.0", method: "notifications/initialized" }), null);
@@ -1143,7 +1186,9 @@ test("after a reload, a chat cut off mid-turn starts its process with the CLI's 
   assert.equal(s.argv.find((a) => a.startsWith("--resume")), `--resume=${chat.sessionId}`);
   assert.equal(s.env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN, "1");
   assert.equal(s.env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN_MAX_AGE_MS, "3600000");
-  assert.deepEqual(inputs().map((o) => o.type), ["control_request"], "the initialize only: no message");
+  // The initialize first, then only the panel's own reads (the model pill's settings, the context meter): no message.
+  assert.equal(inputs()[0].request?.subtype, "initialize");
+  assert.ok(!inputs().some((o) => o.type !== "control_request"), "no message");
   const shown = top(chat.state);
   assert.deepEqual(shown.map((e) => e.kind), ["note", "tool", "text"]);
   assert.equal(shown[0].text, core.RERUN_NOTE, "the label before the rerun's step");

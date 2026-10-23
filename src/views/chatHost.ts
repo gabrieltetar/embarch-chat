@@ -390,6 +390,8 @@ export class ChatHost implements vscode.Disposable {
         return chat.setMode(m.mode);
       case "model":
         return chat.setModel(m.model);
+      case "effort":
+        return chat.setEffort(typeof m.effort === "string" ? m.effort : null, m.ultracode === true);
       case "compact":
         if (rec.ours) chat.compact();
         return;

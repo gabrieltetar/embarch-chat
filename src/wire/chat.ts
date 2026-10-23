@@ -14,7 +14,7 @@ import { appendTitle } from "./history";
 import { ChatState, Pending, chatStatus, initialState, reduce, reduceAll, textOf } from "./reducer";
 import { anyMovable, soonMovable } from "./tasks";
 import { Attachment, ContextItem, Outgoing, outgoing } from "./message";
-import type { ContextUsage, PermissionDecision, WireMessage } from "./types";
+import type { AppliedSettings, ContextUsage, ModelInfo, PermissionDecision, WireMessage } from "./types";
 import { DIALOG_CANCELLED, answerable, unansweredNote } from "./dialogs";
 import { Destination, PlanComment, alwaysPermissions, planFeedback } from "./cards";
 
@@ -60,6 +60,18 @@ export const RERUN_NOTE = "Continuing the step that was interrupted when the win
 export const NO_REPLY_NOTE = "No reply was recorded for this message before the session was reloaded.";
 /** How old a step the CLI reruns, as Claude Code sets it (an hour). */
 export const RERUN_MAX_AGE_MS = 3_600_000;
+
+/** initialize's `models`, trimmed to what the model pill reads: each alias and the effort levels it takes. */
+export function modelInfos(list: unknown): ModelInfo[] {
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((m): m is Record<string, unknown> => !!m && typeof m === "object" && typeof (m as { value?: unknown }).value === "string")
+    .map((m) => ({
+      value: String(m.value),
+      ...(typeof m.resolvedModel === "string" ? { resolved: m.resolvedModel } : {}),
+      levels: m.supportsEffort && Array.isArray(m.supportedEffortLevels) ? m.supportedEffortLevels.map(String) : [],
+    }));
+}
 
 /** How long a side question may take, as Claude Code's panel allows (its SIDE_QUESTION_TIMEOUT_MS). */
 const SIDE_MS = 300_000;
@@ -239,8 +251,19 @@ export class Chat extends EventEmitter {
       extraArgs: this.opts.extraArgs,
       ...(init ? { initialize: init } : {}),
       fork: this.hasSession ? undefined : this.opts.fork,
+      // The chat's effort and Ultracode, in the process's own flag settings: never written to the owner's settings.
+      settings: {
+        ...(this.state.effort ? { effortLevel: this.state.effort } : {}),
+        ...(this.state.ultracode ? { ultracode: true } : {}),
+      },
     };
     const proc = new ClaudeProcess(spec);
+    // The models and the levels each takes; then what this process runs at.
+    proc.on("initialized", (r: Record<string, unknown>) => {
+      if (this.proc !== proc) return;
+      if (Array.isArray(r.models)) this.dispatch({ type: "_models", models: modelInfos(r.models) });
+      void this.readSettings();
+    });
     // Their callbacks are answered in process.ts and never reach the refusal below (66).
     if (init) proc.answerer = answererFor(hooks, (l) => this.log(l));
     this.proc = proc;
@@ -648,6 +671,48 @@ export class Chat extends EventEmitter {
     }
     this.model = model === "default" ? undefined : model;
     this.dispatch({ type: "_model", model });
+    // Another model takes other levels, or none (Haiku), and may not offer Ultracode.
+    await this.readSettings();
+  }
+
+  /**
+   * The chat's effort (null: the model's own default) and Ultracode, as
+   * Claude Code's model pill sets them (its changelog L2008, L416), for this
+   * chat alone: the running process takes them as its flag settings
+   * (`apply_flag_settings`, the whole layer — it replaces what was there),
+   * and each process it starts later gets them with `--settings`. Nothing
+   * is written to the owner's own settings.
+   */
+  async setEffort(effort: string | null, ultracode: boolean): Promise<void> {
+    if (this.running) {
+      try {
+        await this.proc!.request("apply_flag_settings", { settings: { effortLevel: effort, ultracode } });
+      } catch (e) {
+        this.dispatch({ type: "_note", text: `Effort not changed: ${(e as Error).message}`, tone: "error" });
+        return;
+      }
+    }
+    this.dispatch({ type: "_effort", effort, ultracode });
+    await this.readSettings();
+  }
+
+  /** What the running process runs at (`get_settings`'s `applied`): its effort, and whether Ultracode is on and offered. */
+  async readSettings(): Promise<void> {
+    if (!this.running) return;
+    try {
+      const r = await this.proc!.request("get_settings", {}, 10000);
+      const a = r.applied as Partial<AppliedSettings> | undefined;
+      if (!a || typeof a !== "object") return;
+      const applied: AppliedSettings = {
+        ...(typeof a.model === "string" ? { model: a.model } : {}),
+        effort: typeof a.effort === "string" ? a.effort : null,
+        ultracode: a.ultracode === true,
+        ultracodeAvailable: a.ultracodeAvailable === true,
+      };
+      this.dispatch({ type: "_applied", applied });
+    } catch (e) {
+      this.log(`get_settings: ${(e as Error).message}`);
+    }
   }
 
   private asked = 0;
