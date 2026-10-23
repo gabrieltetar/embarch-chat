@@ -1219,3 +1219,33 @@ test("a side question before the chat has a conversation says so, and starts not
   assert.equal(spawns().length, 0);
   chat.dispose();
 });
+
+// ------------------------------------------------------------ context with a message (58, 60)
+
+test("the editor's selection and a terminal's output go as blocks before the text, and read back as rows (decisions 58, 60)", async () => {
+  const { chat, dir } = makeChat("attach");
+  const inputs = path.join(dir, "inputs.jsonl");
+  chat.opts.env.FAKE_CLAUDE_INPUT_LOG = inputs;
+  // The recording's first two turns, then its third.
+  chat.send(`How many steps are in this log? Reply with just the number.\n${ATTACH_PASTE}`, [], { pastes: [ATTACH_PASTE] });
+  await turns(chat, 1);
+  chat.send("", [{ mediaType: "image/png", data: ATTACH_PNG }]);
+  await turns(chat, 1);
+  const context = [
+    { kind: "selection", path: "/work/rec/attach/note.txt", startLine: 2, endLine: 3, text: "alpha\nbeta" },
+    { kind: "terminal", name: "bash", text: "$ make\nbuild finished: 3 warnings" },
+  ];
+  const text = "How many lines did I select, and how many warnings did the build print? Reply as: lines, warnings";
+  chat.send(text, [], { context });
+  await turns(chat, 1);
+  const recorded = outLines("attach").filter((o) => o.type === "user" && o.isReplay).at(-1).message.content;
+  assert.deepEqual(userLines(inputs)[2].message.content, recorded, "Claude Code's own blocks, as recorded");
+  const u = entries(chat.state, "user")[2];
+  assert.deepEqual([u.text, u.pending, u.context], [text, false, context], "shown as typed, with what went with it");
+  assert.equal(top(chat.state).at(-1).text, "2, 3", "Claude read both");
+  // A transcript's message reads back the same.
+  const back = core.reduce(core.initialState("x"), { type: "user", uuid: "u1", message: { role: "user", content: recorded } });
+  assert.deepEqual([back.entries.u1.text, back.entries.u1.context], [text, context]);
+  assert.deepEqual(core.readMessage(core.ideBlock({ kind: "file", path: "/w/a.c" }) + "\nhi").context, [{ kind: "file", path: "/w/a.c" }]);
+  chat.dispose();
+});

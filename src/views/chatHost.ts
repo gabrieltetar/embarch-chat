@@ -23,8 +23,10 @@ import type { AssistInput } from "../assistant/prompts";
 import type { LibraryEntry } from "../library/entries";
 import { invocation } from "../library/entries";
 import { historyMessage } from "./history";
-import type { Attachment } from "../wire/message";
+import type { Attachment, ContextItem } from "../wire/message";
 import { IMAGE_TYPES } from "../wire/message";
+import type { EditorContext, EditorItem } from "../editorContext";
+import { editorLabel } from "../editorContext";
 import type { ChatToHost, Header, HostToChat } from "../../webview/shared/protocol";
 
 export interface HostCtx {
@@ -57,6 +59,8 @@ export interface HostCtx {
   fork: (sid: string, uuid: string) => Promise<void>;
   /** The owner names a chat (decision 75). */
   rename: (sid: string) => Promise<void>;
+  /** The editor's open file or selection, which goes with a message by default (60). */
+  editor: EditorContext;
 }
 
 /** The chat's card in two lines (decision 18), from the desk's view. */
@@ -94,6 +98,16 @@ export function assistInput(ctx: HostCtx, rec: ChatRecord, draft: string): Assis
 /** A pasted image as the page sent it: one of the API's types, base64. */
 const isImage = (i: Attachment) => !!i && IMAGE_TYPES.includes(i.mediaType) && typeof i.data === "string" && /^[A-Za-z0-9+/=]+$/.test(i.data);
 
+/** The editor's file or selection as the page sent it back: one the host gave it (60). */
+function editorBack(e: EditorItem | undefined): ContextItem[] {
+  if (!e || typeof e.path !== "string" || !e.path) return [];
+  if (e.kind === "file") return [{ kind: "file", path: e.path }];
+  if (e.kind === "selection" && Number.isInteger(e.startLine) && Number.isInteger(e.endLine) && typeof e.text === "string") {
+    return [{ kind: "selection", path: e.path, startLine: e.startLine, endLine: e.endLine, text: e.text }];
+  }
+  return [];
+}
+
 export class ChatHost implements vscode.Disposable {
   private subs: vscode.Disposable[] = [];
   private ready = false;
@@ -116,6 +130,9 @@ export class ChatHost implements vscode.Disposable {
   private onPrompts = () => {
     if (this.ready) this.pushPrompts();
   };
+  private onEditor = () => {
+    if (this.ready) this.pushEditor();
+  };
 
   constructor(
     private webview: vscode.Webview,
@@ -130,6 +147,7 @@ export class ChatHost implements vscode.Disposable {
     ctx.desk.on("changed", this.onDesk);
     ctx.assistant.on("chips", this.onChips);
     ctx.history.on("changed", this.onPrompts);
+    ctx.editor.on("changed", this.onEditor);
     this.subs.push(webview.onDidReceiveMessage((m: ChatToHost) => void this.onMessage(m)));
     // The times above messages come and go with their setting (68).
     this.subs.push(
@@ -188,8 +206,17 @@ export class ChatHost implements vscode.Disposable {
     this.post({ t: "library", entries: this.ctx.library(), assistant: this.ctx.assistantOn() });
     this.pushPrompts();
     this.pushDraft();
+    this.pushEditor();
     // A turn that ended while the chat was off screen gets its chips now (34).
     if (rec.ours) void this.ctx.assistant.shown(rec.chat.sessionId, () => assistInput(this.ctx, rec, ""));
+  }
+
+  /** The editor's file or selection, with its words from the chat's folder (60). */
+  private pushEditor(): void {
+    const rec = this.sid ? this.ctx.chats.get(this.sid) : undefined;
+    const item = this.ctx.editor.current;
+    if (!rec) return;
+    this.post({ t: "editor", editor: item ? { ...item, label: editorLabel(item, rec.chat.opts.cwd || rec.chat.state.cwd || "") } : null });
   }
 
   /** Text for the draft, once, to the page showing the chat. */
@@ -238,7 +265,7 @@ export class ChatHost implements vscode.Disposable {
         }
         this.ctx.assistant.sent(chat.sessionId, { handoff: m.handoff });
         const images = (m.images ?? []).filter(isImage);
-        const extra = { pastes: (m.pastes ?? []).filter((p) => typeof p === "string") };
+        const extra = { pastes: (m.pastes ?? []).filter((p) => typeof p === "string"), context: editorBack(m.editor) };
         // The compact card's first line goes first, the rest after its compaction (decision 36).
         const split = splitCompact(m.text);
         if (split && rec.ours) chat.sendAfterCompact(split.compact, split.rest, images, extra);
@@ -433,6 +460,7 @@ export class ChatHost implements vscode.Disposable {
     this.ctx.desk.off("changed", this.onDesk);
     this.ctx.assistant.off("chips", this.onChips);
     this.ctx.history.off("changed", this.onPrompts);
+    this.ctx.editor.off("changed", this.onEditor);
     for (const s of this.subs) s.dispose();
   }
 }

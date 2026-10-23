@@ -11,6 +11,7 @@ import type { ThreadGroup } from "../../src/desk/threads";
 import type { Card, Chip, PastPrompt } from "../../src/assistant/edits";
 import type { LibraryEntry } from "../../src/library/entries";
 import type { Attachment } from "../../src/wire/message";
+import type { EditorItem } from "../../src/editorContext";
 
 /** The chat's card in two lines (decision 18). */
 export interface Header {
@@ -65,7 +66,9 @@ export type HostToChat =
   /** The conversation as plain text, for the export dialog (decision 74). */
   | { t: "export"; text: string; filename: string }
   /** The end of a background shell's or Monitor's output, for the page that asked (port item 71). */
-  | { t: "taskOutput"; taskId: string; output?: string; totalBytes?: number; truncated?: boolean; error?: string };
+  | { t: "taskOutput"; taskId: string; output?: string; totalBytes?: number; truncated?: boolean; error?: string }
+  /** The editor's open file or selection, which goes with the next message unless dismissed (60). */
+  | { t: "editor"; editor: (EditorItem & { label: string }) | null };
 
 /** What a rewind restores (decision 73), as Claude Code's panel offers it: the conversation always as a fork. */
 export type Restore = "both" | "conversation" | "code";
@@ -80,7 +83,7 @@ export interface MentionItem {
 export type ChatToHost =
   | { t: "ready" }
   /** A message: pasted images go with it, and the long pastes it holds, for the CLI to mark (56). */
-  | { t: "send"; text: string; handoff?: boolean; images?: Attachment[]; pastes?: string[] }
+  | { t: "send"; text: string; handoff?: boolean; images?: Attachment[]; pastes?: string[]; editor?: EditorItem }
   | { t: "allow"; requestId: string; always?: boolean }
   | { t: "deny"; requestId: string; message?: string }
   | { t: "answer"; requestId: string; answers: Record<string, string> }

@@ -1826,6 +1826,59 @@ await check("/btw on a chat this window does not run says it needs the chat here
   assert.match((await text(".paste-notice"))[0], /needs the chat to run here/);
 });
 
+const SEL = { kind: "selection", path: "/work/rec/x/src/main.c", startLine: 10, endLine: 24, text: Array.from({ length: 15 }, (_, i) => `int v${i + 10};`).join("\n") };
+const chipText = async () => (await text(".composer .ctx-chip"))[0] ?? null;
+
+await check("the editor's selection shows as a chip under the input and goes with the message once; × keeps it out (60)", async () => {
+  await fresh({}, false);
+  await send([{ t: "editor", editor: { ...SEL, label: "src/main.c#L10-24" } }]);
+  assert.equal(await chipText(), "Selectionsrc/main.c#L10-24×");
+  await shot("context-chip");
+  await type("what does this do?" + ENTER);
+  let [m] = await sends();
+  assert.deepEqual(m.editor, SEL, "sent with it, without the chip's words");
+  assert.equal(await exec("return document.querySelector('.composer .ctx-chip').classList.contains('sent')"), true, "shown as already sent");
+  await clearPosts();
+  await type("and this?" + ENTER);
+  [m] = await sends();
+  assert.equal(m.editor, undefined, "the same selection is not sent again");
+  // Another file: the chip comes back; × keeps it out of the next message.
+  await send([{ t: "editor", editor: { kind: "file", path: "/work/rec/x/README.md", label: "README.md" } }]);
+  assert.equal(await chipText(), "FileREADME.md×");
+  await click(".composer .ctx-chip .remove");
+  await settle();
+  assert.equal(await chipText(), null);
+  await clearPosts();
+  await type("summarize the repo" + ENTER);
+  [m] = await sends();
+  assert.equal(m.editor, undefined);
+  // A new selection shows again; a slash command goes without it.
+  await send([{ t: "editor", editor: { ...SEL, startLine: 1, endLine: 2, text: "a\nb", label: "src/main.c#L1-2" } }]);
+  assert.equal(await chipText(), "Selectionsrc/main.c#L1-2×");
+  await clearPosts();
+  await type("/compact" + ENTER);
+  [m] = await sends();
+  assert.deepEqual([m.text, m.editor], ["/compact", undefined]);
+  await send([{ t: "editor", editor: null }]);
+  assert.equal(await chipText(), null);
+});
+
+await check("what went with a message shows as rows under it: a selection and a terminal open to their text, the file opens in the editor (58, 60)", async () => {
+  await fresh({}, false);
+  const context = [SEL, { kind: "file", path: "/work/rec/x/README.md" }, { kind: "terminal", name: "west build", text: "[1/2] Building C object\nerror: 'x' undeclared" }];
+  await send(events([{ type: "_sent", n: 1, text: "why does it fail?", images: 0, context }]));
+  assert.deepEqual(await text(".user .ctx-row > summary, .user div.ctx-row"), ["Selectionsrc/main.c#L10-24 · 15 lines", "Open fileREADME.md", "Terminalwest build · 2 lines"]);
+  await exec("for (const d of document.querySelectorAll('.user details.ctx-row')) d.open = true;");
+  await settle();
+  assert.ok((await text(".user .ctx-row pre"))[1].includes("error: 'x' undeclared"));
+  await shot("context-rows");
+  await clearPosts();
+  await click(".user details.ctx-row a", "Open in the editor");
+  await click(".user div.ctx-row a", "README.md");
+  const opens = (await posts()).filter((p) => p.t === "openFile");
+  assert.deepEqual(opens, [{ t: "openFile", path: SEL.path, line: 10 }, { t: "openFile", path: "/work/rec/x/README.md" }]);
+});
+
 // ------------------------------------------------------------ the list
 
 await go("/list.html");

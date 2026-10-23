@@ -767,3 +767,64 @@ test("a fork no message was sent to comes back after a reload still a fork: what
   assert.equal(run.argv[run.argv.indexOf("--resume-session-at") + 1], second.parentUuid);
   assert.equal(run.env.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING, "true");
 });
+
+// ------------------------------------------------------------ what goes into a message (58–60)
+
+/** A text editor on a file of the window's folder, as VS Code hands one over. */
+function fakeEditor(rel, lines) {
+  const doc = { uri: { scheme: "file", fsPath: path.join(folder, rel) }, fileName: path.join(folder, rel), isClosed: false };
+  const ed = { document: doc, selection: { isEmpty: true, start: { line: 0, character: 0 }, end: { line: 0, character: 0 } } };
+  doc.getText = (r) => (r ? lines.slice(r.start.line, r.end.character === 0 ? r.end.line : r.end.line + 1).join("\n") : lines.join("\n"));
+  return ed;
+}
+const select = (ed, a, b) => (ed.selection = { isEmpty: false, start: { line: a, character: 0 }, end: { line: b, character: 0 } });
+const lastEditor = () => posted((m) => m.t === "editor");
+
+test("the open file and the selection go with a message by default, as Claude Code's blocks; each setting turns its part off (decision 60)", { skip }, async () => {
+  const inputs = path.join(dir, "inputs-60.jsonl");
+  process.env.FAKE_CLAUDE_INPUT_LOG = inputs;
+  try {
+    await startUntracked("basic");
+    const ed = fakeEditor("src/main.c", Array.from({ length: 30 }, (_, i) => `line ${i + 1}`));
+    mock.vscode.window.activeTextEditor = ed;
+    mock.vscode.window.visibleTextEditors = [ed];
+    mock.bus.emit("activeEditor", ed);
+    let e = await waitFor(() => lastEditor()?.editor?.label === "src/main.c" && lastEditor().editor, 3000, "the open file's chip");
+    assert.equal(e.kind, "file");
+    select(ed, 9, 24);
+    mock.bus.emit("selection", { textEditor: ed });
+    e = await waitFor(() => lastEditor()?.editor?.label === "src/main.c#L10-24" && lastEditor().editor, 3000, "the selection's chip, after its 300 ms");
+    assert.equal(e.text, Array.from({ length: 15 }, (_, i) => `line ${i + 10}`).join("\n"));
+    // The page sends it back with the message; the CLI gets Claude Code's block first.
+    const { label: _l, ...item } = e;
+    chatView.webview.fromPage({ t: "send", text: "what does this do?", editor: item });
+    await waitFor(() => fs.existsSync(inputs) && fs.readFileSync(inputs, "utf8").includes("what does this do?"), 5000, "the message");
+    const line = fs.readFileSync(inputs, "utf8").trim().split("\n").map((l) => JSON.parse(l).o).find((o) => o.type === "user");
+    assert.equal(line.message.content[0].text, `<ide_selection>The user selected the lines 10 to 24 from ${path.join(folder, "src/main.c")}:\n${e.text}\n\nThis may or may not be related to the current task.</ide_selection>`);
+    assert.deepEqual(line.message.content[1], { type: "text", text: "what does this do?" });
+    const sent = posted((m) => m.t === "event" && m.e.type === "_sent");
+    assert.deepEqual(sent.e.context, [item], "the rows under the message");
+    // attachSelection off: the file alone; attachOpenFile off too: nothing.
+    mock.state.config["embarchChat.attachSelection"] = false;
+    mock.bus.emit("activeEditor", ed);
+    await waitFor(() => lastEditor()?.editor?.kind === "file", 3000, "the file without its selection");
+    mock.state.config["embarchChat.attachOpenFile"] = false;
+    mock.bus.emit("activeEditor", ed);
+    await waitFor(() => lastEditor() && lastEditor().editor === null, 3000, "nothing");
+    // Focus in a webview leaves no active text editor; with none left on screen the chip goes.
+    delete mock.state.config["embarchChat.attachSelection"];
+    delete mock.state.config["embarchChat.attachOpenFile"];
+    mock.bus.emit("activeEditor", ed);
+    await waitFor(() => lastEditor()?.editor?.kind === "selection", 3000, "back");
+    mock.bus.emit("activeEditor", undefined);
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(lastEditor().editor?.kind, "selection", "kept while the editor still shows");
+    mock.vscode.window.visibleTextEditors = [];
+    mock.bus.emit("activeEditor", undefined);
+    await waitFor(() => lastEditor().editor === null, 3000, "gone with the last editor");
+  } finally {
+    delete process.env.FAKE_CLAUDE_INPUT_LOG;
+    mock.vscode.window.activeTextEditor = undefined;
+    mock.vscode.window.visibleTextEditors = [];
+  }
+});

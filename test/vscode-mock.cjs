@@ -82,6 +82,9 @@ const manifest = require(path.join(__dirname, "..", "package.json"));
 const scopes = {};
 for (const sec of manifest.contributes.configuration) for (const [k, v] of Object.entries(sec.properties)) scopes[k] = v.scope ?? "window";
 
+/** Editor, tab and terminal events a test fires: `bus.emit("activeEditor", ed)`, "selection", "closeDoc", "tabs". */
+const bus = new EventEmitter();
+
 const state = {
   /** User (or remote machine) settings. */
   config: {},
@@ -113,6 +116,10 @@ const state = {
   codeLenses: [],
   /** Arguments of each executed command, beside `executed`. */
   executedArgs: [],
+  /** What VS Code's clipboard holds. */
+  clipboard: "",
+  /** setContext keys, as set. */
+  context: {},
 };
 
 /** vscode.EventEmitter: `event` subscribes, `fire` delivers. */
@@ -193,8 +200,17 @@ const vscode = {
     showSaveDialog: (opts) => state.saveDialog(opts),
     showTextDocument: async (doc, opts) => (state.shown.push({ doc, opts }), { selection: null, revealRange() {} }),
     activeTextEditor: undefined,
+    visibleTextEditors: [],
+    activeTerminal: undefined,
     terminals: [],
-    tabGroups: { all: [], close: async () => true },
+    tabGroups: { all: [], close: async () => true, onDidChangeTabs: event(bus, "tabs") },
+    onDidChangeActiveTextEditor: event(bus, "activeEditor"),
+    onDidChangeTextEditorSelection: event(bus, "selection"),
+  },
+  TabInputWebview: class {
+    constructor(viewType) {
+      this.viewType = viewType;
+    }
   },
   workspace: {
     get workspaceFolders() {
@@ -212,6 +228,7 @@ const vscode = {
       },
     }),
     onDidChangeConfiguration: () => disposable(),
+    onDidCloseTextDocument: event(bus, "closeDoc"),
     registerTextDocumentContentProvider: (scheme, provider) => {
       state.contentProviders.set(scheme, provider);
       return disposable(() => state.contentProviders.delete(scheme));
@@ -238,12 +255,16 @@ const vscode = {
     executeCommand: async (id, ...args) => {
       state.executed.push(id);
       state.executedArgs.push([id, ...args]);
+      if (id === "setContext") state.context[args[0]] = args[1];
       const f = state.commands.get(id);
       return f ? f(...args) : undefined;
     },
   },
   extensions: { getExtension: () => undefined },
-  env: { openExternal: async (u) => (state.external.push(String(u)), true) },
+  env: {
+    openExternal: async (u) => (state.external.push(String(u)), true),
+    clipboard: { readText: async () => state.clipboard, writeText: async (t) => void (state.clipboard = t) },
+  },
 };
 
 /** A context's workspaceState: kept as JSON, as VS Code stores it. */
@@ -264,4 +285,4 @@ class Memento {
   }
 }
 
-module.exports = { vscode, state, scopes, FakeView, FakeWebview, Memento };
+module.exports = { vscode, state, scopes, bus, FakeView, FakeWebview, Memento };

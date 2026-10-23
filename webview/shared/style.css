@@ -1639,3 +1639,47 @@ a.cite:hover {
 .side-ask {
   font-weight: 600;
 }
+/* The editor's file or selection (60), a terminal (58): a chip under the input. */
+.ctx-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0 2px 0 8px;
+  font-size: 0.88em;
+}
+.ctx-chip.sent {
+  opacity: 0.55;
+}
+.ctx-chip .ctx-label {
+  font-family: var(--vscode-editor-font-family);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ctx-kind {
+  color: var(--muted);
+  margin-right: 4px;
+}
+.ctx-chip .ctx-kind {
+  margin-right: 0;
+}
+/* What went with a message, as rows under it. */
+.ctx-rows {
+  margin-top: 4px;
+  font-size: 0.88em;
+}
+.ctx-row summary {
+  cursor: pointer;
+}
+.ctx-row pre {
+  max-height: 16em;
+  overflow: auto;
+  margin: 2px 0;
+  padding: 4px 6px;
+  background: var(--vscode-textCodeBlock-background);
+  border-radius: var(--radius);
+  font-size: 0.95em;
+}

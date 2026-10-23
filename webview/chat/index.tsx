@@ -19,7 +19,7 @@ import type { Chip, PastPrompt } from "../../src/assistant/edits";
 import type { LibraryEntry } from "../../src/library/entries";
 import { duration, vscodeApi } from "../shared/vscode";
 import { PendingCards } from "./cards";
-import { Composer, returnToDraft } from "./composer";
+import { Composer, EditorChip, returnToDraft } from "./composer";
 import { RunView, ToolCtx, ToolView, quiet, toolRenderers } from "./tools";
 import { foldRuns, liveTool } from "./runs";
 import { benchRenderer } from "./bench";
@@ -32,6 +32,7 @@ import { dayKey, elapsedText, stalled } from "./time";
 import { cacheClock } from "../../src/wire/limits";
 import { CopyReply, ExportDialog, LOCAL_COMMANDS, MessageActions, RewindDialog, Toast, localCommand, replies, useEscEsc } from "./history";
 import { SideQuestions } from "./side";
+import { ContextRows } from "./context";
 
 let uiUrl = "";
 toolRenderers.push(benchRenderer(() => uiUrl));
@@ -172,6 +173,7 @@ function App() {
   const [prompts, setPrompts] = useState<PastPrompt[]>([]);
   const [library, setLibrary] = useState<{ entries: LibraryEntry[]; assistant: boolean }>({ entries: [], assistant: false });
   const [chips, setChips] = useState<{ sid: string; chips: Chip[] } | null>(null);
+  const [editor, setEditor] = useState<EditorChip | null>(null);
   const live = useRef<ChatState | null>(null);
   const frame = useRef(0);
   const scroller = useRef<HTMLDivElement>(null);
@@ -226,6 +228,9 @@ function App() {
           return;
         case "draft":
           returnToDraft(m.sid, m.text);
+          return;
+        case "editor":
+          setEditor(m.editor);
           return;
       }
     };
@@ -293,6 +298,7 @@ function App() {
             {e.text}
             {e.pending && e.held && <div class="held muted">after the compaction</div>}
             {e.unsent && <div class="held muted">not sent — it is back in the draft</div>}
+            {e.context && <ContextRows items={e.context} ctx={ctx} />}
             <MessageActions e={e} view={view} />
           </div>
         );
@@ -438,6 +444,7 @@ function App() {
           library={library.entries}
           assistant={library.assistant && view.ours}
           canAsk={view.ours}
+          editor={editor}
           chips={chips?.sid === state.sessionId && view.ours ? chips.chips : []}
           onSend={(text, opts) => {
             if (localCommand(text, live.current)) return;

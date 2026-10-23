@@ -18,6 +18,7 @@ import { DeskService } from "./deskService";
 import { CONTENT_SCHEME, ContentDocs } from "./content";
 import { DIFF_SCHEME, DiffContent, registerProposals } from "./diff";
 import { hostHooks } from "./hostHooks";
+import { EditorContext } from "./editorContext";
 import { agentPid, jump } from "./jump";
 import { activateLauncher, deactivateLauncher, serverUrl } from "./launcher/launcher";
 import { ReloadMemory, restoreAfterReload } from "./reload";
@@ -41,6 +42,8 @@ function cfg() {
     deskUrl: c.get<string>("deskUrl", "http://127.0.0.1:4891"),
     deskTokenPath: c.get<string>("deskTokenPath", "~/.config/embarch-desk/desk-token"),
     assistant: c.get<boolean>("assistant", true),
+    attachOpenFile: c.get<boolean>("attachOpenFile", true),
+    attachSelection: c.get<boolean>("attachSelection", true),
   };
 }
 
@@ -133,6 +136,10 @@ export function activate(context: vscode.ExtensionContext): void {
   assistant = new HaikuAssistant(() => ({ claudePath: cfg().claudePath, enabled: cfg().assistant, log }));
   const haiku = assistant;
 
+  // The open file and the selection go with a message by default (decision 60).
+  const editor = new EditorContext(() => ({ attachOpenFile: cfg().attachOpenFile, attachSelection: cfg().attachSelection }));
+  context.subscriptions.push(editor);
+
   const ctx: HostCtx = {
     chats: manager,
     desk,
@@ -154,6 +161,7 @@ export function activate(context: vscode.ExtensionContext): void {
     resume: (sid, text) => resume(sid, text),
     fork: (sid, uuid) => forkChat(sid, uuid),
     rename: (sid) => renameChat(sid),
+    editor,
   };
 
   const chatView = new ChatViewProvider(context.extensionUri, ctx);

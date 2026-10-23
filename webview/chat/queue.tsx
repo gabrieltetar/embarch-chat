@@ -6,6 +6,7 @@
 // then it can be taken back (its text returns to the draft), or sent now.
 
 import type { ChatState } from "../../src/wire/reducer";
+import type { ContextItem } from "../../src/wire/message";
 import { anyMovable, movable, soonMovable } from "../../src/wire/tasks";
 import { vscodeApi } from "../shared/vscode";
 
@@ -25,6 +26,9 @@ function sendNowLabel(s: ChatState): { label: string; title: string } {
     : { label: "Send now", title: "Claude stops what it is writing and reads this now" };
 }
 
+/** What goes with a waiting message (decisions 58, 60), in a few words. */
+const withWhat = (c: ContextItem) => (c.kind === "terminal" ? `the output of ${c.name}` : c.kind === "selection" ? `lines ${c.startLine}–${c.endLine} of ${c.path.split("/").pop()}` : c.path.split("/").pop());
+
 export function Queued({ state, readOnly }: { state: ChatState; readOnly: boolean }) {
   const ids = (state.queue ?? []).filter((id) => state.entries[id]?.kind === "user");
   if (!ids.length) return null;
@@ -42,6 +46,7 @@ export function Queued({ state, readOnly }: { state: ChatState; readOnly: boolea
             <div class="queued-text">
               {e.images ? <span class="muted">[{e.images} image{e.images > 1 ? "s" : ""}] </span> : null}
               {e.text}
+              {e.context?.length ? <div class="muted queued-with">with {e.context.map(withWhat).join(", ")}</div> : null}
             </div>
             <div class="queued-bar">
               <span class="muted">Queued — {when}</span>

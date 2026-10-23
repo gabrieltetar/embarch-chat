@@ -253,6 +253,18 @@
             "default": false,
             "scope": "machine",
             "description": "Give Claude a getDiagnostics tool that reads VS Code's Problems panel, unsaved edits included — Claude Code's own IDE tool, served by this extension over the chat's stdio (decision 65). Off by default; on, its definition rides in every chat's tool list. Takes effect when a chat's process next starts. User or Remote settings only — a workspace cannot turn it on."
+          },
+          "embarchChat.attachOpenFile": {
+            "type": "boolean",
+            "default": true,
+            "scope": "machine",
+            "description": "Add the file open in the editor to your messages, shown as a chip under the input with an × (decision 60, as Claude Code's claudeCode.attachOpenFile). Off, a file goes only with lines you select. User or Remote settings only."
+          },
+          "embarchChat.attachSelection": {
+            "type": "boolean",
+            "default": true,
+            "scope": "machine",
+            "description": "Add the lines you select in the editor, with their text, to your messages, shown as a chip under the input with an × (decision 60, as Claude Code's claudeCode.attachSelection). Off, @ still inserts the selected lines. User or Remote settings only."
           }
         }
       },

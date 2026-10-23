@@ -124,6 +124,24 @@ whose decision numbers the code cites.
   the chat tab's and **EmbArch** at the right of the status bar, which
   starts a new chat.
 
+- **What goes into a message**, as Claude Code's own panel builds it. A
+  pasted screenshot is a thumbnail under the input (× takes it off) and
+  goes as an image block — an image alone sends; a screenshot that WSL's
+  clipboard hands over as raw bytes pastes nothing. A paste over 800
+  characters or 2 line breaks goes in the message's `inline_pastes`, which
+  the CLI marks as pasted; invisible characters (zero widths, bidi
+  overrides, tags) are stripped from a paste, and from a draft before it
+  goes — the first Enter shows the cleaned draft, the second sends it.
+  **The open file, or the selected lines with their text, go with each
+  message** as Claude Code's `<ide_opened_file>` / `<ide_selection>` block,
+  shown as a chip under the input with an ×; the same one does not go
+  twice, and a slash command goes without it. Each shows as a row under the
+  sent message.
+- **`/btw <question>` asks a side question** while Claude works: the CLI's
+  `side_question` answers it from the conversation and the turn in
+  progress; question and answer show above the input and never join the
+  conversation. Clear drops them.
+
 The desk is called from the extension's Node side only, on
 `127.0.0.1:4891` with the token in `~/.config/embarch-desk/desk-token`;
 **the webviews never hold the token**.
@@ -196,6 +214,8 @@ The extension does not run in an untrusted workspace.
 | `embarchChat.autosave` | `true` | Save an open file's unsaved changes before Claude reads, edits or writes it. |
 | `embarchChat.continueAfterReload` | `true` | After a reload, a chat cut off mid-turn continues the interrupted step. |
 | `embarchChat.diagnosticsTool` | `false` | Give Claude `getDiagnostics`, the Problems panel (its definition rides in every chat's tool list). |
+| `embarchChat.attachOpenFile` | `true` | The file open in the editor goes with each message. Off, a file goes only with selected lines. |
+| `embarchChat.attachSelection` | `true` | The selected lines, with their text, go with each message. Off, `@` still inserts them. |
 | `embarchUi.binaryPath` | `"embarch-ui"` | The embarch-ui binary the launcher starts. |
 | `embarchUi.host` / `embarchUi.port` | `127.0.0.1` / `4890` | Where embarch-ui serves (also the Desk link). |
 | `embarchUi.configPath` | `""` | An embarch-ui TOML config, as `EMBARCH_UI_CONFIG`. |

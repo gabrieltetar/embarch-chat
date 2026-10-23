@@ -18,7 +18,9 @@
 // alone sends; a long paste is remembered so the CLI can mark it; what shows
 // nothing is stripped from a paste, and from the draft before it goes.
 // `/btw <question>` asks aside (57): it goes to the side questions above
-// the input, never into the conversation.
+// the input, never into the conversation. The editor's open file or
+// selection shows as a chip under the input and goes with the message
+// (60), unless its × was clicked or it already went with an earlier one.
 
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Card, Chip, PastPrompt } from "../../src/assistant/edits";
@@ -26,6 +28,7 @@ import { CATEGORIES, applyEdit, ghostRest, prefixMatch, wordDiff } from "../../s
 import type { LibraryEntry } from "../../src/library/entries";
 import { byCategory, invocation } from "../../src/library/entries";
 import type { Attachment } from "../../src/wire/message";
+import type { EditorItem } from "../../src/editorContext";
 import { IMAGE_TYPES, looksBinary, pasteToMark, pastesIn, rememberPaste, stripInvisible, strippedNotice } from "../../src/wire/message";
 import type { HostToChat, MentionItem } from "../shared/protocol";
 import { MODELS, MODES } from "../shared/protocol";
@@ -57,6 +60,8 @@ interface Props {
   assistant: boolean;
   /** This window runs the chat: a side question can be asked (57). */
   canAsk: boolean;
+  /** The editor's open file or selection (60). */
+  editor: EditorChip | null;
   chips: Chip[];
   onSend: (text: string, opts: SendOpts) => void;
   onChip: (chip: Chip) => void;
@@ -67,7 +72,15 @@ export interface SendOpts {
   images?: Attachment[];
   /** The long pastes the text still holds, for the CLI to mark (56). */
   pastes?: string[];
+  /** The editor's file or selection (60). */
+  editor?: EditorItem;
 }
+
+export type EditorChip = EditorItem & { label: string };
+
+/** Which file or selection a chat sent last: the same one does not go again until it changes (Claude Code's rule). */
+const editorSent: Record<string, string> = {};
+const editorKey = (e: EditorItem) => (e.kind === "file" ? `f:${e.path}` : `s:${e.path}:${e.startLine}-${e.endLine}:${e.text.length}:${e.text.slice(0, 64)}:${e.text.slice(-64)}`);
 
 type Pop = { kind: "at" | "slash"; start: number; q: string; items: MentionItem[]; on: number };
 type Image = Attachment & { id: number };
@@ -135,6 +148,10 @@ export function Composer(p: Props) {
   const [preview, setPreview] = useState<Card | null>(null);
   const [holding, setHolding] = useState(false);
   const [images, setImages] = useState<Image[]>([]);
+  /** The editor chip whose × was clicked: kept out until the file or selection changes. */
+  const [dismissed, setDismissed] = useState<string | null>(null);
+  const dismissedNow = useRef(dismissed);
+  dismissedNow.current = dismissed;
   // For a send the cards' answer makes, from a listener set up once.
   const imagesNow = useRef(images);
   imagesNow.current = images;
@@ -443,6 +460,16 @@ export function Composer(p: Props) {
     if (imagesNow.current.length) opts.images = imagesNow.current.map(({ mediaType, data }) => ({ mediaType, data }));
     const marked = pastesIn(t, s.pastes);
     if (marked.length) opts.pastes = marked;
+    // A slash command goes as it is: the CLI reads it from the text.
+    const ed = props.current.editor;
+    if (ed && !t.startsWith("/")) {
+      const key = editorKey(ed);
+      if (key !== dismissedNow.current && editorSent[sid] !== key) {
+        const { label: _label, ...item } = ed;
+        opts.editor = item;
+        editorSent[sid] = key;
+      }
+    }
     props.current.onSend(t, opts);
     s.handoff = false;
     s.undo = [];
@@ -596,6 +623,9 @@ export function Composer(p: Props) {
   };
 
   const shown = ghost && atEnd && !pop && !preview ? ghostRest(text, ghost.base, ghost.completion) : null;
+  const edKey = useMemo(() => (p.editor ? editorKey(p.editor) : null), [p.editor]);
+  const edChip = p.editor && edKey !== dismissed ? p.editor : null;
+  const edSent = edKey !== null && editorSent[sid] === edKey;
   const after = preview ? applyEdit(text, preview.edit) : null;
 
   const bulbGroups: Array<MenuGroup<Card>> = CATEGORIES.map((c) => ({
@@ -709,8 +739,20 @@ export function Composer(p: Props) {
         />
       </div>
       {notice && <div class="paste-notice muted">{notice}</div>}
-      {images.length > 0 && (
+      {(images.length > 0 || edChip) && (
         <div class="attachments">
+          {edChip && (
+            <span
+              class={`ctx-chip ${edSent ? "sent" : ""}`}
+              title={edSent ? `${edChip.path}\nSent with an earlier message: not sent again until it changes` : `${edChip.path}\nGoes with the message — × keeps it out (embarchChat.attachOpenFile, attachSelection)`}
+            >
+              <span class="ctx-kind">{edChip.kind === "selection" ? "Selection" : "File"}</span>
+              <span class="ctx-label">{edChip.label}</span>
+              <button class="icon remove" title="Don't send it" onClick={() => setDismissed(edKey)}>
+                ×
+              </button>
+            </span>
+          )}
           {images.map((im) => (
             <span key={im.id} class="thumb" title={`${im.mediaType} — goes with the message`}>
               <img src={`data:${im.mediaType};base64,${im.data}`} alt="pasted image" />
