@@ -363,6 +363,42 @@ test("a CLI killed by a signal is an error, not an idle close", async () => {
   chat.dispose();
 });
 
+test("a CLI that dies during a held /compact starts nothing again: the whole draft goes back, marked not sent", async () => {
+  const { chat, spawns, dir } = makeChat("basic");
+  const inputs = path.join(dir, "inputs.jsonl");
+  chat.opts.env.FAKE_CLAUDE_INPUT_LOG = inputs;
+  chat.opts.env.FAKE_CLAUDE_SIGNAL = "SIGKILL";
+  const unsent = [];
+  chat.on("unsent", (t) => unsent.push(t));
+  chat.sendAfterCompact("/compact focus on: the loader", "now add the blink test");
+  await once(chat, "closed");
+  await new Promise((r) => setTimeout(r, 500));
+  assert.equal(spawns().length, 1, "no process started after the crash");
+  const sent = fs.readFileSync(inputs, "utf8").trim().split("\n").map((l) => JSON.parse(l).o).filter((o) => o.type === "user").map((o) => o.message.content);
+  assert.deepEqual(sent, ["/compact focus on: the loader"], "the held rest never went out");
+  assert.deepEqual(unsent, ["/compact focus on: the loader", "now add the blink test"], "both back in the draft");
+  const users = chat.state.timeline.map((id) => chat.state.entries[id]).filter((e) => e.kind === "user");
+  assert.deepEqual(users.map((e) => [e.text, !!e.pending, !!e.unsent]), [
+    ["/compact focus on: the loader", false, true],
+    ["now add the blink test", false, true],
+  ]);
+  assert.equal(chat.state.process, "error");
+  chat.dispose();
+});
+
+test("a message the CLI never took before it died goes back to the draft", async () => {
+  const { chat, spawns } = makeChat("basic");
+  chat.opts.env.FAKE_CLAUDE_SIGNAL = "SIGKILL";
+  const unsent = [];
+  chat.on("unsent", (t) => unsent.push(t));
+  chat.send("make the widget blink");
+  await once(chat, "closed");
+  await new Promise((r) => setTimeout(r, 300));
+  assert.deepEqual(unsent, ["make the widget blink"]);
+  assert.equal(spawns().length, 1);
+  chat.dispose();
+});
+
 test("a background subagent's permission prompt outlives the main turn's end", () => {
   let s = core.initialState("x");
   const fold = (es) => es.forEach((e) => (s = core.reduce(s, e)));

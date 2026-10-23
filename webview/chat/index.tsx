@@ -240,7 +240,7 @@ function App() {
         return (
           <div
             class={`user ${e.pending ? "pending" : ""} ${e.unsent ? "unsent" : ""}`}
-            title={e.pending ? (e.held ? "Sent once the compaction before it finishes" : "Sent; Claude has not taken it yet") : e.unsent ? "The compaction before it did not finish" : undefined}
+            title={e.pending ? (e.held ? "Sent once the compaction before it finishes" : "Sent; Claude has not taken it yet") : e.unsent ? "Not sent: the compaction before it did not finish, or Claude stopped before taking it" : undefined}
           >
             {e.images ? <span class="muted">[{e.images} image{e.images > 1 ? "s" : ""}] </span> : null}
             {e.text}

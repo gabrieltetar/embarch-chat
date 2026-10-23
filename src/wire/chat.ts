@@ -42,8 +42,9 @@ function isCompactEnd(o: WireMessage): boolean {
  * `status` (the list-visible status changed), `closed` (the process went
  * away), `turn` (a turn ended: the result, and how many turns this chat has
  * had in this window), `suggestion` (the CLI's own guess at the next prompt,
- * decision 25), `unsent` (text held for after a compaction that will not
- * come, for the draft).
+ * decision 25), `unsent` (text that will not be sent — held for a
+ * compaction that will not come, or not taken by a process that died — for
+ * the draft).
  */
 export class Chat extends EventEmitter {
   state: ChatState;
@@ -176,13 +177,9 @@ export class Chat extends EventEmitter {
     proc.on("exit", (info: { code: number | null; signal: string | null; stderr: string }) => {
       if (this.proc !== proc) return;
       const expected = this.closing;
-      if (this.held !== null && !expected) {
-        // Gone before the compaction ended: the rest goes to the resumed session.
-        const rest = this.held;
-        this.held = null;
-        this.heldEntry = null;
-        this.queued.push(rest);
-      }
+      // Gone on its own (a crash, a kill): what it had not taken goes back to
+      // the owner — a held rest included, as for a stopped compaction (36).
+      if (!expected) this.releaseUntaken();
       this.log(`exit ${info.code ?? info.signal}${expected ? " (idle close)" : ""}`);
       // A signal (killed, out of memory, a crash) is no idle close either.
       if (!expected && (info.code || info.signal)) {
@@ -192,7 +189,8 @@ export class Chat extends EventEmitter {
       }
       this.clearIdle();
       this.emit("closed");
-      if (this.queued.length && !this.disposed) {
+      // Only after an idle close of ours does a process start again unasked.
+      if (expected && this.queued.length && !this.disposed) {
         // Sent while it was closing: the next process, resumed, takes them.
         const q = this.queued;
         this.queued = [];
@@ -241,6 +239,27 @@ export class Chat extends EventEmitter {
     const n = ++this.sent;
     this.heldEntry = `s:${n}`;
     this.dispatch({ type: "_sent", n, text: rest, images: 0, held: true });
+  }
+
+  /**
+   * After a process went away on its own: every message it had not taken
+   * (sent but not echoed back, written while it was dying, or held for
+   * after its compaction) is marked not sent and its text goes back to the
+   * draft. Nothing is sent again to a process the owner did not start: a
+   * crash is no idle close.
+   */
+  private releaseUntaken(): void {
+    this.held = null;
+    this.heldEntry = null;
+    this.compactRan = false;
+    this.queued = [];
+    const ids = [...(this.state.unconfirmed ?? [])];
+    for (const id of ids) {
+      const e = this.state.entries[id];
+      this.dispatch({ type: "_unsent", id });
+      if (e?.kind === "user" && e.text.trim()) this.emit("unsent", e.text);
+    }
+    if (ids.length) this.log(`${ids.length} message(s) not taken before the exit: back in the draft`);
   }
 
   /**
