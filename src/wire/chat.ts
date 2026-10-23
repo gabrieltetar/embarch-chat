@@ -29,6 +29,9 @@ export interface Attachment {
   data: string;
 }
 
+/** How many lines a followed transcript passes on to the page one by one; more go as a snapshot. */
+const FOLLOW_AS_EVENTS = 50;
+
 /** A line that says a /compact has run: its boundary, or its output (or error) as a local command. */
 function isCompactEnd(o: WireMessage): boolean {
   if (o.type === "system" && o.subtype === "compact_boundary") return true;
@@ -94,13 +97,19 @@ export class Chat extends EventEmitter {
     this.emit("event", { type: "_snapshot" });
   }
 
-  /** Lines a transcript gained (a thread run elsewhere): folded, and passed on as they are — a large batch as one snapshot. */
+  /**
+   * Lines a transcript gained (a thread run elsewhere, every 3 s while it is
+   * on screen): folded here as one batch — a line-by-line fold copies a long
+   * chat's entries for every line, on the extension host — and passed on as
+   * they are for the page to fold, or past a few dozen as one snapshot.
+   */
   follow(events: WireMessage[]): void {
-    if (events.length > 200) return this.preload(events);
-    for (const e of events) {
-      this.state = reduce(this.state, e);
-      this.emit("event", e);
+    this.state = reduceAll(this.state, events);
+    if (events.length > FOLLOW_AS_EVENTS) {
+      this.emit("event", { type: "_snapshot" });
+      return;
     }
+    for (const e of events) this.emit("event", e);
   }
 
   private dispatch(o: WireMessage): void {

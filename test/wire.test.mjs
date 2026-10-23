@@ -447,6 +447,39 @@ test("a transcript folds in linear time, to the same state as line by line", () 
   assert.equal(JSON.stringify(before), snap);
 });
 
+test("following a long chat folds what was added in one pass, to the same state as line by line", () => {
+  const turn = (i) => {
+    const pad = "x".repeat(200);
+    return [
+      { type: "user", uuid: `u${i}`, message: { role: "user", content: `prompt ${i} ${pad}` } },
+      { type: "assistant", message: { id: `m${i}a`, content: [{ type: "tool_use", id: `t${i}`, name: "Bash", input: { command: `echo ${i}` } }] } },
+      { type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: `t${i}`, content: `out ${i}` }] } },
+      { type: "assistant", message: { id: `m${i}b`, content: [{ type: "text", text: `reply ${i} ${pad}` }] } },
+    ];
+  };
+  const history = [];
+  for (let i = 0; i < 4000; i++) history.push(...turn(i));
+  const chat = new core.Chat({ sessionId: "44444444-2222-4333-8444-555555555555", cwd: "/w", claudePath: FAKE, existing: true, idleMs: 60000 });
+  chat.preload(history);
+  const got = [];
+  chat.on("event", (e) => got.push(e.type));
+  const more = [];
+  for (let i = 0; i < 50; i++) more.push(...turn(10000 + i));
+  const t0 = performance.now();
+  chat.follow(more.slice(0, 48));
+  chat.follow(more.slice(48));
+  const ms = performance.now() - t0;
+  // Line by line, 48 and then 152 lines on 12,000 entries took about 1.1 s every 3 s tick (review r2 L-A).
+  assert.ok(ms < 150, `200 lines followed in ${ms.toFixed(0)} ms`);
+  assert.equal(got.filter((t) => t !== "_snapshot").length, 48, "a small batch goes to the page as its lines");
+  assert.equal(got.at(-1), "_snapshot", "a large one as a snapshot");
+  let one = core.reduceAll(core.initialState("44444444-2222-4333-8444-555555555555"), history.slice(-400));
+  const two = core.reduceAll(one, more);
+  for (const e of more) one = core.reduce(one, e);
+  assert.deepEqual(two, one, "the same state as line by line");
+  chat.dispose();
+});
+
 test("a live foreign thread follows its transcript by what was added, as events", () => {
   const root = tmp("follow-");
   const prev = process.env.CLAUDE_CONFIG_DIR;
