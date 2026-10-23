@@ -28,6 +28,7 @@ import { Queued } from "./queue";
 import { setAtlas } from "./atlas";
 import { LimitBannerView } from "./limits";
 import { FOOTER_COMMANDS, McpPill, ModelPill, RemotePill, footerCommand } from "./footer";
+import { KeepReply } from "./keep";
 import { Stamp, useNow } from "./clock";
 import { dayKey, elapsedText, stalled } from "./time";
 import { cacheClock } from "../../src/wire/limits";
@@ -304,12 +305,23 @@ function App() {
           </div>
         );
       case "text": {
+        // Claude's own text (not a subagent's step) can be kept on the work
+        // item, block by block (84). A finished turn's last block carries one
+        // row: Copy, the whole reply (74), and Keep, this block; an earlier
+        // block offers Keep under the pointer.
+        if (e.parent !== null) return <Markdown text={e.text} ctx={ctx} />;
         const whole = reply.get(e.id);
         return (
-          <>
+          <div class="reply">
             <Markdown text={e.text} ctx={ctx} />
-            {whole !== undefined && <CopyReply text={whole} />}
-          </>
+            {whole !== undefined ? (
+              <CopyReply text={whole}>
+                <KeepReply id={e.id} inRow />
+              </CopyReply>
+            ) : (
+              <KeepReply id={e.id} />
+            )}
+          </div>
         );
       }
       case "thinking":

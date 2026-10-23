@@ -7,6 +7,7 @@
 // gets a Copy button; `/copy` copies the latest, `/export` copies or saves
 // the whole conversation as plain text.
 
+import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { ChatState, UserEntry } from "../../src/wire/reducer";
 import type { RewindResult } from "../../src/wire/chat";
@@ -86,7 +87,8 @@ export function replies(s: ChatState): Map<string, string> {
   return out;
 }
 
-export function CopyReply({ text }: { text: string }) {
+/** The turn's reply copied whole; `children` share its row (Keep, 84). */
+export function CopyReply({ text, children }: { text: string; children?: ComponentChildren }) {
   const [done, setDone] = useState(false);
   return (
     <div class="reply-acts">
@@ -101,6 +103,7 @@ export function CopyReply({ text }: { text: string }) {
       >
         {done ? "Copied" : "Copy"}
       </button>
+      {children}
     </div>
   );
 }

@@ -234,6 +234,16 @@ export class DeskClient {
     return this.isMarked(sid);
   }
 
+  /**
+   * A note on the session's work item, of a kind the desk knows (`finding`,
+   * `decision`, ...): the route behind the desk's `desk_add_line` tool. A
+   * session with no item yet has it held, and it lands when the session
+   * gets one (`held`); one the desk has never seen is a 404.
+   */
+  addLine(sid: string, text: string, kind: string): Promise<{ tile?: string; note_id?: string; held?: boolean }> {
+    return this.call("POST", `/sessions/${encodeURIComponent(sid)}/line`, { text, kind });
+  }
+
   setStatus(itemId: string, stateId: string): Promise<unknown> {
     return this.call("POST", `/items/${encodeURIComponent(itemId)}/status`, { state_id: stateId });
   }

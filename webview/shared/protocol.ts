@@ -74,7 +74,12 @@ export type HostToChat =
   /** Focus the input (after a terminal was read, 58; Ctrl+Alt+Esc, 59). */
   | { t: "focus" }
   /** Text in at the input's caret: an @-mention of the editor's selection (Alt+Shift+K, 59); not when the editor chip carries these lines (`unlessChip`). */
-  | { t: "insert"; text: string; unlessChip?: { path: string; startLine: number; endLine: number } };
+  | { t: "insert"; text: string; unlessChip?: { path: string; startLine: number; endLine: number } }
+  /** A reply kept on the work item (decision 40), held until the chat has one, or not kept and why. */
+  | { t: "kept"; entryId: string; kind: KeepKind; held?: boolean; error?: string };
+
+/** What a kept reply is on the work item: the desk's note kinds a reply can be. */
+export type KeepKind = "finding" | "decision";
 
 /** What a rewind restores (decision 73), as Claude Code's panel offers it: the conversation always as a fork. */
 export type Restore = "both" | "conversation" | "code";
@@ -154,7 +159,9 @@ export type ChatToHost =
   /** Claude Code's MCP dialog's actions on one server. */
   | { t: "mcp"; name: string; action: "reconnect" | "enable" | "disable" }
   /** `/remote-control [name]`: Remote Control on, or off (dismissed, after a failure). */
-  | { t: "remoteControl"; name?: string };
+  | { t: "remoteControl"; name?: string }
+  /** Keep a reply on the chat's work item as a note of this kind (Claude Code's bookmark, the desk's way). */
+  | { t: "keep"; entryId: string; kind: KeepKind };
 
 export type HostToList = {
   t: "groups";

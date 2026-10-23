@@ -700,6 +700,34 @@ test("Remote Control on and off for the chat, as the page's /remote-control asks
   assert.equal(lastSnapshot().state.sessionId, sid);
 });
 
+test("Keep sends a reply to the chat's work item as a note of its kind, through the desk; the page hears what became of it (decision 40)", { skip }, async () => {
+  const { id: item } = await client.call("POST", "/items", { title: "ABC-127 keep what was found", desk: "none" });
+  await mock.state.commands.get("embarchChat.refresh")();
+  process.env.FAKE_CLAUDE_FIXTURE = path.join(here, "fixtures", "wire", "basic.jsonl");
+  mock.state.quickPick = async (items) => items.find((i) => i.label.includes("ABC-127"));
+  await mock.state.commands.get("embarchChat.newChat")();
+  const snap = await waitFor(() => lastSnapshot()?.header?.itemId === item && lastSnapshot(), 5000, "the chat on the item");
+  const sid = snap.state.sessionId;
+  const n = chatView.webview.posted.length;
+  chatView.webview.fromPage({ t: "send", text: "Run the bash command `echo hello-from-bash` and then reply with just: done" });
+  await waitFor(() => chatView.webview.posted.slice(n).some((m) => m.t === "event" && m.e.type === "result"), 5000, "the turn");
+  // The page's own fold of what it was sent: Claude's last reply, by its entry id.
+  const st = core.reduceAll(snap.state, chatView.webview.posted.slice(n).filter((m) => m.t === "event").map((m) => m.e));
+  const reply = Object.values(st.entries).filter((e) => e.kind === "text" && e.parent === null).at(-1);
+  assert.equal(reply.text, "done");
+  chatView.webview.fromPage({ t: "keep", entryId: reply.id, kind: "finding" });
+  const kept = await waitFor(() => chatView.webview.posted.slice(n).find((m) => m.t === "kept"), 5000, "the answer");
+  assert.deepEqual(kept, { t: "kept", entryId: reply.id, kind: "finding", held: false });
+  const notes = (await client.call("GET", `/items/${encodeURIComponent(item)}/notes`)).notes;
+  assert.deepEqual(notes.filter((x) => x.session_id === sid).map((x) => [x.kind, x.text]), [["finding", "done"]], "the reply's text, from the host's state");
+  // The page names a reply; it never supplies the text, and only a reply of Claude's goes.
+  const before = (await client.call("GET", `/items/${encodeURIComponent(item)}/notes`)).notes.length;
+  chatView.webview.fromPage({ t: "keep", entryId: "no-such-entry", kind: "finding" });
+  chatView.webview.fromPage({ t: "keep", entryId: reply.id, kind: "memory" });
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal((await client.call("GET", `/items/${encodeURIComponent(item)}/notes`)).notes.length, before);
+});
+
 // ------------------------------------------------------------ a window reload (decision 63)
 
 /** The window reloads: this extension host deactivates and a new one activates, with the same workspace state. */

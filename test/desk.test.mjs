@@ -57,6 +57,29 @@ test("an untracked chat, and a new title, assign too", live, async () => {
   assert.ok(r.item_id);
 });
 
+test("a reply kept on the work item is a note of its kind, from the session; one with no item yet is held, and lands when it gets one; one the desk never saw is a 404", live, async () => {
+  const { id } = await client.call("POST", "/items", { title: "ABC-125 keep a finding", desk: "none" });
+  const sid = "0b0e1a1e-0000-4000-8000-000000000010";
+  await client.assign(sid, { item_id: id });
+  const r = await client.addLine(sid, "The loader needs 432 KB of RAM.", "finding");
+  assert.ok(r.note_id, JSON.stringify(r));
+  assert.ok(!r.held);
+  await client.addLine(sid, "Flash with nrfutil, never probe-rs, on this part.", "decision");
+  const notes = (await client.call("GET", `/items/${encodeURIComponent(id)}/notes`)).notes.filter((n) => n.session_id === sid);
+  assert.deepEqual(notes.map((n) => [n.kind, n.text]).sort(), [
+    ["decision", "Flash with nrfutil, never probe-rs, on this part."],
+    ["finding", "The loader needs 432 KB of RAM."],
+  ]);
+  // A chat the desk knows with no item yet (one whose item the desk will ask for): held.
+  const later = "0b0e1a1e-0000-4000-8000-000000000011";
+  await client.markClient(later);
+  assert.equal((await client.addLine(later, "PA12 is the console TX.", "finding")).held, true);
+  await client.assign(later, { item_id: id });
+  const landed = (await client.call("GET", `/items/${encodeURIComponent(id)}/notes`)).notes.filter((n) => n.session_id === later);
+  assert.deepEqual(landed.map((n) => [n.kind, n.text]), [["finding", "PA12 is the console TX."]]);
+  await assert.rejects(client.addLine("0b0e1a1e-0000-4000-8000-0000000000ff", "x", "finding"), (e) => e instanceof core.DeskError && e.status === 404);
+});
+
 test("the mailbox: a start entry for this folder, taken once", live, async () => {
   const { id: item } = await client.call("POST", "/items", { title: "ABC-124 mailbox item", desk: "none" });
   const folder = "/work/repo-abc-124";

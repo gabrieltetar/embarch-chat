@@ -12,6 +12,7 @@ import type { PlanDocs } from "../plans";
 import { isDestination } from "../wire/cards";
 import { diffSides } from "../diff";
 import { atlasInfo, citationTarget } from "../atlas";
+import { DeskError } from "../desk/client";
 import { jump } from "../jump";
 import { mentionItems, mentionOf } from "../mentions";
 import type { WireMessage } from "../wire/types";
@@ -400,6 +401,19 @@ export class ChatHost implements vscode.Disposable {
       case "remoteControl":
         if (rec.ours) await chat.remoteControl(typeof m.name === "string" && m.name.trim() ? m.name.trim() : undefined);
         return;
+      case "keep": {
+        // The reply's own text, from the host's state: the page names it, never supplies it.
+        const e = chat.state.entries[m.entryId];
+        if (e?.kind !== "text" || !e.text.trim() || (m.kind !== "finding" && m.kind !== "decision")) return;
+        try {
+          const r = await this.ctx.desk.keep(chat.sessionId, e.text, m.kind);
+          this.post({ t: "kept", entryId: m.entryId, kind: m.kind, held: r.held });
+        } catch (err) {
+          const why = err instanceof DeskError && err.unreachable ? "the desk is not running" : err instanceof DeskError && err.status === 404 ? "the desk has not seen this chat" : (err as Error).message;
+          this.post({ t: "kept", entryId: m.entryId, kind: m.kind, error: why });
+        }
+        return;
+      }
       case "mcpStatus":
         return chat.mcpStatus();
       case "mcp":

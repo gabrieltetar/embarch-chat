@@ -674,6 +674,57 @@ await check("the Remote Control pill, in Claude Code's words: connecting, then o
   assert.equal((await text(".composer .pill.remote")).length, 0, "dismissed");
 });
 
+await check("Keep, on a block of Claude's reply, sends it to the work item as a finding or a decision: in one row with the turn's Copy under its last block, under the pointer on an earlier one; a subagent's text has none (decisions 40, 74)", async () => {
+  await send([snapshot(), sent("Run the bash command `echo hello-from-bash` and then reply with just: done"), ...events(outLines("basic"))]);
+  // One row per finished turn: Copy (the whole reply) and Keep (this block).
+  const rows = await exec("return [...document.querySelectorAll('.timeline .reply .reply-acts')].map((r) => [...r.querySelectorAll('button')].map((b) => b.textContent))");
+  assert.deepEqual(rows, [["Copy", "Keep"], ["Copy", "Keep"]]);
+  assert.equal(await exec("return document.querySelectorAll('.timeline .keep:not(.in-row)').length"), 0, "no second set of actions");
+  await clearPosts();
+  await click(".reply-acts .keep button", "Keep");
+  await settle();
+  assert.deepEqual(await exec("return [...document.querySelectorAll('.reply-acts')[0].querySelectorAll('button')].map((b) => b.textContent)"), ["Copy", "finding", "decision", "×"], "the choice in the same row");
+  await shot("keep-choose");
+  await click(".reply-acts .keep.open button", "finding");
+  await settle();
+  const ps = (await posts()).filter((p) => p.t === "keep");
+  assert.equal(ps.length, 1);
+  assert.equal(ps[0].kind, "finding");
+  assert.ok(!("text" in ps[0]), "the page names the block; the host has its text");
+  const id = ps[0].entryId;
+  assert.deepEqual(await text(".kept-line"), ["Keeping…"]);
+  await send([{ t: "kept", entryId: id, kind: "finding", held: false }]);
+  assert.equal((await text(".reply-acts"))[0], "Copy✓ Kept on the work item as a finding");
+  await shot("keep-done");
+  // The second turn's: a desk that is down, then held for a chat with no item.
+  await exec("document.querySelectorAll('.reply-acts')[1].querySelector('.keep button').click()");
+  await settle();
+  await clearPosts();
+  await exec("[...document.querySelectorAll('.reply-acts')[1].querySelectorAll('.keep.open button')].find((b) => b.textContent === 'decision').click()");
+  await settle();
+  const id2 = (await posts()).find((p) => p.t === "keep").entryId;
+  await send([{ t: "kept", entryId: id2, kind: "decision", error: "the desk is not running" }]);
+  assert.deepEqual(await text(".kept-line.err"), ["Not kept: the desk is not running"]);
+  assert.deepEqual(await exec("return [...document.querySelectorAll('.reply-acts')[1].querySelectorAll('button')].map((b) => b.textContent)"), ["Copy", "Keep"], "and Keep again");
+  await send([{ t: "kept", entryId: id2, kind: "decision", held: true }]);
+  assert.deepEqual(await text(".kept-line"), ["✓ Kept on the work item as a finding", "Kept as a decision — it lands on the work item once this chat has one"]);
+  // A block of a turn still running has no Copy yet: Keep shows over it under the pointer.
+  await send([snapshot(), sent("flash it"), { t: "event", e: { type: "assistant", message: { id: "m-running", content: [{ type: "text", text: "Flashing the board now." }] } } }]);
+  assert.equal(await exec("return document.querySelectorAll('.reply-acts').length"), 0);
+  assert.equal(await exec("return getComputedStyle(document.querySelector('.reply .keep')).visibility"), "hidden", "only under the pointer");
+  const el = await wd("POST", `${S}/element`, { using: "css selector", value: ".timeline .reply" });
+  await wd("POST", `${S}/actions`, { actions: [{ type: "pointer", id: "mouse", actions: [{ type: "pointerMove", origin: el, x: 0, y: 0 }] }] });
+  await settle();
+  assert.equal(await exec("return getComputedStyle(document.querySelector('.reply .keep')).visibility"), "visible");
+  await shot("keep-hover");
+  await wd("DELETE", `${S}/actions`);
+  // A subagent's own text is a step of its call, not a reply.
+  await send([snapshot(), sent("s"), ...events(outLines("subagent"))]);
+  await exec("document.querySelectorAll('.tool .line').forEach((l) => l.click())");
+  await settle();
+  assert.equal(await exec("return document.querySelectorAll('.tool .reply').length"), 0);
+});
+
 await check("a message refused with its chat keeps its text on screen, with Copy", async () => {
   const st = core.reduceAll(core.initialState(SID), [{ type: "_note", text: "Something else runs this chat now — it stays read-only here; Jump goes to it. Your message was not sent:", tone: "error", kept: "take it over\nand finish the blink test" }]);
   await send([{ ...snapshot({ ...st, process: "none" }, { ...OURS, ours: false, readOnly: true }) }]);

@@ -351,6 +351,18 @@ export class DeskService extends EventEmitter {
     return waitingThreads(this.groups);
   }
 
+  /**
+   * Keeps a reply on the chat's work item as a note of its kind (decision
+   * 40: the item is where knowledge gathers; decision 12: no store of the
+   * panel's own). `held` when the chat has no item yet: the desk keeps it
+   * until it gets one.
+   */
+  async keep(sid: string, text: string, kind: "finding" | "decision"): Promise<{ held: boolean }> {
+    const r = await this.client.addLine(sid, text, kind);
+    this.log(`desk: a ${kind} kept from ${sid.slice(0, 8)}${r.held ? " (held: no work item yet)" : ` on ${r.tile ?? "its item"}`}`);
+    return { held: !!r.held };
+  }
+
   /** The card for a work item, when the view carries it. */
   card(itemId: string | null) {
     if (!itemId) return null;

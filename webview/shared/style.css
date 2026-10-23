@@ -410,10 +410,12 @@ button.link-button:focus-visible {
 }
 /* A text block's own paragraph margins would add to the gap. */
 .timeline > div > .md > :first-child,
+.timeline > div > .reply > .md > :first-child,
 .timeline > div > .live > .md > :first-child {
   margin-top: 0;
 }
 .timeline > div > .md > :last-child,
+.timeline > div > .reply > .md > :last-child,
 .timeline > div > .live > .md > :last-child {
   margin-bottom: 0;
 }
@@ -477,6 +479,8 @@ button.link-button:focus-visible {
 /* A reply's Copy (decision 74): quiet under its last block, clearer with the pointer on it. */
 .reply-acts {
   display: flex;
+  align-items: center;
+  gap: 4px;
   margin-top: 2px;
 }
 .reply-copy {
@@ -1157,6 +1161,55 @@ details.thinking .md {
 }
 .composer .bar .spacer {
   flex: 1;
+}
+/* Keep a reply on the work item (decision 40): on the reply under the
+   pointer, at its top right as a code block's Copy is; what became of it
+   stays under it. */
+.reply {
+  position: relative;
+}
+.keep {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 2px 0 6px;
+  font-size: 0.86em;
+  color: var(--muted);
+  background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+  border-radius: var(--radius);
+  visibility: hidden;
+}
+.reply:hover > .keep,
+.keep.open,
+.keep:focus-within {
+  visibility: visible;
+}
+/* In the turn's Copy row: inline, and as muted as Copy beside it. */
+.keep.in-row {
+  position: static;
+  visibility: visible;
+  padding: 0;
+  background: none;
+  font-size: 0.85em;
+}
+.keep.in-row button {
+  font-size: inherit;
+}
+.reply-acts .kept-line {
+  font-size: 0.85em;
+}
+.keep button {
+  padding: 0 6px;
+}
+.kept-line {
+  font-size: 0.86em;
+  color: var(--ok);
+}
+.kept-line.err {
+  color: var(--err);
 }
 /* The footer's pills (footer.tsx), as Claude Code's panel has them, and the
    panel each opens over the input, where the 💡's menu opens. */
