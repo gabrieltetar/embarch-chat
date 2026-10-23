@@ -2,6 +2,7 @@
 export * from "./wire/reducer";
 export * from "./wire/dialogs";
 export * from "./wire/limits";
+export * from "./wire/tasks";
 export * from "./wire/process";
 export * from "./wire/host";
 export * from "./wire/chat";

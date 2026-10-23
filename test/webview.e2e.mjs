@@ -1264,6 +1264,58 @@ await check("the prompt cache clock between turns: warm with the minutes left, k
   assert.deepEqual(await text(".status-line .cache.compacted"), ["Prompt cache does not cover the compacted conversation"]);
 });
 
+// ------------------------------------------------------------ work that runs on its own (port item 70)
+
+const isTaskStarted = (o) => o.type === "system" && o.subtype === "task_started";
+const isResultLine = (o) => o.type === "result";
+/** A recording's lines without its permission prompts: they were allowed, and cards are not what these checks look at. */
+const allowed = (name) => outLines(name).filter((o) => o.type !== "control_request");
+const postsOf = async (t) => (await posts()).filter((p) => p.t === t);
+
+await check("a running Bash call offers Run in background under its row; a click asks for it; the row then says where it runs and how it ended (port item 70)", async () => {
+  await fresh({}, false);
+  const lines = allowed("runbg");
+  const at = lines.findIndex(isTaskStarted);
+  const { tool_use_id: call } = lines[at];
+  await send([sent("count the ticks"), ...events(lines.slice(0, at + 1))]);
+  assert.deepEqual(await text(".timeline .tool:not(.run) > .bg-line button"), ["Run in background"]);
+  await shot("bg-run-in-background");
+  await click(".bg-line button");
+  await settle();
+  assert.deepEqual(await postsOf("runInBackground"), [{ t: "runInBackground", toolUseId: call }]);
+  assert.deepEqual(await text(".bg-line button"), ["Moving to the background…"]);
+  // The CLI moved it, and the turn went on.
+  const end = lines.findIndex(isResultLine);
+  await send(events(lines.slice(at + 1, end + 1)));
+  assert.equal((await text(".bg-line")).length, 0, "nothing more to move");
+  assert.deepEqual(await text(".timeline .tool > .line .st.bg"), ["in the background"]);
+  // Stopped (the recording stopped it): the row says how it ended.
+  await send(events(lines.slice(end + 1)));
+  assert.deepEqual(await text(".timeline .tool > .line .st.stopped"), ["stopped"]);
+});
+
+await check("a folded run whose latest step runs in the foreground offers Run in background on its header; a thread run elsewhere offers none (port item 70)", async () => {
+  const sid = await fresh({}, false);
+  const lines = [
+    sent("build it"),
+    toolCall("tb1", "Bash", { command: "ls", description: "List the build folder" }),
+    toolResult("tb1", "build"),
+    toolCall("tb2", "Bash", { command: "west build -b nrf54l15dk", description: "Build the firmware" }),
+    { t: "event", e: { type: "system", subtype: "task_started", task_id: "bt2", tool_use_id: "tb2", description: "west build", is_backgrounded: false, task_type: "local_bash" } },
+  ];
+  await send(lines);
+  assert.deepEqual(await runRows(), [{ count: "2 steps", st: "", spin: true, open: false }]);
+  assert.deepEqual(await text(".timeline > div > .run > .bg-line button"), ["Run in background"], "reachable folded");
+  await shot("bg-run-header");
+  await click(".run > .bg-line button");
+  assert.deepEqual((await postsOf("runInBackground")).map((p) => p.toolUseId), ["tb2"]);
+  // The same state, shown read-only: nothing that acts.
+  let st = { ...core.initialState(sid), cwd: "/work/rec/x", process: "running" };
+  for (const m of lines) st = core.reduce(st, m.e);
+  await send([snapshot(st, { ...OURS, ours: false, readOnly: true, where: "a terminal" })]);
+  assert.equal((await text(".bg-line")).length, 0);
+});
+
 await check("reply chips after a turn: a click sends it; the handoff's chip asks for a fresh chat", async () => {
   const sid = await fresh();
   const chips = [

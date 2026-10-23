@@ -71,6 +71,8 @@ class Rec {
         return;
       }
       this.lines.push({ d: "out", o });
+      // REC_TRACE: every line out as it comes, to see where a scenario waits.
+      if (process.env.REC_TRACE) fs.appendFileSync(path.join(this.dir, "trace.jsonl"), l + "\n");
       this.buffer.push(o);
       this.wake();
     });
@@ -83,8 +85,9 @@ class Rec {
     this.lines.push({ d: "in", o });
     this.p.stdin.write(JSON.stringify(o) + "\n");
   }
-  user(content) {
-    this.send({ type: "user", message: { role: "user", content } });
+  /** `uuid`: the message's own, as the panel stamps it, for the CLI's queue (cancel_async_message, command_lifecycle). */
+  user(content, uuid) {
+    this.send({ type: "user", ...(uuid ? { uuid } : {}), message: { role: "user", content } });
   }
   control(request_id, request) {
     this.send({ type: "control_request", request_id, request });
@@ -125,6 +128,12 @@ class Rec {
 
 const isResp = (id) => (o) => o.type === "control_response" && o.response?.request_id === id;
 const firstText = (o) => o.type === "stream_event" && o.event?.delta?.type === "text_delta";
+const taskStarted = (type) => (o) => o.type === "system" && o.subtype === "task_started" && o.task_type === type;
+const taskEnded = (o) => o.type === "system" && o.subtype === "task_notification";
+const isResult = (o) => o.type === "result";
+const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+/** Fixed uuids for the panel's messages: a fixture carries them, fake-claude maps them to the client's. */
+const uuidOf = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 
 const scenarios = {
   async basic() {
@@ -240,6 +249,45 @@ const scenarios = {
     await new Promise((res) => setTimeout(res, 9000));
     r.user("Reply with just: ok");
     await r.result();
+    await r.close();
+  },
+  // "Run in background" on a running Bash call (port item 70): the CLI's
+  // task_started for the call in the foreground, background_tasks with its
+  // tool_use_id, the turn going on; then the task's output and its Stop
+  // (item 71), and its output once more after it ended.
+  async runbg() {
+    const r = new Rec("runbg", ["--tools", "Bash"]);
+    r.user("Run the bash command `for i in $(seq 1 20); do echo tick $i; sleep 2; done` in the foreground (not in the background). When it returns, reply with just: done", uuidOf(1));
+    const call = await r.until((o) => o.type === "assistant" && o.message?.content?.some((b) => b.type === "tool_use"));
+    const t = (await r.until(taskStarted("local_bash"), undefined, 20000).catch(() => null)) ?? { tool_use_id: call.message.content.find((b) => b.type === "tool_use").id };
+    await pause(3000);
+    r.control("bg-1", { subtype: "background_tasks", tool_use_id: t.tool_use_id });
+    await r.until(isResp("bg-1"));
+    await r.result();
+    r.control("out-1", { subtype: "get_task_output", task_id: t.task_id });
+    await r.until(isResp("out-1"));
+    r.control("stop-1", { subtype: "stop_task", task_id: t.task_id });
+    await r.until(isResp("stop-1"));
+    await r.until(taskEnded, undefined, 15000).catch(() => null);
+    // Whatever turn the CLI runs for the ended task.
+    await r.until(isResult, undefined, 20000).catch(() => null);
+    r.control("out-2", { subtype: "get_task_output", task_id: t.task_id });
+    await r.until(isResp("out-2"));
+    await r.close();
+  },
+  // A subagent moved to the background (item 70), then stopped (item 71's "Stop agent").
+  async agentbg() {
+    const r = new Rec("agentbg", ["--tools", "Agent,Task,Bash"]);
+    r.user("Use the Agent tool (subagent_type general-purpose, in the foreground) to have a subagent run the bash command `sleep 45; echo from-subagent` and report its output. Then reply with just: done", uuidOf(1));
+    const t = await r.until(taskStarted("local_agent"), undefined, 30000);
+    await pause(4000);
+    r.control("bg-1", { subtype: "background_tasks", tool_use_id: t.tool_use_id });
+    await r.until(isResp("bg-1"));
+    await r.result();
+    r.control("stop-1", { subtype: "stop_task", task_id: t.task_id });
+    await r.until(isResp("stop-1"));
+    await r.until(taskEnded, undefined, 15000).catch(() => null);
+    await r.until(isResult, undefined, 20000).catch(() => null);
     await r.close();
   },
   // The CLI's own guess at the next prompt (decision 25): a prompt_suggestion

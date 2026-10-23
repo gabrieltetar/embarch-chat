@@ -4,21 +4,27 @@
 // diff editor on a click (decision 8); a subagent's own steps nest under its
 // call. Two or more quiet steps in a row fold into one run row (decision 50,
 // runs.ts). `toolRenderers` is the seam for bench result cards (decision 15).
+// A step running in the foreground offers "Run in background" (port item 70;
+// background.tsx).
 
 import { memo } from "preact/compat";
 import { useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import type { Entry, ToolEntry } from "../../src/wire/reducer";
 import { Markdown, MdCtx } from "../shared/markdown";
+import { movable } from "../../src/wire/tasks";
 import { failedText, foldRuns, quietTool, runHead, runTally, toolIntent } from "./runs";
 import { Elapsed } from "./clock";
 import { vscodeApi } from "../shared/vscode";
+import { RunInBackground, backgroundStatus } from "./background";
 
 export interface ToolCtx extends MdCtx {
   openDiff(toolId: string): void;
   cwd: string;
   /** A turn runs: a step without its result counts its time (68); after the turn only a background one does. */
   live?: boolean;
+  /** Moves a step in the foreground to the background (port item 70); absent where the chat runs elsewhere. */
+  runInBackground?: (toolUseId: string) => void;
 }
 
 /** A custom body for a tool by name — bench cards plug in here. */
@@ -204,6 +210,7 @@ function ToolViewInner({ t, entries, ctx, render }: ToolProps) {
   const custom = toolRenderers.map((r) => r.render(t, ctx)).find((x) => x);
   const [open, setOpen] = useState<boolean>(editLike || sub || t.name === "TodoWrite" || !!custom);
   const d = editLike ? diffLines(t) : null;
+  const bg = backgroundStatus(t);
   return (
     <div class={`tool ${t.status}`}>
       <div class="line" onClick={() => setOpen(!open)}>
@@ -213,9 +220,11 @@ function ToolViewInner({ t, entries, ctx, render }: ToolProps) {
             <span class="a">+{d.add}</span> <span class="d">−{d.del}</span>
           </span>
         )}
-        {t.status !== "awaiting" && t.status !== "denied" && <Elapsed from={t.at} to={t.doneAt} live={!!ctx.live || !!t.background} always={sub && !t.background} />}
-        {t.status === "running" ? <span class="spinner" /> : <span class={`st ${t.status}`}>{STATUS[t.status]}</span>}
+        {/* A step in the background counts until its task ends, not until the call returned (68, port item 70). */}
+        {t.status !== "awaiting" && t.status !== "denied" && <Elapsed from={t.at} to={bg ? t.taskEndAt : t.doneAt} live={!!ctx.live || !!t.background} always={sub && !t.background} />}
+        {bg ? <span class={`st ${bg.cls}`}>{bg.text}</span> : t.status === "running" ? <span class="spinner" /> : <span class={`st ${t.status}`}>{STATUS[t.status]}</span>}
       </div>
+      {ctx.runInBackground && movable(t) && <RunInBackground toolUseId={t.id} onMove={ctx.runInBackground} />}
       {t.progress && sub && <div class="progress">{t.progress}</div>}
       {open && (
         <div class="body">
@@ -230,7 +239,7 @@ function ToolViewInner({ t, entries, ctx, render }: ToolProps) {
               {foldRuns(t.children, (id) => entries[id], quiet).map((f) => (
                 <div key={f.key}>{f.run ? <RunView steps={f.ids.map((id) => entries[id])} entries={entries} ctx={ctx} render={render} /> : render(entries[f.ids[0]])}</div>
               ))}
-              {t.result && t.status !== "running" && <Markdown text={t.result} ctx={ctx} />}
+              {t.result && t.status !== "running" && !bg && <Markdown text={t.result} ctx={ctx} />}
             </div>
           ) : (
             <>
@@ -306,6 +315,8 @@ function RunViewInner({ steps, entries, ctx, render }: RunProps) {
         {!n.awaiting && <Elapsed from={from} to={to} live={!!ctx.live} />}
         {n.awaiting ? <span class="st awaiting">{STATUS.awaiting}</span> : n.running ? <span class="spinner" /> : null}
       </div>
+      {/* Reachable folded: the run's latest step is the running one (port item 70); open, the step's own row has it. */}
+      {ctx.runInBackground && !open && head && movable(head) && <RunInBackground toolUseId={head.id} onMove={ctx.runInBackground} />}
       {open && (
         <div class="steps">
           {steps.map((e) => (

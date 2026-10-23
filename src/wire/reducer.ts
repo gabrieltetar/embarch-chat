@@ -59,6 +59,11 @@ export interface ToolEntry {
   /** When the call came and when its result did (decision 68). */
   at?: number;
   doneAt?: number;
+  /** The CLI's task for the call (task_started): a Bash or a subagent in the foreground can be moved to the background by it. */
+  task?: string;
+  /** How its task ended, and when; until then a call in the background still runs. */
+  taskEnd?: "completed" | "failed" | "stopped";
+  taskEndAt?: number;
 }
 export interface NoteEntry {
   kind: "note";
@@ -126,6 +131,8 @@ export interface ChatState {
   /** Block signatures already folded, so a repeated assistant message adds nothing. */
   seen: Record<string, true>;
   background: Array<{ id: string; type: string; description: string }>;
+  /** Task id to the tool call that started it, for the background tasks' rows. */
+  tasks: Record<string, string>;
   /** This panel's messages the CLI has not echoed yet, oldest first (the `pending` user entries). */
   unconfirmed: string[];
   context: ContextUsage | null;
@@ -158,6 +165,7 @@ export function initialState(sessionId: string, mode = "auto"): ChatState {
     finalized: {},
     seen: {},
     background: [],
+    tasks: {},
     unconfirmed: [],
     context: null,
     lastTurn: null,
@@ -306,6 +314,11 @@ export function reduceAll(s: ChatState, events: WireMessage[]): ChatState {
 function confirm(s: ChatState, id: string, extra: Partial<UserEntry> = {}): ChatState {
   s = patch(s, id, "user", () => ({ pending: false, ...extra }));
   return { ...s, unconfirmed: (s.unconfirmed ?? []).filter((x) => x !== id) };
+}
+
+/** The tool call a task was started by. */
+function taskTool(s: ChatState, taskId: unknown): string | undefined {
+  return typeof taskId === "string" ? s.tasks?.[taskId] : undefined;
 }
 
 function note(s: ChatState, text: string, tone: NoteEntry["tone"], kept?: string): ChatState {
@@ -459,10 +472,22 @@ function foldSystem(s: ChatState, o: WireMessage): ChatState {
       const id = o.tool_use_id as string | undefined;
       if (!id) return s;
       const text = (o.subtype === "task_notification" ? o.summary : o.description) as string | undefined;
+      const task = typeof o.task_id === "string" ? o.task_id : undefined;
+      if (o.subtype === "task_started" && task) s = { ...s, tasks: { ...(s.tasks ?? {}), [task]: id } };
+      const end = o.subtype === "task_notification" && ["completed", "failed", "stopped"].includes(o.status as string) ? (o.status as ToolEntry["taskEnd"]) : undefined;
       return patch(s, id, "tool", () => ({
         progress: text,
-        ...(o.subtype === "task_started" ? { background: Boolean(o.is_backgrounded) } : {}),
+        ...(o.subtype === "task_started" ? { background: Boolean(o.is_backgrounded), task } : {}),
+        ...(end ? { taskEnd: end, taskEndAt: stamp(o) } : {}),
       }));
+    }
+    case "task_updated": {
+      // Moved to the background ("Run in background", port item 70), or ended.
+      const id = taskTool(s, o.task_id);
+      const p = o.patch as { is_backgrounded?: boolean; status?: string } | undefined;
+      if (!id || !p) return s;
+      const end = p.status === "completed" || p.status === "failed" ? p.status : p.status === "killed" ? "stopped" : undefined;
+      return patch(s, id, "tool", () => ({ ...(p.is_backgrounded ? { background: true } : {}), ...(end ? { taskEnd: end, taskEndAt: stamp(o) } : {}) }));
     }
     default:
       return s;

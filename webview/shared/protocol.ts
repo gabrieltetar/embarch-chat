@@ -114,7 +114,9 @@ export type ChatToHost =
   /** Saves the export through VS Code's save dialog. */
   | { t: "exportSave"; text: string; filename: string }
   /** The owner names the chat (decision 75). */
-  | { t: "rename" };
+  | { t: "rename" }
+  /** A step in the foreground goes on in the background (port item 70). */
+  | { t: "runInBackground"; toolUseId: string };
 
 export type HostToList = {
   t: "groups";

@@ -288,6 +288,10 @@ export class ChatHost implements vscode.Disposable {
       }
       case "interrupt":
         return chat.interrupt();
+      // Work that runs on its own (port item 70): only where the chat runs.
+      case "runInBackground":
+        if (rec.ours) await chat.runInBackground(m.toolUseId);
+        return;
       case "mode":
         return chat.setMode(m.mode);
       case "model":

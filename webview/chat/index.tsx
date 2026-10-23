@@ -235,6 +235,7 @@ function App() {
   const state = model.state;
   const cwd = state?.cwd ?? "";
   const turnRuns = !!state && (state.busy || state.compacting);
+  const acts = !!model.view && !model.view.readOnly;
   const ctx: ToolCtx = useMemo(
     () => ({
       openLink: (url: string) => post({ t: "openLink", url }),
@@ -242,8 +243,9 @@ function App() {
       openDiff: (toolId: string) => post({ t: "openDiff", toolId }),
       cwd,
       live: turnRuns,
+      runInBackground: acts ? (toolUseId: string) => post({ t: "runInBackground", toolUseId }) : undefined,
     }),
-    [cwd, turnRuns],
+    [cwd, turnRuns, acts],
   );
 
   if (empty || !state || !model.view) {

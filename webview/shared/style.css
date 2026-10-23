@@ -178,6 +178,20 @@ a:hover {
 a:focus-visible {
   outline: 1px solid var(--focus);
 }
+/* A button that reads as a link: "Run in background". */
+button.link-button {
+  color: var(--link);
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+button.link-button:hover {
+  background: transparent;
+  text-decoration: underline;
+}
+button.link-button:focus-visible {
+  outline: 1px solid var(--focus);
+}
 /* A link in a reply that is neither http(s) nor a path: shown, not opened. */
 .link-refused {
   text-decoration: underline dotted;
@@ -622,6 +636,19 @@ details.thinking .md {
 }
 .tool .progress {
   font-size: 0.88em;
+  color: var(--muted);
+}
+/* Work that runs on its own (port item 70): "Run in background" under a step
+   in the foreground, as Claude Code's panel puts it under its card; a step
+   that runs there says so. */
+.bg-line {
+  font-size: 0.88em;
+  margin: 1px 0 0;
+}
+.st.bg {
+  color: var(--busy);
+}
+.st.stopped {
   color: var(--muted);
 }
 

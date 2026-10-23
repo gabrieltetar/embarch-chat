@@ -468,6 +468,23 @@ export class Chat extends EventEmitter {
     }
   }
 
+  // ------------------------------------------------- work that runs on its own
+
+  /**
+   * "Run in background" (port item 70): a Bash call or a subagent running in
+   * the foreground goes on as a background task, and the turn goes on —
+   * `background_tasks` with its tool_use_id, as Claude Code's own panel asks.
+   */
+  async runInBackground(toolUseId: string): Promise<void> {
+    if (!this.running) return;
+    try {
+      const r = await this.proc!.request("background_tasks", { tool_use_id: toolUseId });
+      if (r.backgrounded === false) this.dispatch({ type: "_note", text: "Not moved to the background: it may have just finished, or already run in the background.", tone: "error" });
+    } catch (e) {
+      this.dispatch({ type: "_note", text: `Not moved to the background: ${(e as Error).message}`, tone: "error" });
+    }
+  }
+
   async setMode(mode: string): Promise<void> {
     if (this.running) {
       try {
