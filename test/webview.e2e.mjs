@@ -1728,6 +1728,13 @@ const pasteIn = (spec) =>
     [spec],
   );
 const sends = async () => (await posts()).filter((p) => p.t === "send");
+const waitFor_ = async (pred, ms = 3000) => {
+  const t0 = Date.now();
+  while (!(await pred())) {
+    if (Date.now() - t0 > ms) throw new Error("timed out");
+    await sleep(50);
+  }
+};
 
 await check("a pasted screenshot shows as a thumbnail under the input, × takes it off, and an image alone sends (56)", async () => {
   await fresh({}, false);
@@ -1861,6 +1868,40 @@ await check("the editor's selection shows as a chip under the input and goes wit
   assert.deepEqual([m.text, m.editor], ["/compact", undefined]);
   await send([{ t: "editor", editor: null }]);
   assert.equal(await chipText(), null);
+});
+
+await check("a terminal picked from @ is a chip under the input, not text; its name goes with the message, × takes it off (58)", async () => {
+  await fresh({}, false);
+  await type("see @term");
+  await waitFor_(async () => (await posts()).some((p) => p.t === "mention" && p.q === "term"));
+  await send([{ t: "mentions", q: "term", items: [{ insert: "west build", label: "west build", detail: "terminal output", terminal: "west build" }, { insert: "terminal.c", label: "terminal.c" }] }]);
+  assert.equal((await text(".popup div")).length, 2);
+  await type(ENTER);
+  assert.equal(await value(), "see ", "the @ text goes; nothing inserted");
+  assert.equal(await chipText(), "Terminalwest build×");
+  await shot("terminal-chip");
+  const clear = () => exec("const t=document.querySelector('.composer textarea'); t.value=''; t.dispatchEvent(new Event('input', {bubbles:true}))");
+  await clear();
+  await clearPosts();
+  await type("/compact" + ENTER);
+  assert.deepEqual((await sends()).map((p) => [p.text, p.terminals]), [["/compact", undefined]]);
+  assert.equal(await chipText(), "Terminalwest build×", "a slash command leaves it for the next message");
+  await clearPosts();
+  await type("why does it fail?" + ENTER);
+  const [m] = await sends();
+  assert.deepEqual([m.text, m.terminals], ["why does it fail?", ["west build"]]);
+  assert.equal(await chipText(), null, "sent: gone");
+  // × takes one off.
+  await type("@term");
+  await send([{ t: "mentions", q: "term", items: [{ insert: "minicom", label: "minicom", detail: "terminal output", terminal: "minicom" }] }]);
+  await type(ENTER);
+  await click(".composer .ctx-chip .remove");
+  await settle();
+  assert.equal(await chipText(), null);
+  // The host gives focus back after reading a terminal.
+  await exec("document.activeElement && document.activeElement.blur()");
+  await send([{ t: "focus" }]);
+  assert.equal(await exec("return document.activeElement === document.querySelector('.composer textarea')"), true);
 });
 
 await check("what went with a message shows as rows under it: a selection and a terminal open to their text, the file opens in the editor (58, 60)", async () => {

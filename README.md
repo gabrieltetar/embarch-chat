@@ -135,8 +135,12 @@ whose decision numbers the code cites.
   **The open file, or the selected lines with their text, go with each
   message** as Claude Code's `<ide_opened_file>` / `<ide_selection>` block,
   shown as a chip under the input with an ×; the same one does not go
-  twice, and a slash command goes without it. Each shows as a row under the
-  sent message.
+  twice, and a slash command goes without it. **A terminal picked from the
+  `@` list** goes as a chip too: when the message goes, its last 100 lines
+  are read (the terminal is selected and copied, as Claude Code does it —
+  VS Code gives no other way — and the clipboard put back) and sent as a
+  `<terminal name="…">` block. Each shows as a row under the sent message,
+  opening to its text.
 - **`/btw <question>` asks a side question** while Claude works: the CLI's
   `side_question` answers it from the conversation and the turn in
   progress; question and answer show above the input and never join the

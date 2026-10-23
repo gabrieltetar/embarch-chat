@@ -26,7 +26,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.view = view;
     view.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, "dist")] };
     this.host?.dispose();
-    this.host = new ChatHost(view.webview, this.ctx, this.ctx.chats.current, false);
+    this.host = new ChatHost(view.webview, this.ctx, this.ctx.chats.current, false, () => void vscode.commands.executeCommand(`${CHAT_VIEW}.focus`));
     view.webview.html = webviewHtml(view.webview, this.extensionUri, "chat", "Chat");
     view.onDidChangeVisibility(() => this.onShown());
     view.onDidDispose(() => {
@@ -69,7 +69,7 @@ export class ChatPanels implements vscode.Disposable {
       light: vscode.Uri.joinPath(this.extensionUri, "media", "embarch-tab-light.svg"),
       dark: vscode.Uri.joinPath(this.extensionUri, "media", "embarch-tab-dark.svg"),
     };
-    const host = new ChatHost(panel.webview, this.ctx, sid, true);
+    const host = new ChatHost(panel.webview, this.ctx, sid, true, () => panel.reveal(undefined, false));
     panel.webview.html = webviewHtml(panel.webview, this.extensionUri, "chat", title);
     this.panels.set(sid, { panel, host });
     panel.onDidChangeViewState?.(() => this.onShown());

@@ -9,6 +9,7 @@ import { EventEmitter } from "events";
 import * as fs from "fs";
 import * as path from "path";
 import { projectsRoot } from "../wire/transcript";
+import { readMessage } from "../wire/message";
 import type { PastPrompt } from "./edits";
 
 const DAY = 86_400_000;
@@ -23,8 +24,9 @@ interface FileState {
 }
 
 function stripTags(s: string): string {
-  // IDE context and reminders the panel adds around what the owner typed.
-  return s.replace(/<(ide_[a-z_]+|system-reminder)>[\s\S]*?<\/\1>/g, "").trim();
+  // IDE context, a terminal's output and reminders the panel adds around
+  // what the owner typed; a paste the CLI marked, unwrapped (56, 58).
+  return readMessage(s).text.replace(/<(ide_[a-z_]+|system-reminder)>[\s\S]*?<\/\1>/g, "").trim();
 }
 
 /** The text the owner typed, from one transcript line, or null when the line is not a prompt of theirs. */

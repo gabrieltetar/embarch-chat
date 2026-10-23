@@ -1,9 +1,12 @@
 // @ completes a workspace path, with the selected lines, and the CLI inlines
-// it (decision 8): the panel only has to put `@path` in the message.
+// it (decision 8): the panel only has to put `@path` in the message. The
+// window's terminals are offered too: one picked goes with the message as
+// its output (decision 58), not as text.
 
 import * as path from "path";
 import * as vscode from "vscode";
 import type { MentionItem } from "../webview/shared/protocol";
+import { terminalNames } from "./terminals";
 
 const EXCLUDE = "**/{node_modules,.git,target,build,dist,out,.venv,__pycache__}/**";
 let cache: { at: number; files: vscode.Uri[] } | null = null;
@@ -35,6 +38,10 @@ export async function mentionItems(q: string, cwd: string): Promise<MentionItem[
     }
   }
   const needle = q.toLowerCase();
+  for (const name of terminalNames()) {
+    if (needle && !name.toLowerCase().includes(needle) && !"terminal".startsWith(needle)) continue;
+    out.push({ insert: name, label: name, detail: "terminal output", terminal: name });
+  }
   const scored: Array<{ s: number; p: string }> = [];
   for (const u of await files()) {
     const p = rel(cwd, u.fsPath);

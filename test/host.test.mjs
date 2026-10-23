@@ -828,3 +828,47 @@ test("the open file and the selection go with a message by default, as Claude Co
     mock.vscode.window.visibleTextEditors = [];
   }
 });
+
+test("a terminal picked from @ goes with the message as its last 100 lines, read at send; the clipboard is put back (decision 58)", { skip }, async () => {
+  const inputs = path.join(dir, "inputs-58.jsonl");
+  process.env.FAKE_CLAUDE_INPUT_LOG = inputs;
+  const buffer = Array.from({ length: 150 }, (_, i) => `[${i + 1}/150] Building C object`).join("\n") + "\nerror: 'x' undeclared\n\n\n";
+  let selected = false;
+  let shown = 0;
+  const term = (name) => ({ name, show: () => void shown++ });
+  mock.vscode.window.terminals = [term("west build"), term("minicom")];
+  const copies = { "west build": buffer, minicom: null };
+  let active = "west build";
+  mock.vscode.window.terminals[1].show = () => ((active = "minicom"), shown++);
+  mock.vscode.window.terminals[0].show = () => ((active = "west build"), shown++);
+  mock.state.commands.set("workbench.action.terminal.selectAll", () => void (selected = true));
+  // A terminal that copies nothing (minicom here) leaves the clipboard as it was.
+  mock.state.commands.set("workbench.action.terminal.copySelection", () => void (selected && copies[active] !== null && (mock.state.clipboard = copies[active])));
+  mock.state.commands.set("workbench.action.terminal.clearSelection", () => void (selected = false));
+  mock.state.clipboard = "the owner's own clipboard";
+  try {
+    await startUntracked("basic");
+    chatView.webview.fromPage({ t: "mention", q: "term" });
+    const m = await waitFor(() => posted((x) => x.t === "mentions" && x.q === "term"), 3000, "the @ list");
+    assert.deepEqual(m.items.filter((i) => i.terminal).map((i) => [i.label, i.detail]), [["west build", "terminal output"], ["minicom", "terminal output"]]);
+    chatView.webview.fromPage({ t: "send", text: "why does the build fail?", terminals: ["west build", "minicom", "gone"] });
+    await waitFor(() => fs.existsSync(inputs) && fs.readFileSync(inputs, "utf8").includes("why does the build fail?"), 5000, "the message");
+    const line = fs.readFileSync(inputs, "utf8").trim().split("\n").map((l) => JSON.parse(l).o).find((o) => o.type === "user");
+    const want = buffer.trimEnd().split("\n").slice(-100).join("\n");
+    assert.deepEqual(line.message.content, [
+      { type: "text", text: `<terminal name="west build">\n${want}\n</terminal>` },
+      { type: "text", text: "why does the build fail?" },
+    ], "only the terminal that copied: never the owner's clipboard as a terminal's output");
+    assert.ok(want.startsWith("[52/150]") && want.endsWith("error: 'x' undeclared"));
+    assert.equal(mock.state.clipboard, "the owner's own clipboard", "put back");
+    assert.ok(shown >= 2);
+    assert.ok(posted((x) => x.t === "focus"), "the input gets focus back from the terminal");
+    assert.ok(mock.state.executed.includes("embarchChat.chat.focus"), "and the view its");
+    const sent = posted((x) => x.t === "event" && x.e.type === "_sent");
+    assert.deepEqual(sent.e.context, [{ kind: "terminal", name: "west build", text: want }]);
+  } finally {
+    delete process.env.FAKE_CLAUDE_INPUT_LOG;
+    mock.vscode.window.terminals = [];
+    for (const c of ["selectAll", "copySelection", "clearSelection"]) mock.state.commands.delete(`workbench.action.terminal.${c}`);
+  }
+});

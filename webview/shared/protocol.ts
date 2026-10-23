@@ -68,7 +68,9 @@ export type HostToChat =
   /** The end of a background shell's or Monitor's output, for the page that asked (port item 71). */
   | { t: "taskOutput"; taskId: string; output?: string; totalBytes?: number; truncated?: boolean; error?: string }
   /** The editor's open file or selection, which goes with the next message unless dismissed (60). */
-  | { t: "editor"; editor: (EditorItem & { label: string }) | null };
+  | { t: "editor"; editor: (EditorItem & { label: string }) | null }
+  /** Focus the input (after a terminal was read, 58). */
+  | { t: "focus" };
 
 /** What a rewind restores (decision 73), as Claude Code's panel offers it: the conversation always as a fork. */
 export type Restore = "both" | "conversation" | "code";
@@ -78,12 +80,14 @@ export interface MentionItem {
   insert: string;
   label: string;
   detail?: string;
+  /** A terminal, by name: picked, its output goes with the message as a chip, not as text (58). */
+  terminal?: string;
 }
 
 export type ChatToHost =
   | { t: "ready" }
   /** A message: pasted images go with it, and the long pastes it holds, for the CLI to mark (56). */
-  | { t: "send"; text: string; handoff?: boolean; images?: Attachment[]; pastes?: string[]; editor?: EditorItem }
+  | { t: "send"; text: string; handoff?: boolean; images?: Attachment[]; pastes?: string[]; editor?: EditorItem; terminals?: string[] }
   | { t: "allow"; requestId: string; always?: boolean }
   | { t: "deny"; requestId: string; message?: string }
   | { t: "answer"; requestId: string; answers: Record<string, string> }

@@ -21,6 +21,8 @@
 // the input, never into the conversation. The editor's open file or
 // selection shows as a chip under the input and goes with the message
 // (60), unless its × was clicked or it already went with an earlier one.
+// A terminal picked from the @ list is a chip too: its output is read when
+// the message goes (58).
 
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Card, Chip, PastPrompt } from "../../src/assistant/edits";
@@ -74,6 +76,8 @@ export interface SendOpts {
   pastes?: string[];
   /** The editor's file or selection (60). */
   editor?: EditorItem;
+  /** Terminals whose output goes with it, by name (58). */
+  terminals?: string[];
 }
 
 export type EditorChip = EditorItem & { label: string };
@@ -148,6 +152,10 @@ export function Composer(p: Props) {
   const [preview, setPreview] = useState<Card | null>(null);
   const [holding, setHolding] = useState(false);
   const [images, setImages] = useState<Image[]>([]);
+  /** Terminals picked from the @ list (58). */
+  const [terminals, setTerminals] = useState<string[]>([]);
+  const terminalsNow = useRef(terminals);
+  terminalsNow.current = terminals;
   /** The editor chip whose × was clicked: kept out until the file or selection changes. */
   const [dismissed, setDismissed] = useState<string | null>(null);
   const dismissedNow = useRef(dismissed);
@@ -253,6 +261,10 @@ export function Composer(p: Props) {
     const on = (ev: MessageEvent<HostToChat>) => {
       const m = ev.data;
       const s = a.current;
+      if (m.t === "focus") {
+        ta.current?.focus();
+        return;
+      }
       if (m.t === "ghost") {
         if (!s.ghostReq || m.seq !== s.ghostReq.seq) return;
         if (m.done) s.inflight = false;
@@ -374,6 +386,18 @@ export function Composer(p: Props) {
     if (!pop) return;
     const el = ta.current!;
     const caret = el.selectionStart;
+    if (it.terminal) {
+      // Not text: a chip, its output read when the message goes (58).
+      const name = it.terminal;
+      setTerminals((cur) => (cur.includes(name) ? cur : [...cur, name]));
+      const next = text.slice(0, pop.start) + text.slice(caret);
+      setText(next);
+      typed(next);
+      setPop(null);
+      setGhost(null);
+      focusAt(pop.start);
+      return;
+    }
     const ins = pop.kind === "at" ? `@${it.insert} ` : `/${it.insert} `;
     const next = text.slice(0, pop.start) + ins + text.slice(caret);
     setText(next);
@@ -460,9 +484,15 @@ export function Composer(p: Props) {
     if (imagesNow.current.length) opts.images = imagesNow.current.map(({ mediaType, data }) => ({ mediaType, data }));
     const marked = pastesIn(t, s.pastes);
     if (marked.length) opts.pastes = marked;
-    // A slash command goes as it is: the CLI reads it from the text.
+    // A slash command goes as it is: the CLI reads it from the text. Its
+    // terminal chips wait for the next message.
+    const slash = t.startsWith("/");
+    if (terminalsNow.current.length && !slash) {
+      opts.terminals = terminalsNow.current;
+      setTerminals([]);
+    }
     const ed = props.current.editor;
-    if (ed && !t.startsWith("/")) {
+    if (ed && !slash) {
       const key = editorKey(ed);
       if (key !== dismissedNow.current && editorSent[sid] !== key) {
         const { label: _label, ...item } = ed;
@@ -503,7 +533,7 @@ export function Composer(p: Props) {
     // The DOM, not the last render: keys typed and Enter in one frame would
     // otherwise send the text from before them.
     const t = (ta.current?.value ?? text).trim();
-    if (!t && !images.length) return;
+    if (!t && !images.length && !terminals.length) return;
     // What shows nothing comes out first, and the owner looks again (Claude Code's rule).
     const clean = stripInvisible(t);
     if (clean.removed) {
@@ -671,7 +701,7 @@ export function Composer(p: Props) {
       {pop && pop.items.length > 0 && (
         <div class="popup">
           {pop.items.map((it, i) => (
-            <div key={it.insert} class={i === pop.on ? "on" : ""} onMouseDown={(e) => (e.preventDefault(), choose(it))}>
+            <div key={`${it.terminal ? "t:" : ""}${it.insert}`} class={i === pop.on ? "on" : ""} onMouseDown={(e) => (e.preventDefault(), choose(it))}>
               {it.label}
               {it.detail && <span class="detail">{it.detail}</span>}
             </div>
@@ -739,8 +769,17 @@ export function Composer(p: Props) {
         />
       </div>
       {notice && <div class="paste-notice muted">{notice}</div>}
-      {(images.length > 0 || edChip) && (
+      {(images.length > 0 || edChip || terminals.length > 0) && (
         <div class="attachments">
+          {terminals.map((name) => (
+            <span key={`t:${name}`} class="ctx-chip" title="Its last 100 lines go with the message, read when it goes">
+              <span class="ctx-kind">Terminal</span>
+              <span class="ctx-label">{name}</span>
+              <button class="icon remove" title="Don't send it" onClick={() => setTerminals((cur) => cur.filter((x) => x !== name))}>
+                ×
+              </button>
+            </span>
+          ))}
           {edChip && (
             <span
               class={`ctx-chip ${edSent ? "sent" : ""}`}
@@ -800,7 +839,7 @@ export function Composer(p: Props) {
             Stop
           </button>
         )}
-        <button class="primary" disabled={!text.trim() && !images.length} onClick={send} title={p.waiting ? "Queued: Claude takes it after your answer to the card above" : busy ? "Queued: it waits above the input until Claude reads it, at its next step" : "Send (Enter)"}>
+        <button class="primary" disabled={!text.trim() && !images.length && !terminals.length} onClick={send} title={p.waiting ? "Queued: Claude takes it after your answer to the card above" : busy ? "Queued: it waits above the input until Claude reads it, at its next step" : "Send (Enter)"}>
           {busy ? "Queue" : "Send"}
         </button>
       </div>

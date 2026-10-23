@@ -27,6 +27,7 @@ import type { Attachment, ContextItem } from "../wire/message";
 import { IMAGE_TYPES } from "../wire/message";
 import type { EditorContext, EditorItem } from "../editorContext";
 import { editorLabel } from "../editorContext";
+import { terminalOutput } from "../terminals";
 import type { ChatToHost, Header, HostToChat } from "../../webview/shared/protocol";
 
 export interface HostCtx {
@@ -134,11 +135,17 @@ export class ChatHost implements vscode.Disposable {
     if (this.ready) this.pushEditor();
   };
 
+  /** Messages go in the order sent, though one waits — to resume its chat, for a terminal's output. */
+  private sending: Promise<void> = Promise.resolve();
+  private waiting = 0;
+
   constructor(
     private webview: vscode.Webview,
     private ctx: HostCtx,
     public sid: string | null,
     private inEditor: boolean,
+    /** Brings this page's view or tab forward, with focus. */
+    private reveal: () => void = () => {},
   ) {
     ctx.chats.on("event", this.onEvent);
     ctx.chats.on("snapshot", this.onSnapshot);
@@ -255,23 +262,15 @@ export class ChatHost implements vscode.Disposable {
     // A permission, question or plan prompt; a dialog or an elicitation takes `respond` (66).
     const pending = (id: string) => chat.state.pending.find((p) => p.requestId === id && p.form !== "dialog" && p.form !== "elicitation");
     switch (m.t) {
-      case "send": {
-        if (!rec.ours) {
-          if (!(await this.ctx.resume(chat.sessionId, m.text))) {
-            this.snapshot();
-            return;
-          }
-          this.snapshot();
-        }
-        this.ctx.assistant.sent(chat.sessionId, { handoff: m.handoff });
-        const images = (m.images ?? []).filter(isImage);
-        const extra = { pastes: (m.pastes ?? []).filter((p) => typeof p === "string"), context: editorBack(m.editor) };
-        // The compact card's first line goes first, the rest after its compaction (decision 36).
-        const split = splitCompact(m.text);
-        if (split && rec.ours) chat.sendAfterCompact(split.compact, split.rest, images, extra);
-        else chat.send(m.text, images, extra);
+      case "send":
+        // One that waits nowhere goes at once, as it always did.
+        if (!this.waiting && rec.ours && !m.terminals?.length) return this.deliver(rec, m, []);
+        this.waiting++;
+        this.sending = this.sending
+          .then(() => this.send(m))
+          .catch((e) => this.ctx.log(`send: ${(e as Error).message}`))
+          .finally(() => void this.waiting--);
         return;
-      }
       case "assist": {
         if (!rec.ours) return;
         const input = assistInput(this.ctx, rec, m.text);
@@ -450,6 +449,45 @@ export class ChatHost implements vscode.Disposable {
         return;
       }
     }
+  }
+
+  private async send(m: Extract<ChatToHost, { t: "send" }>): Promise<void> {
+    const rec = this.sid ? this.ctx.chats.get(this.sid) : undefined;
+    if (!rec) return;
+    if (!rec.ours) {
+      if (!(await this.ctx.resume(rec.chat.sessionId, m.text))) {
+        this.snapshot();
+        return;
+      }
+      this.snapshot();
+    }
+    // A terminal's output is read now, as Claude Code reads it at send (58);
+    // reading it shows the terminal, so the page gets focus back after.
+    const terminals: ContextItem[] = [];
+    const names = (m.terminals ?? []).filter((n) => typeof n === "string");
+    for (const name of names) {
+      const text = await terminalOutput(name, this.ctx.log);
+      if (text !== null) terminals.push({ kind: "terminal", name, text });
+    }
+    if (names.length) this.focusInput();
+    this.deliver(rec, m, terminals);
+  }
+
+  private deliver(rec: ChatRecord, m: Extract<ChatToHost, { t: "send" }>, terminals: ContextItem[]): void {
+    const chat = rec.chat;
+    this.ctx.assistant.sent(chat.sessionId, { handoff: m.handoff });
+    const images = (m.images ?? []).filter(isImage);
+    const extra = { pastes: (m.pastes ?? []).filter((p) => typeof p === "string"), context: [...editorBack(m.editor), ...terminals] };
+    // The compact card's first line goes first, the rest after its compaction (decision 36).
+    const split = splitCompact(m.text);
+    if (split && rec.ours) chat.sendAfterCompact(split.compact, split.rest, images, extra);
+    else chat.send(m.text, images, extra);
+  }
+
+  /** This page forward, its input focused. */
+  focusInput(): void {
+    this.reveal();
+    if (this.ready) this.post({ t: "focus" });
   }
 
   dispose(): void {
