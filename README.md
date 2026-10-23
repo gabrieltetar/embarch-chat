@@ -47,6 +47,12 @@ whose decision numbers the code cites.
 - **A compaction is one folded card**, Claude Code's "Compacted chat ·
   manual · 12k tokens freed", with the summary the conversation goes on
   from inside: what it kept (the board, the port) is a click away.
+- **A plan's first answer is "Yes, and use auto mode"**: the mode is set,
+  then the plan allowed (accept edits on a model that refuses auto); then
+  "Yes, and manually approve edits" and "No, keep planning". "Open to
+  comment" opens the plan as a read-only Markdown tab whose lines take VS
+  Code comments; they show on the card and go back with "keep planning", in
+  Claude Code's words.
 - **An open file's unsaved changes are saved before Claude reads, edits or
   writes it**, as Claude Code's own panel does: a PreToolUse hook declared
   in the CLI's `initialize`, which the CLI calls back over stdio and waits

@@ -140,20 +140,61 @@ function QuestionCard({ p, ctx }: { p: Pending; ctx: ToolCtx }) {
   );
 }
 
+/**
+ * A plan (decision 77), with Claude Code's three answers: approve into auto
+ * mode — the first, as in its terminal — or into ask mode, or keep planning.
+ * "Open to comment" opens the plan as a document whose lines take comments;
+ * once there are some, they are listed here with × and the plan can only go
+ * back with them, as in Claude Code.
+ */
 function PlanCard({ p, ctx }: { p: Pending; ctx: ToolCtx }) {
   const [fb, setFb] = useState("");
+  const comments = p.comments ?? [];
+  const commented = comments.length > 0;
   return (
-    <div class="card">
-      <div class="card-title">Claude's plan</div>
+    <div class="card plan-card">
+      <div class="card-title row">
+        <span>{commented ? "Continue planning" : "Claude's plan"}</span>
+        <button class="secondary" title="Open the plan in a tab and comment on its lines" onClick={() => post({ t: "openPlan", requestId: p.requestId })}>
+          Open to comment
+        </button>
+      </div>
       <div class="plan">
         <Markdown text={String(p.input.plan ?? "")} ctx={ctx} />
       </div>
-      <textarea rows={2} placeholder="What to change (for Keep planning)" value={fb} onInput={(e) => setFb((e.target as HTMLTextAreaElement).value)} />
+      {commented && (
+        <div class="plan-comments">
+          <div class="muted">
+            {comments.length} comment{comments.length === 1 ? "" : "s"} will go back as feedback
+          </div>
+          {comments.map((c) => (
+            <div class="plan-comment" key={c.id}>
+              <div class="body">
+                <div class="quote">"{c.selectedText.length > 80 ? c.selectedText.slice(0, 80) + "…" : c.selectedText}"</div>
+                <div>{c.comment}</div>
+              </div>
+              <button class="icon" title="Remove the comment" onClick={() => post({ t: "removePlanComment", requestId: p.requestId, id: c.id })}>
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <textarea rows={2} placeholder="Tell Claude what to do instead" value={fb} onInput={(e) => setFb((e.target as HTMLTextAreaElement).value)} />
       <div class="actions">
-        <button class="primary" onClick={() => post({ t: "allow", requestId: p.requestId })}>
-          Approve
+        {!commented && (
+          <button class="primary" title="Approve, and switch this chat to auto mode" onClick={() => post({ t: "allow", requestId: p.requestId, mode: "auto" })}>
+            Yes, and use auto mode
+          </button>
+        )}
+        {!commented && (
+          <button title="Approve, and ask before each edit" onClick={() => post({ t: "allow", requestId: p.requestId, mode: "default" })}>
+            Yes, and manually approve edits
+          </button>
+        )}
+        <button class={commented ? "primary" : undefined} onClick={() => post({ t: "deny", requestId: p.requestId, message: fb })}>
+          {commented ? "Send feedback and keep planning" : "No, keep planning"}
         </button>
-        <button onClick={() => post({ t: "deny", requestId: p.requestId, message: fb.trim() || "Keep planning." })}>Keep planning</button>
       </div>
     </div>
   );

@@ -19,7 +19,12 @@ const FAKE = path.join(here, "fake-claude.mjs");
 const fixture = (n) => path.join(here, "fixtures", "wire", `${n}.jsonl`);
 fs.chmodSync(FAKE, 0o755);
 const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "embarch-chat-cards-"));
-after(() => fs.rmSync(ROOT, { recursive: true, force: true }));
+// A test that fails before its dispose leaves no process behind to hold the run open.
+const chats = [];
+after(() => {
+  for (const c of chats) c.dispose();
+  fs.rmSync(ROOT, { recursive: true, force: true });
+});
 
 function makeChat(name, opts = {}) {
   const dir = fs.mkdtempSync(path.join(ROOT, "chat-"));
@@ -32,6 +37,7 @@ function makeChat(name, opts = {}) {
     mode: opts.mode,
     env: { ...process.env, FAKE_CLAUDE_FIXTURE: fixture(name), FAKE_CLAUDE_ARGS_LOG: path.join(dir, "args.jsonl"), FAKE_CLAUDE_INPUT_LOG: path.join(dir, "input.jsonl") },
   });
+  chats.push(chat);
   // Every line the chat wrote to the CLI, in order.
   const inputs = () => (fs.existsSync(path.join(dir, "input.jsonl")) ? fs.readFileSync(path.join(dir, "input.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l).o) : []);
   return { chat, inputs };
@@ -106,4 +112,84 @@ test("an auto compaction's card says auto; a synthetic message not after a compa
     [["Compacted chat · auto · 150k tokens freed", "the summary"]],
   );
   assert.equal(entries(s, "user").length, 0);
+});
+
+// ---- the plan card (decision 77)
+
+const PLAN_PROMPT = "Plan how to create hello.txt containing hi, then present the plan for approval with ExitPlanMode. Keep the plan to two lines. After approval, create the file.";
+const nextPlan = async (chat) => {
+  await waitFor(() => chat.state.pending.some((p) => p.form === "plan"));
+  return chat.state.pending.find((p) => p.form === "plan");
+};
+
+test("Yes, and use auto mode: the mode is set first, then the plan allowed; the chat stays in auto and the Write asks nothing", async () => {
+  const { chat, inputs } = makeChat("planautoon", { mode: "plan" });
+  chat.send(PLAN_PROMPT);
+  const p = await nextPlan(chat);
+  await chat.approvePlan(p, "auto");
+  await turns(chat, 1);
+  const sent = inputs().filter((o) => o.type === "control_response" || o.request?.subtype === "set_permission_mode");
+  assert.deepEqual(
+    sent.map((o) => (o.type === "control_request" ? `${o.request.subtype}:${o.request.mode}` : o.response.response.behavior)),
+    ["set_permission_mode:auto", "allow"],
+  );
+  assert.equal(sent[1].response.response.updatedPermissions, undefined, "the mode was set, not passed as a permission");
+  assert.equal(chat.state.mode, "auto");
+  assert.equal(entries(chat.state, "tool").find((t) => t.name === "Write").status, "done");
+  assert.equal(chat.state.pending.length, 0);
+  chat.dispose();
+});
+
+test("a plan sent back with a comment on its line, in Claude Code's words; the next one approved into auto on a model that refuses it falls back to accept edits", async () => {
+  const { chat, inputs } = makeChat("planauto", { mode: "plan" });
+  chat.send(PLAN_PROMPT);
+  const first = await nextPlan(chat);
+  const line = String(first.input.plan).split("\n")[0];
+  const comment = { id: "c1", start: 0, end: 0, selectedText: line, comment: "Name the file greeting.txt instead." };
+  chat.planComments(first.requestId, [comment]);
+  assert.deepEqual(chat.state.pending[0].comments, [comment], "the card has it");
+  chat.keepPlanning(chat.state.pending[0], "");
+  await waitFor(() => inputs().some((o) => o.type === "control_response"));
+  const deny = inputs().find((o) => o.type === "control_response");
+  assert.equal(deny.response.response.behavior, "deny");
+  assert.equal(deny.response.response.message, `User chose to stay in plan mode and continue planning\n\nComments on the plan:\n[Re: "${line}"] Name the file greeting.txt instead.`);
+  assert.equal(deny.response.response.interrupt, undefined, "with a comment, Claude goes on planning");
+  await waitFor(() => chat.state.pending.some((p) => p.form === "plan" && p.requestId !== first.requestId));
+  const second = chat.state.pending.find((p) => p.form === "plan");
+  assert.match(String(second.input.plan), /greeting\.txt/, "Claude took the comment");
+  await chat.approvePlan(second, "auto");
+  await turns(chat, 1);
+  const modes = inputs()
+    .filter((o) => o.type === "control_request" && o.request.subtype === "set_permission_mode")
+    .map((o) => o.request.mode);
+  assert.deepEqual(modes, ["auto", "acceptEdits"]);
+  assert.equal(chat.state.mode, "acceptEdits");
+  assert.ok(entries(chat.state, "note").some((n) => n.text === "Approved with edits accepted: Cannot set permission mode to auto: auto mode unavailable for this model."));
+  assert.equal(entries(chat.state, "tool").filter((t) => t.name === "Write" && /greeting\.txt$/.test(String(t.input.file_path)))[0].status, "done");
+  chat.dispose();
+});
+
+test("Yes, and manually approve edits: ask mode, the plan allowed with the CLI's own setMode, and the Write that follows asks", async () => {
+  const { chat, inputs } = makeChat("planmanual", { mode: "plan" });
+  chat.send(PLAN_PROMPT);
+  const p = await nextPlan(chat);
+  await chat.approvePlan(p, "default");
+  await waitFor(() => chat.state.pending.some((x) => x.toolName === "Write"));
+  assert.equal(chat.state.mode, "default");
+  await waitFor(() => inputs().some((o) => o.type === "control_response"));
+  const allow = inputs().find((o) => o.type === "control_response");
+  assert.deepEqual(allow.response.response.updatedPermissions, [{ type: "setMode", mode: "default", destination: "session" }]);
+  chat.allow(chat.state.pending[0]);
+  await turns(chat, 1);
+  chat.dispose();
+});
+
+test("keep planning's words: typed text after the rejection's own, comments listed, and with neither the turn stops", () => {
+  assert.deepEqual(core.planFeedback("", []), { message: core.KEEP_PLANNING, interrupt: true });
+  assert.deepEqual(core.planFeedback("  use the DK board ", []), { message: core.REJECTED_BECAUSE + "use the DK board", interrupt: false });
+  const c = [
+    { id: "a", start: 0, end: 0, selectedText: "1. Flash", comment: "build first" },
+    { id: "b", start: 2, end: 3, selectedText: "3. Run\n4. Read", comment: "on COM17" },
+  ];
+  assert.equal(core.planFeedback("wait", c).message, `${core.REJECTED_BECAUSE}wait\n\nComments on the plan:\n[Re: "1. Flash"] build first\n[Re: "3. Run\n4. Read"] on COM17`);
 });

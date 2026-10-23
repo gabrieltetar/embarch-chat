@@ -16,6 +16,7 @@ import { ChatManager, ChatRecord, DeskDue } from "./chats";
 import { AssignBody, DeskClient, DeskError, MailboxEntry, expandHome } from "./desk/client";
 import { DeskService } from "./deskService";
 import { CONTENT_SCHEME, ContentDocs } from "./content";
+import { registerPlans } from "./plans";
 import { DIFF_SCHEME, DiffContent, registerProposals } from "./diff";
 import { hostHooks } from "./hostHooks";
 import { EditorContext } from "./editorContext";
@@ -94,6 +95,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const diff = new DiffContent();
   context.subscriptions.push(vscode.workspace.registerTextDocumentContentProvider(DIFF_SCHEME, diff));
   const proposals = registerProposals(context, (sid) => manager.get(sid)?.chat);
+  const plans = registerPlans(context, (sid) => manager.get(sid)?.chat);
   const content = new ContentDocs();
   context.subscriptions.push(vscode.workspace.registerTextDocumentContentProvider(CONTENT_SCHEME, content));
 
@@ -146,6 +148,7 @@ export function activate(context: vscode.ExtensionContext): void {
     diff,
     proposals,
     content,
+    plans,
     log,
     claudePath: () => cfg().claudePath,
     deskUrl,

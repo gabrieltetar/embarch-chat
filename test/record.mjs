@@ -189,6 +189,53 @@ const scenarios = {
     await r.result();
     await r.close();
   },
+  // The plan card (decision 77): the first plan sent back with a comment
+  // on its first line, in Claude Code's words; the second approved into auto
+  // mode — the mode set first, then the plan allowed, as Claude Code's panel
+  // does (accept edits if auto is refused) — and Claude writes the file.
+  async planauto() {
+    const r = new Rec("planauto", ["--permission-mode", "plan", "--tools", "Read,Write,ExitPlanMode"]);
+    const isPlan = (o) => o.type === "control_request" && o.request?.tool_name === "ExitPlanMode";
+    r.user("Plan how to create hello.txt containing hi, then present the plan for approval with ExitPlanMode. Keep the plan to two lines. After approval, create the file.");
+    const first = await r.until(isPlan, () => {});
+    const line = String(first.request.input.plan ?? "").split("\n")[0];
+    const fb = core.planFeedback("", [{ id: "c1", start: 0, end: 0, selectedText: line, comment: "Name the file greeting.txt instead." }]);
+    r.respond(first, { behavior: "deny", message: fb.message, ...(fb.interrupt ? { interrupt: true } : {}) });
+    const second = await r.until(isPlan, () => {});
+    r.control("pm-1", { subtype: "set_permission_mode", mode: "auto" });
+    const pm = await r.until(isResp("pm-1"), () => {});
+    if (pm.response?.subtype !== "success") {
+      r.control("pm-2", { subtype: "set_permission_mode", mode: "acceptEdits" });
+      await r.until(isResp("pm-2"), () => {});
+    }
+    r.respond(second, { behavior: "allow", updatedInput: second.request.input });
+    await r.result();
+    await r.close();
+  },
+  // The same approval on a model auto mode is open to (Haiku refuses it):
+  // the mode set, the plan allowed, and the session stays in auto.
+  async planautoon() {
+    const r = new Rec("planautoon", ["--permission-mode", "plan", "--tools", "Read,Write,ExitPlanMode", "--model", "sonnet"]);
+    r.user("Plan how to create hello.txt containing hi, then present the plan for approval with ExitPlanMode. Keep the plan to two lines. After approval, create the file.");
+    const plan = await r.until((o) => o.type === "control_request" && o.request?.tool_name === "ExitPlanMode", () => {});
+    r.control("pm-1", { subtype: "set_permission_mode", mode: "auto" });
+    await r.until(isResp("pm-1"), () => {});
+    r.respond(plan, { behavior: "allow", updatedInput: plan.request.input });
+    await r.result();
+    await r.close();
+  },
+  // "Yes, and manually approve edits": ask mode set, then the plan allowed
+  // with Claude Code's own setMode; the Write that follows asks.
+  async planmanual() {
+    const r = new Rec("planmanual", ["--permission-mode", "plan", "--tools", "Read,Write,ExitPlanMode"]);
+    r.user("Plan how to create hello.txt containing hi, then present the plan for approval with ExitPlanMode. Keep the plan to two lines. After approval, create the file.");
+    const plan = await r.until((o) => o.type === "control_request" && o.request?.tool_name === "ExitPlanMode", () => {});
+    r.control("pm-1", { subtype: "set_permission_mode", mode: "default" });
+    await r.until(isResp("pm-1"), () => {});
+    r.respond(plan, { behavior: "allow", updatedInput: plan.request.input, updatedPermissions: [{ type: "setMode", mode: "default", destination: "session" }] });
+    await r.result();
+    await r.close();
+  },
   async interrupt() {
     const r = new Rec("interrupt", ["--tools", ""]);
     r.user("Write a 400-word story about a lighthouse keeper.");

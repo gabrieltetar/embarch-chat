@@ -144,6 +144,23 @@
         "category": "EmbArch Chat"
       },
       {
+        "command": "embarchChat.addPlanComment",
+        "title": "Add Comment",
+        "category": "EmbArch Chat"
+      },
+      {
+        "command": "embarchChat.removePlanComment",
+        "title": "Remove Comment",
+        "category": "EmbArch Chat",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "embarchChat.keepPlanning",
+        "title": "Send the Comments and Keep Planning",
+        "category": "EmbArch Chat",
+        "icon": "$(comment-discussion)"
+      },
+      {
         "command": "embarchUi.start",
         "title": "EmbArch UI: Start",
         "category": "EmbArch UI"
@@ -192,6 +209,25 @@
           "command": "embarchChat.rejectChanges",
           "when": "resourceScheme == embarch-chat-proposal",
           "group": "navigation@2"
+        },
+        {
+          "command": "embarchChat.keepPlanning",
+          "when": "resourceScheme == embarch-chat-plan",
+          "group": "navigation@1"
+        }
+      ],
+      "comments/commentThread/context": [
+        {
+          "command": "embarchChat.addPlanComment",
+          "when": "commentController == embarch-chat-plan && commentThreadIsEmpty",
+          "group": "inline"
+        }
+      ],
+      "comments/commentThread/title": [
+        {
+          "command": "embarchChat.removePlanComment",
+          "when": "commentController == embarch-chat-plan && !commentThreadIsEmpty",
+          "group": "inline"
         }
       ],
       "commandPalette": [
@@ -206,6 +242,18 @@
         {
           "command": "embarchChat.toggleChange",
           "when": "false"
+        },
+        {
+          "command": "embarchChat.addPlanComment",
+          "when": "false"
+        },
+        {
+          "command": "embarchChat.removePlanComment",
+          "when": "false"
+        },
+        {
+          "command": "embarchChat.keepPlanning",
+          "when": "resourceScheme == embarch-chat-plan"
         }
       ],
       "webview/context": [

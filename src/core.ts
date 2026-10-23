@@ -1,6 +1,7 @@
 // Everything that runs without VS Code, in one bundle for the node tests.
 export * from "./wire/reducer";
 export * from "./wire/dialogs";
+export * from "./wire/cards";
 export * from "./wire/limits";
 export * from "./wire/tasks";
 export * from "./wire/process";

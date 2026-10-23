@@ -16,6 +16,7 @@ import { anyMovable, soonMovable } from "./tasks";
 import { Attachment, ContextItem, Outgoing, outgoing } from "./message";
 import type { ContextUsage, PermissionDecision, WireMessage } from "./types";
 import { DIALOG_CANCELLED, answerable, unansweredNote } from "./dialogs";
+import { PlanComment, planFeedback } from "./cards";
 
 export interface ChatOptions {
   sessionId: string;
@@ -466,6 +467,51 @@ export class Chat extends EventEmitter {
 
   deny(p: Pending, message = "The user declined this tool call."): void {
     this.answer(p.requestId, { behavior: "deny", message });
+  }
+
+  /**
+   * A plan approved (decision 77) as Claude Code's card approves it: the
+   * mode set first, then the plan allowed, and the session stays in that
+   * mode [measured]. "auto" falls back to accept edits on a model that
+   * refuses auto mode, as Claude Code's does [measured: Haiku answers "auto
+   * mode unavailable for this model"]; "default" is "Yes, and manually
+   * approve edits", ask mode with the CLI's own setMode beside the allow.
+   */
+  async approvePlan(p: Pending, mode: "auto" | "default"): Promise<void> {
+    if (p.form !== "plan") return;
+    if (mode === "auto") {
+      const refused = await this.trySetMode("auto");
+      if (refused !== null) this.note(`${(await this.trySetMode("acceptEdits")) === null ? "Approved with edits accepted" : "Approved, mode unchanged"}: ${refused.replace(/\.$/, "")}.`);
+      this.answer(p.requestId, { behavior: "allow", updatedInput: p.input });
+      return;
+    }
+    await this.trySetMode("default");
+    this.answer(p.requestId, { behavior: "allow", updatedInput: p.input, updatedPermissions: [{ type: "setMode", mode: "default", destination: "session" }] });
+  }
+
+  /** The plan sent back (77): what the owner typed and the comments on its lines, in Claude Code's words; with neither the turn stops for the owner. */
+  keepPlanning(p: Pending, typed: string): void {
+    const { message, interrupt } = planFeedback(typed, p.comments ?? []);
+    this.answer(p.requestId, { behavior: "deny", message, ...(interrupt ? { interrupt } : {}) });
+  }
+
+  /** The comments on a pending plan's lines, as its document tab has them (77). */
+  planComments(requestId: string, comments: PlanComment[]): void {
+    if (!this.state.pending.some((p) => p.requestId === requestId)) return;
+    this.dispatch({ type: "_planComments", requestId, comments });
+  }
+
+  /** The mode as `setMode` sets it, without a note: null when set, else why not. */
+  private async trySetMode(mode: string): Promise<string | null> {
+    if (this.running) {
+      try {
+        await this.proc!.request("set_permission_mode", { mode });
+      } catch (e) {
+        return (e as Error).message;
+      }
+    }
+    this.dispatch({ type: "_mode", mode });
+    return null;
   }
 
   /** Claude's question answered (`AskUserQuestion` counts as approve, decision 8). */

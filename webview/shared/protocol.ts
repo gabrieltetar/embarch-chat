@@ -90,7 +90,8 @@ export type ChatToHost =
   | { t: "ready" }
   /** A message: pasted images go with it, and the long pastes it holds, for the CLI to mark (56). */
   | { t: "send"; text: string; handoff?: boolean; images?: Attachment[]; pastes?: string[]; editor?: EditorItem; terminals?: string[] }
-  | { t: "allow"; requestId: string; always?: boolean }
+  /** `mode`: a plan approved into auto mode, or into ask mode (77). */
+  | { t: "allow"; requestId: string; always?: boolean; mode?: "auto" | "default" }
   | { t: "deny"; requestId: string; message?: string }
   | { t: "answer"; requestId: string; answers: Record<string, string> }
   /** A dialog's or an MCP elicitation's answer, as the CLI's schema has it (decision 66). */
@@ -100,6 +101,9 @@ export type ChatToHost =
   | { t: "model"; model: string }
   | { t: "compact" }
   | { t: "openDiff"; toolId?: string; requestId?: string }
+  /** A pending plan as a tab to comment on; a comment taken back from its card (77). */
+  | { t: "openPlan"; requestId: string }
+  | { t: "removePlanComment"; requestId: string; id: string }
   /** A tool's whole input or output in an editor tab (decision 62). */
   | { t: "openContent"; toolId: string; part: "input" | "output" }
   | { t: "openFile"; path: string; line?: number }

@@ -120,6 +120,8 @@ const state = {
   clipboard: "",
   /** setContext keys, as set. */
   context: {},
+  /** Comment controllers, as created: { id, label, commentingRangeProvider, options }. */
+  commentControllers: [],
 };
 
 /** vscode.EventEmitter: `event` subscribes, `fire` delivers. */
@@ -137,6 +139,13 @@ class VsEventEmitter {
   dispose() {}
 }
 
+class Position {
+  constructor(l, c) {
+    this.line = l;
+    this.character = c;
+  }
+}
+
 const vscode = {
   Uri,
   EventEmitter: VsEventEmitter,
@@ -147,20 +156,18 @@ const vscode = {
     }
   },
   TabInputTextDiff: class {},
+  TabInputText: class {},
+  CommentMode: { Editing: 0, Preview: 1 },
   StatusBarAlignment: { Left: 1, Right: 2 },
   ViewColumn: { Active: -1, Beside: -2, One: 1 },
   QuickPickItemKind: { Separator: -1, Default: 0 },
   TextEditorRevealType: { InCenter: 2 },
-  Position: class {
-    constructor(l, c) {
-      this.line = l;
-      this.character = c;
-    }
-  },
+  Position,
+  // (start, end) or (startLine, startChar, endLine, endChar), as VS Code's.
   Range: class {
-    constructor(a, b) {
-      this.start = a;
-      this.end = b;
+    constructor(a, b, c, d) {
+      this.start = typeof a === "number" ? new Position(a, b) : a;
+      this.end = typeof a === "number" ? new Position(c, d) : b;
     }
   },
   Selection: class {
@@ -258,6 +265,13 @@ const vscode = {
       if (id === "setContext") state.context[args[0]] = args[1];
       const f = state.commands.get(id);
       return f ? f(...args) : undefined;
+    },
+  },
+  comments: {
+    createCommentController: (id, label) => {
+      const c = { id, label, commentingRangeProvider: undefined, options: undefined, dispose() {} };
+      state.commentControllers.push(c);
+      return c;
     },
   },
   extensions: { getExtension: () => undefined },

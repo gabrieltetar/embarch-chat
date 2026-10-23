@@ -504,6 +504,56 @@ test("a pending Edit's diff tab rejects a change; Accept sends only the kept one
   }
 });
 
+test("a plan opens as a Markdown tab whose lines take comments; they reach its card, one comes off with ×, and the rest go back with keep planning (decision 77)", { skip }, async () => {
+  const input = path.join(dir, "input-plan.jsonl");
+  process.env.FAKE_CLAUDE_INPUT_LOG = input;
+  const sent = () => (fs.existsSync(input) ? fs.readFileSync(input, "utf8").trim().split("\n").map((l) => JSON.parse(l).o) : []);
+  try {
+    await startUntracked("basic");
+    process.env.FAKE_CLAUDE_FIXTURE = path.join(here, "fixtures", "wire", "planauto.jsonl");
+    const n = chatView.webview.posted.length;
+    const plans = () => chatView.webview.posted.slice(n).filter((m) => m.t === "event" && m.e.type === "control_request" && m.e.request.tool_name === "ExitPlanMode");
+    chatView.webview.fromPage({ t: "send", text: "Plan how to create hello.txt containing hi, then present the plan for approval with ExitPlanMode. Keep the plan to two lines. After approval, create the file." });
+    const ask = await waitFor(() => plans()[0], 5000, "the plan");
+    const plan = ask.e.request.input.plan;
+    chatView.webview.fromPage({ t: "openPlan", requestId: ask.e.request_id });
+    const tab = await waitFor(() => mock.state.shown.find((x) => x.doc?.uri?.scheme === "embarch-chat-plan"), 3000, "the plan's tab");
+    assert.match(tab.doc.uri.path, /\.md$/, "Markdown");
+    assert.equal(mock.state.contentProviders.get("embarch-chat-plan").provideTextDocumentContent(tab.doc.uri), plan);
+    const ctl = mock.state.commentControllers.find((c) => c.id === "embarch-chat-plan");
+    assert.equal(ctl.commentingRangeProvider.provideCommentingRanges({ uri: tab.doc.uri, lineCount: 3 }).length, 1, "every line takes a comment");
+    // Two comments, as VS Code's comment box submits them.
+    const thread = (line) => ({ uri: tab.doc.uri, range: new mock.vscode.Range(line, 0, line, 0), comments: [], canReply: true, dispose() {
+      this.disposed = true;
+    } });
+    const [t1, t2] = [thread(0), thread(1)];
+    await mock.state.commands.get("embarchChat.addPlanComment")({ thread: t1, text: "Name the file greeting.txt instead." });
+    await mock.state.commands.get("embarchChat.addPlanComment")({ thread: t2, text: "skip this" });
+    assert.equal(t1.comments[0].body, "Name the file greeting.txt instead.");
+    assert.equal(t1.canReply, false);
+    const told = () => chatView.webview.posted.slice(n).filter((m) => m.t === "event" && m.e.type === "_planComments").at(-1)?.e.comments ?? [];
+    await waitFor(() => told().length === 2, 3000, "the card told");
+    // The second comes off from the card's ×: its thread goes too.
+    chatView.webview.fromPage({ t: "removePlanComment", requestId: ask.e.request_id, id: told()[1].id });
+    await waitFor(() => told().length === 1, 3000, "the card told again");
+    assert.ok(t2.disposed);
+    assert.deepEqual(told().map((c) => [c.selectedText, c.comment]), [[plan.split("\n")[0], "Name the file greeting.txt instead."]]);
+    // Keep planning, from the card: the comment goes with it, and the tab's threads go.
+    chatView.webview.fromPage({ t: "deny", requestId: ask.e.request_id, message: "" });
+    const deny = await waitFor(() => sent().find((o) => o.type === "control_response" && o.response.response?.behavior === "deny"), 3000, "keep planning");
+    assert.equal(deny.response.response.message, `User chose to stay in plan mode and continue planning\n\nComments on the plan:\n[Re: "${plan.split("\n")[0]}"] Name the file greeting.txt instead.`);
+    assert.ok(t1.disposed);
+    // The next plan, approved into auto: this model refuses it, so accept edits (as recorded).
+    const ask2 = await waitFor(() => plans()[1], 5000, "the second plan");
+    chatView.webview.fromPage({ t: "allow", requestId: ask2.e.request_id, mode: "auto" });
+    await waitFor(() => chatView.webview.posted.slice(n).some((m) => m.t === "event" && m.e.type === "result"), 5000, "the turn's end");
+    assert.deepEqual(sent().filter((o) => o.request?.subtype === "set_permission_mode").map((o) => o.request.mode), ["auto", "acceptEdits"]);
+    assert.equal(chatView.webview.posted.slice(n).filter((m) => m.t === "event" && m.e.type === "_mode").at(-1).e.mode, "acceptEdits");
+  } finally {
+    delete process.env.FAKE_CLAUDE_INPUT_LOG;
+  }
+});
+
 // ------------------------------------------------------------ a window reload (decision 63)
 
 /** The window reloads: this extension host deactivates and a new one activates, with the same workspace state. */

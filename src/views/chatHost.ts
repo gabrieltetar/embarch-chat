@@ -8,6 +8,7 @@ import type { ChatManager } from "../chats";
 import type { DeskService } from "../deskService";
 import type { ContentDocs } from "../content";
 import type { DiffContent, Proposals } from "../diff";
+import type { PlanDocs } from "../plans";
 import { diffSides } from "../diff";
 import { atlasInfo, citationTarget } from "../atlas";
 import { jump } from "../jump";
@@ -38,6 +39,8 @@ export interface HostCtx {
   proposals: Proposals;
   /** A tool's whole input or output in an editor tab (decision 62). */
   content: ContentDocs;
+  /** A pending plan as a tab to comment on, line by line (decision 77). */
+  plans: PlanDocs;
   log: (s: string) => void;
   claudePath: () => string;
   deskUrl: (itemId: string | null) => string;
@@ -303,6 +306,11 @@ export class ChatHost implements vscode.Disposable {
         return chat.clearSide();
       case "allow": {
         const p = pending(m.requestId);
+        // A plan: into auto mode, or into ask mode, as Claude Code approves one (77).
+        if (p?.form === "plan") {
+          this.ctx.plans.done(p.requestId);
+          return chat.approvePlan(p, m.mode === "default" ? "default" : "auto");
+        }
         // Every change rejected in the diff tab: Allow has nothing left to allow (64).
         if (p && this.ctx.proposals.rejectsAll(p.requestId)) chat.deny(p, "The user rejected every change of this edit.");
         else if (p) chat.allow(p, m.always);
@@ -311,10 +319,20 @@ export class ChatHost implements vscode.Disposable {
       }
       case "deny": {
         const p = pending(m.requestId);
-        if (p) chat.deny(p, m.message?.trim() || (p.form === "plan" ? "Keep planning." : "The user declined this tool call."));
+        // A plan goes back with what was typed and its comments, in Claude Code's words (77).
+        if (p?.form === "plan") chat.keepPlanning(p, m.message ?? "");
+        else if (p) chat.deny(p, m.message?.trim() || "The user declined this tool call.");
         this.ctx.proposals.done(m.requestId);
+        this.ctx.plans.done(m.requestId);
         return;
       }
+      case "openPlan": {
+        const p = pending(m.requestId);
+        if (p?.form === "plan") await this.ctx.plans.open(chat.sessionId, p);
+        return;
+      }
+      case "removePlanComment":
+        return this.ctx.plans.remove(m.requestId, m.id);
       case "answer": {
         const p = pending(m.requestId);
         if (p) chat.answerQuestion(p, m.answers);

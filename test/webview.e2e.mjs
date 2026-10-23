@@ -311,13 +311,52 @@ await check("Claude's question: options with descriptions, answered", async () =
   await shot("chat-question");
 });
 
-await check("a plan: shown, approved", async () => {
+await check("a plan: Claude Code's three answers, auto mode first; Open to comment asks for its tab (decision 77)", async () => {
   const lines = outLines("plan");
   await send([snapshot({ mode: "plan" }), sent("p"), ...events(upTo(lines, (o) => o.type === "control_request"))]);
   assert.ok((await text(".card .plan"))[0].includes("hello.txt"));
+  assert.deepEqual(await text(".card .actions button"), ["Yes, and use auto mode", "Yes, and manually approve edits", "No, keep planning"]);
+  assert.deepEqual(await text(".card .actions button.primary"), ["Yes, and use auto mode"]);
+  await shot("plan-card");
   await clearPosts();
-  await click(".card button", "Approve");
-  assert.ok((await posts()).some((p) => p.t === "allow"));
+  await click(".card button", "Open to comment");
+  await click(".card button", "Yes, and use auto mode");
+  await click(".card button", "Yes, and manually approve edits");
+  const ps = await posts();
+  const req = lines.find((o) => o.type === "control_request").request_id;
+  assert.deepEqual(ps.map((p) => [p.t, p.requestId, p.mode]), [
+    ["openPlan", req, undefined],
+    ["allow", req, "auto"],
+    ["allow", req, "default"],
+  ]);
+});
+
+await check("a plan's comments from its tab: listed with their lines and ×; then only keep planning, which sends them (decision 77)", async () => {
+  const lines = outLines("plan");
+  await send([snapshot({ mode: "plan" }), sent("p"), ...events(upTo(lines, (o) => o.type === "control_request"))]);
+  const req = lines.find((o) => o.type === "control_request").request_id;
+  const comments = [
+    { id: "c1", start: 0, end: 0, selectedText: "1. Create hello.txt in the working directory using the Write tool.", comment: "Name it greeting.txt" },
+    { id: "c2", start: 1, end: 1, selectedText: "2. Set its contents to \"hi\".", comment: "and end it with a newline" },
+  ];
+  await send([{ t: "event", e: { type: "_planComments", requestId: req, comments } }]);
+  assert.equal((await text(".card .card-title span"))[0], "Continue planning");
+  assert.deepEqual(await text(".plan-comment .quote"), ['"1. Create hello.txt in the working directory using the Write tool."', '"2. Set its contents to "hi"."']);
+  assert.ok((await text(".plan-comments .muted"))[0].includes("2 comments"));
+  assert.deepEqual(await text(".card .actions button"), ["Send feedback and keep planning"], "no approving past comments, as in Claude Code");
+  await shot("plan-comments");
+  await clearPosts();
+  await click(".plan-comment button");
+  await exec("const t=document.querySelector('.card textarea'); t.value='also check the encoding'; t.dispatchEvent(new Event('input', {bubbles:true}))");
+  await settle();
+  await click(".card .actions button", "Send feedback and keep planning");
+  assert.deepEqual(
+    (await posts()).map((p) => [p.t, p.id ?? p.message]),
+    [
+      ["removePlanComment", "c1"],
+      ["deny", "also check the encoding"],
+    ],
+  );
 });
 
 await check("a compaction is one folded card, Claude Code's line; it opens to the summary (decision 76)", async () => {
