@@ -1,0 +1,187 @@
+// The built extension (dist/extension.js), activated in plain node against
+// a mocked `vscode` (vscode-mock.cjs), a scratch embarch-desk
+// (EMBARCH_DESK_BIN) and the fake `claude` replaying recorded sessions: a
+// chat started from the + is assigned on the desk before claude runs, its
+// stream reaches the chat webview, Start work's mailbox entry starts a chat
+// with its prompt, and a waiting chat shows as a count.
+
+import { test, before, after } from "node:test";
+import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+import { spawn } from "node:child_process";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const require = createRequire(import.meta.url);
+const here = path.dirname(fileURLToPath(import.meta.url));
+const root = path.dirname(here);
+const BIN = process.env.EMBARCH_DESK_BIN;
+const skip = !BIN || !fs.existsSync(BIN) ? "EMBARCH_DESK_BIN not set" : false;
+
+const mock = require("./vscode-mock.cjs");
+const Module = require("node:module");
+const load = Module._load;
+Module._load = function (request, ...rest) {
+  return request === "vscode" ? mock.vscode : load.call(this, request, ...rest);
+};
+
+const PORT = 4930 + Math.floor(Math.random() * 15);
+const FAKE = path.join(here, "fake-claude.mjs");
+let dir, desk, ext, client, folder, context;
+const core = require("../test-out/core.js");
+
+const waitFor = async (pred, ms = 10000, what = "condition") => {
+  const t0 = Date.now();
+  for (;;) {
+    const v = await pred();
+    if (v) return v;
+    if (Date.now() - t0 > ms) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, 50));
+  }
+};
+
+let threadsView, chatView;
+
+before(async () => {
+  if (skip) return;
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), "embarch-chat-host-"));
+  for (const d of ["data", "config", "work"]) fs.mkdirSync(path.join(dir, d));
+  folder = path.join(dir, "work");
+  desk = spawn(BIN, ["serve"], {
+    env: { ...process.env, EMBARCH_DESK_DATA_DIR: path.join(dir, "data"), EMBARCH_DESK_CONFIG_DIR: path.join(dir, "config"), EMBARCH_DESK_PORT: String(PORT) },
+    stdio: "ignore",
+  });
+  client = new core.DeskClient({ baseUrl: `http://127.0.0.1:${PORT}`, tokenPath: path.join(dir, "config", "desk-token") });
+  await waitFor(() => client.call("GET", "/health").then(() => true, () => false), 10000, "the scratch desk");
+
+  fs.chmodSync(FAKE, 0o755);
+  process.env.FAKE_CLAUDE_FIXTURE = path.join(here, "fixtures", "wire", "basic.jsonl");
+  Object.assign(mock.state.config, {
+    "embarchChat.claudePath": FAKE,
+    "embarchChat.deskUrl": `http://127.0.0.1:${PORT}`,
+    "embarchChat.deskTokenPath": path.join(dir, "config", "desk-token"),
+    "embarchUi.port": 1,
+  });
+  mock.state.folders = [folder];
+  ext = require("../dist/extension.js");
+  context = { subscriptions: [], extensionUri: mock.vscode.Uri.file(root) };
+  ext.activate(context);
+
+  threadsView = new mock.FakeView();
+  chatView = new mock.FakeView();
+  mock.state.providers.get("embarchChat.threads").provider.resolveWebviewView(threadsView);
+  mock.state.providers.get("embarchChat.chat").provider.resolveWebviewView(chatView);
+  threadsView.webview.fromPage({ t: "ready" });
+  chatView.webview.fromPage({ t: "ready" });
+});
+
+after(() => {
+  if (ext) ext.deactivate();
+  for (const d of context?.subscriptions ?? []) d.dispose?.();
+  desk?.kill();
+  if (dir) fs.rmSync(dir, { recursive: true, force: true });
+  Module._load = load;
+});
+
+const lastGroups = () => [...threadsView.webview.posted].reverse().find((m) => m.t === "groups");
+const lastSnapshot = (v = chatView) => [...v.webview.posted].reverse().find((m) => m.t === "snapshot");
+
+test("activation registers the chat's and the launcher's commands, and the views", { skip }, () => {
+  for (const c of ["embarchChat.newChat", "embarchChat.openWaiting", "embarchChat.refresh", "embarchUi.start", "embarchUi.stop", "embarchUi.openInBrowser"]) {
+    assert.ok(mock.state.commands.has(c), c);
+  }
+  assert.ok(threadsView.webview.html.includes("list.js"));
+  assert.ok(chatView.webview.html.includes("chat.js"));
+  assert.ok(!chatView.webview.html.includes(fs.readFileSync(path.join(dir, "config", "desk-token"), "utf8").trim()), "no token in the page");
+  assert.equal(chatView.webview.posted.at(-1).t, "empty");
+});
+
+test("the + picks a work item, assigns the session on the desk, and the chat runs", { skip }, async () => {
+  const { id: item } = await client.call("POST", "/items", { title: "ABC-123 blink the widget", desk: "none" });
+  await mock.state.commands.get("embarchChat.refresh")();
+  mock.state.quickPick = async (items) => items.find((i) => i.label.includes("ABC-123 blink the widget"));
+  await mock.state.commands.get("embarchChat.newChat")();
+  const snap = await waitFor(() => lastSnapshot()?.state.sessionId && lastSnapshot(), 5000, "the new chat's snapshot");
+  const sid = snap.state.sessionId;
+  assert.equal(snap.header.itemId, item);
+  assert.equal(snap.header.title, "ABC-123 blink the widget");
+  assert.ok(snap.view.ours);
+  // Assigned before claude starts (decision 10), as this panel's.
+  const v = await client.view();
+  const row = v.sessions.find((s) => s.session_id === sid);
+  assert.equal(row.client, "embarch-chat");
+  assert.equal(row.item_id, item);
+  // The owner writes; the fake claude replays a real turn into the webview.
+  chatView.webview.fromPage({ t: "send", text: "Run the bash command `echo hello-from-bash` and then reply with just: done" });
+  await waitFor(() => chatView.webview.posted.some((m) => m.t === "event" && m.e.type === "result"), 5000, "the turn's result");
+  const kinds = new Set(chatView.webview.posted.filter((m) => m.t === "event").map((m) => m.e.type));
+  for (const k of ["_sent", "_process", "system", "stream_event", "assistant", "user", "result"]) assert.ok(kinds.has(k), k);
+  // The list shows it under its item, as this window's.
+  await waitFor(() => lastGroups()?.groups.some((g) => g.item?.id === item && g.threads.some((t) => t.sessionId === sid && t.ours)), 5000, "the thread in the list");
+});
+
+test("Start work's mailbox entry starts a chat on the item and sends the prompt", { skip }, async () => {
+  const { id: item } = await client.call("POST", "/items", { title: "ABC-124 from the Desk", desk: "none" });
+  const before = chatView.webview.posted.length;
+  const { id } = await client.call("POST", "/mailbox", { kind: "start", item_id: item, folder, prompt: "Run the bash command `echo hello-from-bash` and then reply with just: done" });
+  const snap = await waitFor(() => chatView.webview.posted.slice(before).find((m) => m.t === "snapshot" && m.header?.itemId === item), 10000, "the mailbox chat");
+  await waitFor(() => chatView.webview.posted.slice(before).some((m) => m.t === "event" && m.e.type === "result"), 5000, "its first turn");
+  assert.ok(snap.view.ours);
+  assert.equal(await client.take(id), null, "taken once");
+});
+
+test("a chat waiting on the owner shows as a count, and the click opens it", { skip }, async () => {
+  process.env.FAKE_CLAUDE_FIXTURE = path.join(here, "fixtures", "wire", "deny.jsonl");
+  mock.state.quickPick = async (items) => items.find((i) => i.label.includes("Untracked"));
+  await mock.state.commands.get("embarchChat.newChat")();
+  const sid = await waitFor(() => {
+    const s = lastSnapshot();
+    return s && s.header?.untracked && s.state.sessionId;
+  }, 5000, "the untracked chat");
+  chatView.webview.fromPage({ t: "send", text: "touch it" });
+  await waitFor(() => chatView.webview.posted.some((m) => m.t === "event" && m.e.type === "control_request"), 5000, "the permission prompt");
+  const item = await waitFor(() => mock.state.statusItems.find((s) => s.visible && /1 waiting/.test(s.text)), 5000, "the status bar count");
+  assert.equal(item.command, "embarchChat.openWaiting");
+  assert.equal(threadsView.badge?.value, 1);
+  // Opening another chat, then the oldest waiting one, comes back to it.
+  await mock.state.commands.get("embarchChat.openWaiting")();
+  assert.equal(lastSnapshot().state.sessionId, sid);
+  const pending = lastSnapshot().state.pending[0];
+  chatView.webview.fromPage({ t: "deny", requestId: pending.requestId, message: "no" });
+  await waitFor(() => !mock.state.statusItems.some((s) => s.visible && /waiting/.test(s.text)), 5000, "the count to clear");
+});
+
+test("an editor tab shows the same chat", { skip }, async () => {
+  const sid = lastSnapshot().state.sessionId;
+  await mock.state.commands.get("embarchChat.openInEditor")();
+  const panel = mock.state.panels.at(-1);
+  panel.webview.fromPage({ t: "ready" });
+  const snap = await waitFor(() => panel.webview.posted.find((m) => m.t === "snapshot"), 3000, "the tab's snapshot");
+  assert.equal(snap.state.sessionId, sid);
+  assert.equal(snap.view.inEditor, true);
+});
+
+test("a terminal session in this folder lists read-only, and Jump asks Claude Code for it", { skip }, async () => {
+  const sid = "7e7e7e7e-0000-4000-8000-00000000abcd";
+  await client.call("POST", "/hook", { hook_event_name: "SessionStart", session_id: sid, cwd: folder });
+  await client.call("POST", "/hook", { hook_event_name: "Notification", session_id: sid, cwd: folder, notification_type: "permission_prompt", message: "Claude needs your permission to use Bash" });
+  await mock.state.commands.get("embarchChat.refresh")();
+  const g = await waitFor(() => lastGroups()?.groups.find((x) => x.threads.some((t) => t.sessionId === sid)), 5000, "the terminal session in the list");
+  const t = g.threads.find((x) => x.sessionId === sid);
+  assert.equal(t.ours, false);
+  assert.equal(t.live, true);
+  threadsView.webview.fromPage({ t: "open", sid });
+  const snap = await waitFor(() => {
+    const s = lastSnapshot();
+    return s?.state.sessionId === sid && s;
+  }, 3000, "the read-only view");
+  assert.equal(snap.view.readOnly, true);
+  assert.equal(snap.view.ours, false);
+  chatView.webview.fromPage({ t: "jump" });
+  await waitFor(() => mock.state.external.some((u) => u.includes(`session=${sid}`)), 5000, "Jump to Claude Code's panel");
+  chatView.webview.fromPage({ t: "send", text: "should not run" });
+  await new Promise((r) => setTimeout(r, 200));
+  assert.ok(!chatView.webview.posted.some((m) => m.t === "event" && m.e.type === "_sent" && m.e.text === "should not run"), "a live foreign thread takes no input here");
+});

@@ -54,7 +54,7 @@ export class DeskService extends EventEmitter {
   private timer: NodeJS.Timeout | undefined;
   private mailTimer: NodeJS.Timeout | undefined;
   private mailBackoffUntil = 0;
-  private polling = false;
+  private current: Promise<void> | null = null;
   private disposed = false;
   private index = new TranscriptIndex();
 
@@ -110,23 +110,25 @@ export class DeskService extends EventEmitter {
     await this.poll();
   }
 
+  /** One poll at a time; a caller arriving mid-poll waits for it and then polls afresh. */
   async poll(): Promise<void> {
-    if (this.polling || this.disposed) return;
-    this.polling = true;
+    while (this.current) await this.current;
+    if (this.disposed) return;
+    this.current = this.pollOnce().finally(() => (this.current = null));
+    return this.current;
+  }
+
+  private async pollOnce(): Promise<void> {
     try {
-      try {
-        this.view = await this.client.view();
-        this.error = null;
-      } catch (e) {
-        this.error = e instanceof DeskError && e.unreachable ? "The desk is not running — showing this window's chats only." : `Desk: ${(e as Error).message}`;
-      }
-      const folders = this.folders();
-      this.desk = this.view ? resolveDesk([...folders, ...this.mains], this.view.desks ?? [], this.view.open_desk ?? null) : null;
-      await this.refreshRepos();
-      await this.refreshPast();
-    } finally {
-      this.polling = false;
+      this.view = await this.client.view();
+      this.error = null;
+    } catch (e) {
+      this.error = e instanceof DeskError && e.unreachable ? "The desk is not running — showing this window's chats only." : `Desk: ${(e as Error).message}`;
     }
+    const folders = this.folders();
+    this.desk = this.view ? resolveDesk([...folders, ...this.mains], this.view.desks ?? [], this.view.open_desk ?? null) : null;
+    await this.refreshRepos();
+    await this.refreshPast();
     this.rebuild();
   }
 

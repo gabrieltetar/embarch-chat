@@ -20,6 +20,10 @@ if (argv.includes("--version")) {
   process.stdout.write(`${process.env.FAKE_CLAUDE_VERSION ?? "2.1.287"} (Claude Code)\n`);
   process.exit(0);
 }
+if (argv[0] === "agents") {
+  process.stdout.write("[]\n");
+  process.exit(0);
+}
 if (process.env.FAKE_CLAUDE_ARGS_LOG) {
   fs.appendFileSync(process.env.FAKE_CLAUDE_ARGS_LOG, JSON.stringify({ argv, cwd: process.cwd(), env: { EMBARCH_DESK_INTERNAL: process.env.EMBARCH_DESK_INTERNAL ?? null } }) + "\n");
 }
