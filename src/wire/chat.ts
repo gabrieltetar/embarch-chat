@@ -60,6 +60,9 @@ export const NO_REPLY_NOTE = "No reply was recorded for this message before the 
 /** How old a step the CLI reruns, as Claude Code sets it (an hour). */
 export const RERUN_MAX_AGE_MS = 3_600_000;
 
+/** How long a side question may take, as Claude Code's panel allows (its SIDE_QUESTION_TIMEOUT_MS). */
+const SIDE_MS = 300_000;
+
 /** How many lines a followed transcript passes on to the page one by one; more go as a snapshot. */
 const FOLLOW_AS_EVENTS = 50;
 
@@ -592,6 +595,40 @@ export class Chat extends EventEmitter {
     this.dispatch({ type: "_model", model });
   }
 
+  private asked = 0;
+
+  /**
+   * A side question (decision 57), Claude Code's /btw: the CLI's
+   * `side_question` control request answers from the conversation and the
+   * turn in progress — a tool call still running too — and adds nothing to
+   * it. The answer stays beside the chat; earlier ones go along as history,
+   * as Claude Code sends them. A closed chat resumes for it (`control`); a
+   * first turn still running is asked before its session is on record.
+   */
+  async ask(question: string): Promise<void> {
+    const id = `q:${++this.asked}`;
+    const history = (this.state.side ?? []).filter((q) => typeof q.response === "string").map((q) => ({ question: q.question, response: q.response as string }));
+    this.dispatch({ type: "_side", id, question });
+    if (!this.hasSession && !this.running) {
+      this.dispatch({ type: "_side", id, error: "Nothing to ask about yet: send a message first." });
+      return;
+    }
+    const fields = { question, ...(history.length ? { history } : {}) };
+    this.touch();
+    try {
+      const r = this.hasSession ? await this.control("side_question", fields, SIDE_MS) : await this.proc!.request("side_question", fields, SIDE_MS);
+      this.dispatch({ type: "_side", id, response: typeof r.response === "string" ? r.response : null });
+    } catch (e) {
+      this.dispatch({ type: "_side", id, error: (e as Error).message });
+    }
+    this.touch();
+  }
+
+  /** Clears the answered side questions (Claude Code's "Clear side questions"). */
+  clearSide(): void {
+    this.dispatch({ type: "_sideClear" });
+  }
+
   /** Names the session (`rename_session`), so Claude Code's own panel and history show it too (decision 12). */
   async rename(title: string): Promise<void> {
     if (!this.running) return;
@@ -722,6 +759,7 @@ export class Chat extends EventEmitter {
     if (this.state.pending.length) return "waits on the owner";
     if (this.state.background.length) return "a background task runs";
     if (this.state.busy || this.state.compacting) return "a turn is running";
+    if ((this.state.side ?? []).some((q) => q.pending)) return "a side question is out";
     return null;
   }
 

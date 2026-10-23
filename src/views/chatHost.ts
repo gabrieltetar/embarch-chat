@@ -269,6 +269,11 @@ export class ChatHost implements vscode.Disposable {
       case "export":
       case "exportSave":
         return historyMessage(this.ctx, rec, m, (x) => this.post(x));
+      case "btw":
+        if (rec.ours && typeof m.question === "string" && m.question.trim()) await chat.ask(m.question.trim());
+        return;
+      case "sideClear":
+        return chat.clearSide();
       case "allow": {
         const p = pending(m.requestId);
         // Every change rejected in the diff tab: Allow has nothing left to allow (64).

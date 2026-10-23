@@ -1613,3 +1613,29 @@ a.cite:hover {
   background: var(--vscode-editor-background);
   opacity: 0.85;
 }
+/* Side questions (57): above the input, apart from the timeline. */
+.side {
+  margin: 0 var(--gap) 4px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 4px 8px;
+  max-height: 30vh;
+  overflow: auto;
+  font-size: 0.95em;
+}
+.side-head {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 0.88em;
+}
+.side-head .spacer {
+  flex: 1;
+}
+.side-q {
+  margin-top: 4px;
+}
+.side-ask {
+  font-weight: 600;
+}

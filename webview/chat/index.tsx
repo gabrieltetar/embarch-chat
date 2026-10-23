@@ -31,6 +31,7 @@ import { Stamp, useNow } from "./clock";
 import { dayKey, elapsedText, stalled } from "./time";
 import { cacheClock } from "../../src/wire/limits";
 import { CopyReply, ExportDialog, LOCAL_COMMANDS, MessageActions, RewindDialog, Toast, localCommand, replies, useEscEsc } from "./history";
+import { SideQuestions } from "./side";
 
 let uiUrl = "";
 toolRenderers.push(benchRenderer(() => uiUrl));
@@ -413,6 +414,7 @@ function App() {
         warning={model.warning}
         bg={<BackgroundToggle n={state.background.length} open={!!bgOpen[sid]} onToggle={() => setBgOpen((o) => ({ ...o, [sid]: !o[sid] }))} />}
       />
+      <SideQuestions items={state.side ?? []} ctx={ctx} />
       <Queued state={state} readOnly={view.readOnly} />
       {view.readOnly ? (
         <div class="readonly">
@@ -435,6 +437,7 @@ function App() {
           prompts={prompts}
           library={library.entries}
           assistant={library.assistant && view.ours}
+          canAsk={view.ours}
           chips={chips?.sid === state.sessionId && view.ours ? chips.chips : []}
           onSend={(text, opts) => {
             if (localCommand(text, live.current)) return;

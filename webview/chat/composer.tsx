@@ -17,6 +17,8 @@
 // pasted screenshot is a thumbnail under the input until sent — an image
 // alone sends; a long paste is remembered so the CLI can mark it; what shows
 // nothing is stripped from a paste, and from the draft before it goes.
+// `/btw <question>` asks aside (57): it goes to the side questions above
+// the input, never into the conversation.
 
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Card, Chip, PastPrompt } from "../../src/assistant/edits";
@@ -53,6 +55,8 @@ interface Props {
   library: LibraryEntry[];
   /** The Haiku assistant runs (a setting). */
   assistant: boolean;
+  /** This window runs the chat: a side question can be asked (57). */
+  canAsk: boolean;
   chips: Chip[];
   onSend: (text: string, opts: SendOpts) => void;
   onChip: (chip: Chip) => void;
@@ -163,6 +167,15 @@ export function Composer(p: Props) {
   const setText = (v: string) => {
     textRef.current = v;
     setTextState(v);
+  };
+  /**
+   * Empties the draft, the DOM too: keys typed and Enter in one frame leave
+   * the state where it was last rendered, and Preact then skips the render
+   * that would have cleared the input.
+   */
+  const clearText = () => {
+    setText("");
+    if (ta.current) ta.current.value = "";
   };
 
   /** The owner changed the draft: typing for TYPING_MS more, or no longer once it is blank (55). */
@@ -303,9 +316,10 @@ export function Composer(p: Props) {
       out.push({ insert: inv, label: `/${inv}`, detail: e.category });
     }
     for (const c of slashCommands) {
-      if (seen.has(c) || !c.toLowerCase().includes(q)) continue;
+      if (seen.has(c) || c === "btw" || !c.toLowerCase().includes(q)) continue;
       out.push({ insert: c, label: `/${c}` });
     }
+    if ("btw".includes(q)) out.push({ insert: "btw", label: "/btw", detail: "a side question, not part of the conversation" });
     const starts = (it: MentionItem) => Number(!it.insert.toLowerCase().startsWith(q) && !it.insert.toLowerCase().includes(`:${q}`));
     return out.sort((x, y) => starts(x) - starts(y)).slice(0, 30);
   };
@@ -435,7 +449,7 @@ export function Composer(p: Props) {
     s.pastes = [];
     setImages([]);
     setNotice(null);
-    setText("");
+    clearText();
     doneTyping();
     setPop(null);
     setGhost(null);
@@ -443,6 +457,19 @@ export function Composer(p: Props) {
     setMenu(null);
     setCards({ judged: "", list: [] });
     setUsed([]);
+  };
+
+  /** `/btw <question>` (57): asked beside the chat; the draft clears, images and pastes stay for the next message. */
+  const askAside = (q: string) => {
+    if (!q) return setNotice("/btw takes a question: /btw which port did it pick?");
+    if (!props.current.canAsk) return setNotice("A side question needs the chat to run here: send it a message first.");
+    post({ t: "btw", question: q });
+    a.current.undo = [];
+    clearText();
+    doneTyping();
+    setPop(null);
+    setGhost(null);
+    setNotice(null);
   };
 
   const send = () => {
@@ -458,6 +485,8 @@ export function Composer(p: Props) {
       focusAt(clean.text.length);
       return;
     }
+    const btw = /^\/btw(?:\s+([\s\S]*))?$/i.exec(t);
+    if (btw) return askAside((btw[1] ?? "").trim());
     const s = a.current;
     if (s.hold !== null || !t) return doSend(t);
     // Just before send, the cards judge the whole prompt (26) — unless they already have.

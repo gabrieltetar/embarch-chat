@@ -1518,7 +1518,7 @@ await check("the 📚: one submenu per category; a click puts /<name> in the dra
   // `/` lists the library's entries with the session's own commands.
   await fresh({ slashCommands: ["compact", "embarch-chat:build-flash-verify"] });
   await type("/b");
-  assert.deepEqual(await text(".popup div"), ["/embarch-chat:build-flash-verifyBench"]);
+  assert.deepEqual(await text(".popup div"), ["/embarch-chat:build-flash-verifyBench", "/btwa side question, not part of the conversation"]);
 });
 
 // ------------------------------------------------------------ history (decisions 73–75)
@@ -1787,6 +1787,43 @@ await check("a draft holding invisible characters is cleaned before it goes: the
   assert.equal((await text(".paste-notice"))[0], "Removed 1 invisible character · review and press Enter to send");
   await type(ENTER);
   assert.deepEqual((await sends()).map((p) => p.text), ["flash it"]);
+});
+
+await check("/btw asks aside while Claude works: the answer shows above the input, never in the timeline (57)", async () => {
+  const lines = outLines("btw");
+  const running = upTo(lines, (o) => o.type === "assistant" && o.message.content.some((b) => b.type === "tool_use"));
+  await fresh({}, false);
+  await send([sent("Run the bash command"), ...events(running)]);
+  await type("/bt");
+  assert.ok((await text(".popup div")).some((t) => t.startsWith("/btw") && t.includes("not part of the conversation")), "offered in the / list");
+  await exec("const t=document.querySelector('.composer textarea'); t.value=''; t.dispatchEvent(new Event('input', {bubbles:true}))");
+  await type("/btw which command is running?" + ENTER);
+  const ps = await posts();
+  assert.deepEqual(ps.filter((p) => p.t === "btw").map((p) => p.question), ["which command is running?"]);
+  assert.equal(ps.filter((p) => p.t === "send").length, 0, "nothing sent to the conversation");
+  assert.equal(await value(), "");
+  const timeline = (await text(".timeline"))[0];
+  await send(events([{ type: "_side", id: "q:1", question: "which command is running?" }]));
+  assert.equal(await exec("return !!document.querySelector('.side .side-q .spinner')"), true, "waiting");
+  await send(events([{ type: "_side", id: "q:1", response: "`sleep 8; echo built`" }]));
+  assert.equal((await text(".side .side-ask"))[0], "which command is running?");
+  assert.ok((await text(".side .side-q"))[0].includes("sleep 8; echo built"));
+  assert.equal((await text(".timeline"))[0], timeline, "the timeline is as it was");
+  await shot("btw-side");
+  await clearPosts();
+  await click(".side button", "Clear");
+  assert.ok((await posts()).some((p) => p.t === "sideClear"));
+  await type("/btw" + ENTER);
+  assert.match((await text(".paste-notice"))[0], /takes a question/);
+});
+
+await check("/btw on a chat this window does not run says it needs the chat here", async () => {
+  await fresh({}, false);
+  await send([snapshot({ sessionId: "22222222-0000-4000-8000-0000000000ff" }, { ...OURS, ours: false, resumable: true })]);
+  await clearPosts();
+  await type("/btw anything?" + ENTER);
+  assert.equal((await posts()).filter((p) => p.t === "btw").length, 0);
+  assert.match((await text(".paste-notice"))[0], /needs the chat to run here/);
 });
 
 // ------------------------------------------------------------ the list

@@ -1178,3 +1178,44 @@ test("pastes: Claude Code's 800 characters or 2 line breaks, invisible character
   assert.equal(core.looksBinary("�".repeat(10) + "x".repeat(100)), true);
   assert.equal(core.looksBinary("an ordinary paste with a � in it, long enough to count"), false);
 });
+
+// ------------------------------------------------------------ side questions (57)
+
+test("a side question while a tool runs: the CLI answers it, and neither question nor answer joins the conversation (decision 57)", async () => {
+  const { chat, dir } = makeChat("btw");
+  const inputs = path.join(dir, "inputs.jsonl");
+  chat.opts.env.FAKE_CLAUDE_INPUT_LOG = inputs;
+  const done = turns(chat, 1);
+  chat.send("Run the bash command `sleep 8; echo built` in the foreground (not in the background), wait for it, then reply with just: done");
+  await waitFor(() => entries(chat.state, "tool").some((t) => t.status === "running"));
+  const Q1 = "Which command are you running? Reply in one short line.";
+  await chat.ask(Q1);
+  assert.deepEqual(chat.state.side.map((q) => [q.question, q.pending, q.response]), [[Q1, false, "`sleep 8; echo built`"]], "answered while the Bash call ran");
+  await done;
+  const conversation = JSON.stringify(Object.values(chat.state.entries));
+  assert.ok(!conversation.includes("Which command"), "the question is nowhere in the timeline");
+  assert.ok(!Object.values(chat.state.entries).some((e) => e.kind === "text" && e.text.includes("`sleep 8; echo built`")), "nor the answer");
+  assert.deepEqual(top(chat.state).map((e) => e.kind), ["user", "tool", "text"]);
+  // A follow-up carries the answered ones as history, as Claude Code sends them.
+  await chat.ask("And what did it print? One word.");
+  assert.equal(chat.state.side.at(-1).response, "built");
+  const asks = fs.readFileSync(inputs, "utf8").trim().split("\n").map((l) => JSON.parse(l).o).filter((o) => o.request?.subtype === "side_question").map((o) => o.request);
+  assert.deepEqual(asks[0], { subtype: "side_question", question: Q1 });
+  assert.deepEqual(asks[1].history, [{ question: Q1, response: "`sleep 8; echo built`" }]);
+  // The conversation goes on as before.
+  const t = turns(chat, 1);
+  chat.send("Reply with just: ok");
+  await t;
+  assert.equal(top(chat.state).at(-1).text, "ok");
+  chat.clearSide();
+  assert.deepEqual(chat.state.side, []);
+  chat.dispose();
+});
+
+test("a side question before the chat has a conversation says so, and starts nothing", async () => {
+  const { chat, spawns } = makeChat("btw");
+  await chat.ask("anything?");
+  assert.deepEqual(chat.state.side.map((q) => [q.pending, q.error]), [[false, "Nothing to ask about yet: send a message first."]]);
+  assert.equal(spawns().length, 0);
+  chat.dispose();
+});

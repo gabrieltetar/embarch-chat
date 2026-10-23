@@ -126,7 +126,10 @@ export type ChatToHost =
   | { t: "taskOutput"; taskId: string }
   /** A message that waits for Claude: taken back to the draft, or sent now (port item 72). */
   | { t: "cancelQueued"; id: string }
-  | { t: "sendNow"; id: string };
+  | { t: "sendNow"; id: string }
+  /** `/btw <question>`: a side question, answered beside the chat (57). */
+  | { t: "btw"; question: string }
+  | { t: "sideClear" };
 
 export type HostToList = {
   t: "groups";

@@ -112,6 +112,16 @@ export interface CacheWindow {
   compactedAt?: number;
 }
 
+/** A side question (decision 57): asked beside the chat, never part of its conversation. */
+export interface SideQuestion {
+  id: string;
+  question: string;
+  pending: boolean;
+  /** Claude's answer; null when it gave none. */
+  response?: string | null;
+  error?: string;
+}
+
 export interface StreamBlock {
   type: string;
   text: string;
@@ -155,6 +165,8 @@ export interface ChatState {
   /** When the CLI last wrote a line, or the owner last sent one: the "Not responding" clock (decision 68). */
   lastLineAt: number | null;
   cache: CacheWindow | null;
+  /** Side questions (decision 57), oldest first: kept beside the timeline, never in it. */
+  side: SideQuestion[];
   seq: number;
 }
 
@@ -187,6 +199,7 @@ export function initialState(sessionId: string, mode = "auto"): ChatState {
     rateLimit: null,
     lastLineAt: null,
     cache: null,
+    side: [],
     seq: 0,
   };
 }
@@ -692,6 +705,17 @@ export function reduce(s: ChatState, o: WireMessage): ChatState {
       return { ...s, mode: String(o.mode) };
     case "_title":
       return { ...s, title: String(o.title) };
+    case "_side": {
+      const id = String(o.id);
+      const side = s.side ?? [];
+      if (typeof o.question === "string") return { ...s, side: [...side, { id, question: o.question, pending: true }] };
+      return {
+        ...s,
+        side: side.map((q) => (q.id === id ? { ...q, pending: false, ...(typeof o.error === "string" ? { error: o.error } : { response: typeof o.response === "string" ? o.response : null }) } : q)),
+      };
+    }
+    case "_sideClear":
+      return { ...s, side: (s.side ?? []).filter((q) => q.pending) };
     case "_note":
       return note(s, String(o.text), (o.tone as NoteEntry["tone"]) ?? "info", typeof o.kept === "string" ? o.kept : undefined);
     default:
