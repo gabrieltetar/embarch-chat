@@ -27,7 +27,7 @@ import { BackgroundPanel, BackgroundToggle } from "./background";
 import { Queued } from "./queue";
 import { setAtlas } from "./atlas";
 import { LimitBannerView } from "./limits";
-import { McpPill, ModelPill, footerCommand } from "./footer";
+import { FOOTER_COMMANDS, McpPill, ModelPill, RemotePill, footerCommand } from "./footer";
 import { Stamp, useNow } from "./clock";
 import { dayKey, elapsedText, stalled } from "./time";
 import { cacheClock } from "../../src/wire/limits";
@@ -367,7 +367,8 @@ function App() {
     ) : null;
   const busy = state.busy || state.compacting;
   // The page's own /rewind, /copy and /export join the session's commands once it has them: a chat with none yet has nothing to rewind.
-  const commands = state.slashCommands.length ? [...state.slashCommands, ...LOCAL_COMMANDS.filter((c) => !state.slashCommands.includes(c))] : state.slashCommands;
+  // And the footer's /remote-control (footer.tsx), which the CLI has not over this wire.
+  const commands = state.slashCommands.length ? [...state.slashCommands, ...[...LOCAL_COMMANDS, ...FOOTER_COMMANDS].filter((c) => !state.slashCommands.includes(c))] : state.slashCommands;
   let lastDay = "";
   const placeholder = view.readOnly ? "" : view.resumable ? "Message to resume this chat here" : busy ? "Queue a message…" : "Message Claude — @ for files, / for commands";
 
@@ -453,6 +454,7 @@ function App() {
             <>
               <ModelPill state={state} />
               {view.ours && <McpPill state={state} />}
+              <RemotePill state={state} />
             </>
           }
           onSend={(text, opts) => {

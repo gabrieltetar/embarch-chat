@@ -582,8 +582,8 @@ await check("/ completes the session's commands", async () => {
   const id = Object.values(el)[0];
   await wd("POST", `${S}/element/${id}/value`, { text: "/co" });
   await settle();
-  // With the page's own /copy (decision 74).
-  assert.deepEqual(await text(".popup div"), ["/compact", "/context", "/copy"]);
+  // With the page's own /copy (decision 74) and /remote-control, which holds "co" too.
+  assert.deepEqual(await text(".popup div"), ["/compact", "/context", "/copy", "/remote-control"]);
 });
 
 await check("mode and model switch, context meter and Compact", async () => {
@@ -641,6 +641,37 @@ await check("the model pill: model, effort and Ultracode for this chat, as Claud
   await exec("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))");
   await settle();
   assert.equal((await text(".model-pop")).length, 0);
+});
+
+await check("the Remote Control pill, in Claude Code's words: connecting, then on — a click opens the session on claude.ai/code — or failed until /remote-control dismisses it; nothing while off (its changelog L5709, L2097)", async () => {
+  const lines = outLines("remote");
+  const answer = lines.find((o) => o.type === "control_response" && o.response.response?.session_url).response.response;
+  const connected = lines.find((o) => o.type === "system" && o.subtype === "bridge_state" && o.state === "connected");
+  await send([snapshot(), ...events(upTo(lines, (o) => o.type === "result"))]);
+  assert.equal((await text(".composer .pill.remote")).length, 0, "off: no pill");
+  await exec("const t = document.querySelector('.composer textarea'); t.value = '/rem'; t.dispatchEvent(new Event('input', { bubbles: true }))");
+  await settle();
+  assert.ok((await text(".popup div")).some((t) => t.startsWith("/remote-control")), "the panel's own command completes");
+  await exec("const t = document.querySelector('.composer textarea'); t.value = ''; t.dispatchEvent(new Event('input', { bubbles: true }))");
+  // Typed, it is the page's to answer (as /rewind is): the host is asked, nothing goes to Claude.
+  await clearPosts();
+  const ta = Object.values(await wd("POST", `${S}/element`, { using: "css selector", value: ".composer textarea" }))[0];
+  await wd("POST", `${S}/element/${ta}/value`, { text: "/remote-control phone \uE007" });
+  await settle();
+  assert.deepEqual((await posts()).filter((p) => p.t === "remoteControl" || p.t === "send"), [{ t: "remoteControl", name: "phone" }]);
+  await send([{ t: "event", e: { type: "_remote", remote: { status: "connecting" } } }]);
+  assert.equal(await exec("return document.querySelector('.composer .pill.remote.connecting').title"), "Connecting to claude.ai/code…");
+  await send([{ t: "event", e: { type: "_remote", remote: { status: "connecting", url: answer.session_url, epoch: answer.bridge_epoch } } }, { t: "event", e: connected }]);
+  const on = await exec("const b = document.querySelector('.composer button.pill.remote.on'); return b && [b.textContent, b.title]");
+  assert.deepEqual(on, ["Remote Control", "Remote Control is active · Click to open claude.ai/code · Run /remote-control to turn off"]);
+  await shot("remote-pill");
+  await clearPosts();
+  await click(".composer .pill.remote.on");
+  assert.deepEqual((await posts()).filter((p) => p.t === "openLink"), [{ t: "openLink", url: "https://claude.ai/code/session_01FIXTURE0000000000000000" }]);
+  await send([{ t: "event", e: { type: "system", subtype: "bridge_state", state: "failed", bridge_epoch: answer.bridge_epoch, detail: "the session expired" } }]);
+  assert.deepEqual(await exec("const p = document.querySelector('.composer .pill.remote.bad'); return [p.textContent, p.title]"), ["Remote Control ✗", "Remote Control error: the session expired · Run /remote-control to dismiss"]);
+  await send([{ t: "event", e: { type: "_remote", remote: null } }]);
+  assert.equal((await text(".composer .pill.remote")).length, 0, "dismissed");
 });
 
 await check("a message refused with its chat keeps its text on screen, with Copy", async () => {

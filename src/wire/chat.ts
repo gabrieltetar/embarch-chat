@@ -878,6 +878,44 @@ export class Chat extends EventEmitter {
     await this.mcpStatus();
   }
 
+  /**
+   * Remote Control, Claude Code's `/remote-control` (its changelog L5709,
+   * L2097): the CLI bridges the chat to claude.ai/code, so the owner can
+   * answer a permission prompt from the phone. Toggled: on starts the
+   * process if none runs — the bridge takes a chat before its first
+   * message [measured] — and holds it open; off, or on a failure, dismiss.
+   * A permission prompt still comes here too [measured]; one answered on
+   * the phone is withdrawn here by the CLI's `control_cancel_request`.
+   */
+  async remoteControl(name?: string): Promise<void> {
+    const was = this.state.remote;
+    if (was) {
+      this.dispatch({ type: "_remote", remote: null });
+      if (!this.running) return;
+      try {
+        await this.proc!.request("remote_control", { enabled: false });
+      } catch (e) {
+        this.log(`remote_control off: ${(e as Error).message}`);
+      }
+      this.touch();
+      return;
+    }
+    const proc = this.ensureProcess();
+    this.dispatch({ type: "_remote", remote: { status: "connecting" } });
+    this.touch();
+    try {
+      const r = await proc.request("remote_control", { enabled: true, ...(name ? { name } : {}) }, 30000);
+      const cur = this.state.remote;
+      if (this.proc !== proc || !cur) return;
+      const url = typeof r.session_url === "string" && /^https:\/\//.test(r.session_url) ? r.session_url : undefined;
+      this.dispatch({ type: "_remote", remote: { ...cur, ...(url ? { url } : {}), ...(typeof r.bridge_epoch === "number" ? { epoch: r.bridge_epoch } : {}) } });
+      this.log(`remote control on${url ? `: ${url}` : ""}`);
+    } catch (e) {
+      if (this.proc !== proc || !this.state.remote) return;
+      this.dispatch({ type: "_remote", remote: { status: "failed", error: (e as Error).message } });
+    }
+  }
+
   /** The session's name as the transcript or a rename has it (decision 12). */
   noteTitle(title: string): void {
     if (title && title !== this.state.title) this.dispatch({ type: "_title", title });
@@ -912,6 +950,8 @@ export class Chat extends EventEmitter {
     if (!this.running) return null;
     if (this.state.pending.length) return "waits on the owner";
     if (this.state.background.length) return "a background task runs";
+    // Closing would drop the phone's session: the owner may answer, or write, from there.
+    if (this.state.remote && this.state.remote.status !== "failed") return "Remote Control is on";
     if (this.state.busy || this.state.compacting) return "a turn is running";
     if ((this.state.side ?? []).some((q) => q.pending)) return "a side question is out";
     return null;

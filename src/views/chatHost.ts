@@ -397,6 +397,9 @@ export class ChatHost implements vscode.Disposable {
         return;
       case "refreshContext":
         return chat.refreshContext();
+      case "remoteControl":
+        if (rec.ours) await chat.remoteControl(typeof m.name === "string" && m.name.trim() ? m.name.trim() : undefined);
+        return;
       case "mcpStatus":
         return chat.mcpStatus();
       case "mcp":

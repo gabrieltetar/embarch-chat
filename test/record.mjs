@@ -665,6 +665,26 @@ const scenarios = {
     await ask({ subtype: "get_settings" });
     await r.close();
   },
+  // Remote Control (Claude Code's `/remote-control`, its changelog L5709,
+  // L2097; open question 32): turned on over the wire on a chat that has had
+  // a turn, the bridge's state as the CLI reports it, a permission prompt
+  // while it is on — still asked on stdio and answered here — and turned
+  // off again before the process ends.
+  async remote() {
+    const r = new Rec("remote", ["--tools", "Bash", "--permission-mode", "default"], { persist: true });
+    r.control("init-1", { subtype: "initialize", supportedDialogKinds: core.DIALOG_KINDS });
+    await r.until(isResp("init-1"));
+    r.user("Reply with just: ok");
+    await r.result();
+    r.control("rc-1", { subtype: "remote_control", enabled: true });
+    await r.until(isResp("rc-1"));
+    await r.until((o) => o.type === "system" && o.subtype === "bridge_state" && o.state !== "ready", undefined, 30000);
+    r.user("Run the bash command `touch rc-check.txt` and then reply with just: done");
+    await r.result();
+    r.control("rc-2", { subtype: "remote_control", enabled: false });
+    await r.until(isResp("rc-2"));
+    await r.close();
+  },
   // Some of a proposed Edit's changes (decision 64): in ask mode the Edit's
   // permission is answered with an input that keeps the first of its two
   // changes and not the second, as the diff tab's Accept sends it.

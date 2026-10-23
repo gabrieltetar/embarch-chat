@@ -4,8 +4,9 @@
 // panel reads, a rate limit keeps its shape with neutral numbers, and the
 // answer to the panel's initialize (the account, its commands) keeps only
 // the session's state and the effort levels of the models the panel
-// offers, a `get_settings` answer only what the CLI runs at, and an
-// `mcp_status` answer no server's command line.
+// offers and whether Remote Control is offered, a `get_settings` answer
+// only what the CLI runs at, an `mcp_status` answer no server's command
+// line, and a Remote Control session a made-up id.
 //
 //   node test/sanitize.mjs <recording.jsonl> <fixture.jsonl> <scratch-dir>
 //   node test/sanitize.mjs --transcript <session.jsonl> <fixture.jsonl> <scratch-dir>
@@ -34,6 +35,9 @@ const swaps = [
   [enc(home), "-home-user"],
   [/\/tmp\/claude-\d+/g, "/tmp/claude-user"],
   [/\/run\/user\/\d+\/[^"]*/g, "/run/user/socket"],
+  // A Remote Control session on claude.ai is the account's own.
+  [/session_[A-Za-z0-9]{12,}/g, "session_01FIXTURE0000000000000000"],
+  [/cse_[A-Za-z0-9]{12,}/g, "cse_01FIXTURE0000000000000000"],
 ];
 
 const KEEP_INIT = ["type", "subtype", "session_id", "uuid", "cwd", "model", "permissionMode", "tools", "agents", "claude_code_version", "output_style", "apiKeySource", "capabilities", "mcp_servers"];
@@ -51,7 +55,7 @@ function neutralLimit(i) {
 }
 /** The initialize request ids the panel sent: their answers name the account. */
 const inits = new Set();
-const KEEP_INITIALIZE = ["current_permission_mode", "session_state", "output_style", "hooks_applied"];
+const KEEP_INITIALIZE = ["current_permission_mode", "session_state", "output_style", "hooks_applied", "remote_control_available"];
 /** The models the panel offers (webview/shared/protocol.ts MODELS), each with what the effort row reads. */
 const PANEL_MODELS = ["default", "opus", "sonnet", "haiku"];
 const MODEL_FIELDS = ["value", "resolvedModel", "displayName", "supportsEffort", "supportedEffortLevels"];

@@ -9,6 +9,12 @@
 // for a log check, high for driver bring-up — and goes with each process it
 // starts; the model list is the panel's (MODELS), as before.
 //
+// Remote Control is Claude Code's footer pill (its changelog L5709, L2097):
+// shown while `/remote-control` has it on or it has failed; on, a click
+// opens the chat's session on claude.ai/code, where a permission prompt can
+// be answered from the phone; failed, it says why until /remote-control
+// dismisses it.
+//
 // MCP is Claude Code's `/mcp` dialog (its changelog L6014): every server of
 // the chat's CLI with its state, Reconnect, Disable and Enable. Reconnect
 // starts the server's process again — after a rebuild of the embarch-api MCP
@@ -80,14 +86,24 @@ function McpRow({ s, live, busy, act }: { s: McpServer; live: boolean; busy: { n
   );
 }
 
+/** The page's own commands for the `/` list beside the session's: Remote Control is not the CLI's over this wire. */
+export const FOOTER_COMMANDS = ["remote-control"];
+
 /**
- * `/mcp`, answered by the page as Claude Code's panel answers it — its MCP
- * dialog, here the pill — as history.tsx answers /rewind, /copy and
- * /export; the CLI's own text answer is not asked for. True when taken.
+ * `/mcp` and `/remote-control [name]`, answered by the page as Claude Code's
+ * panel answers them — its MCP dialog, here the pill; Remote Control on or
+ * off — as history.tsx answers /rewind, /copy and /export. The CLI's own
+ * text answer to /mcp is not asked for. True when taken.
  */
 export function footerCommand(text: string): boolean {
-  if (text.trim() !== "/mcp") return false;
-  window.dispatchEvent(new Event("embarch-mcp"));
+  const t = text.trim();
+  if (t === "/mcp") {
+    window.dispatchEvent(new Event("embarch-mcp"));
+    return true;
+  }
+  const rc = /^\/remote-control(?:\s+(.+))?$/.exec(t);
+  if (!rc) return false;
+  post({ t: "remoteControl", ...(rc[1]?.trim() ? { name: rc[1].trim() } : {}) });
   return true;
 }
 
@@ -161,7 +177,8 @@ export function ModelPill({ state }: { state: ChatState }) {
   const [open, setOpen] = useState(false);
   const btn = useRef<HTMLButtonElement>(null);
   const entry = modelEntry(state);
-  const name = entry ? (entry.id === "default" ? "Default" : entry.label) : (state.model ?? "Default");
+  // A model the panel's list does not name: its id, short ("haiku-4-5").
+  const name = entry ? (entry.id === "default" ? "Default" : entry.label) : (state.model ?? "Default").replace(/^claude-/, "").replace(/-\d{8}$/, "");
   const levels = levelsOf(state);
   // What runs, while a process runs; else what the owner picked, for the next one.
   const effort = state.applied ? state.applied.effort : levels.length ? state.effort : null;
@@ -216,5 +233,25 @@ export function ModelPill({ state }: { state: ChatState }) {
         </Pop>
       )}
     </>
+  );
+}
+
+/** The Remote Control pill, in Claude Code's words; nothing while it is off. */
+export function RemotePill({ state }: { state: ChatState }) {
+  const r = state.remote;
+  if (!r) return null;
+  if (r.status === "connected" && r.url) {
+    const url = r.url;
+    return (
+      <button class="pill remote on" title="Remote Control is active · Click to open claude.ai/code · Run /remote-control to turn off" onClick={() => post({ t: "openLink", url })}>
+        Remote Control
+      </button>
+    );
+  }
+  const tip = r.status === "failed" ? `Remote Control error: ${r.error ?? "unknown"} · Run /remote-control to dismiss` : "Connecting to claude.ai/code…";
+  return (
+    <span class={`pill remote ${r.status === "failed" ? "bad" : "connecting"}`} role="status" aria-label={tip} title={tip}>
+      Remote Control{r.status === "failed" && <span class="pill-bad"> ✗</span>}
+    </span>
   );
 }

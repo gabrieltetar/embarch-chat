@@ -121,6 +121,16 @@ export interface McpServer {
   tools?: number;
 }
 
+/** Remote Control (Claude Code's `/remote-control`): the chat bridged to claude.ai/code, as the CLI reports it. */
+export interface RemoteState {
+  status: "connecting" | "connected" | "failed";
+  /** The session on claude.ai/code. */
+  url?: string;
+  /** The bridge's epoch: a bridge_state of an older one says nothing of this. */
+  epoch?: number;
+  error?: string;
+}
+
 /** The prompt cache the next message would read (decision 69): written at `at` for `ttl` ms; a compaction since leaves it behind. */
 export interface CacheWindow {
   /** The reply that wrote or read it: its later lines keep the first one's time. */
@@ -195,6 +205,8 @@ export interface ChatState {
   ultracode: boolean;
   /** What the running process runs at (`get_settings`); null while none runs. */
   applied: AppliedSettings | null;
+  /** Remote Control while it is on or has failed; null when off. */
+  remote: RemoteState | null;
   seq: number;
 }
 
@@ -233,6 +245,7 @@ export function initialState(sessionId: string, mode = "auto"): ChatState {
     effort: null,
     ultracode: false,
     applied: null,
+    remote: null,
     seq: 0,
   };
 }
@@ -577,6 +590,14 @@ function foldSystem(s: ChatState, o: WireMessage): ChatState {
     }
     case "session_title_changed":
       return typeof o.title === "string" ? { ...s, title: o.title } : s;
+    // The bridge to claude.ai/code, while Remote Control is on: "ready" comes with every process and says nothing of it.
+    case "bridge_state": {
+      const r = s.remote;
+      if (!r || (typeof o.bridge_epoch === "number" && r.epoch !== undefined && o.bridge_epoch !== r.epoch)) return s;
+      if (o.state === "connected") return { ...s, remote: { ...r, status: "connected", ...(typeof o.bridge_epoch === "number" ? { epoch: o.bridge_epoch } : {}) } };
+      if (o.state === "failed" || o.state === "policy_disabled") return { ...s, remote: { ...r, status: "failed", error: typeof o.detail === "string" && o.detail ? o.detail : String(o.state) } };
+      return s;
+    }
     case "background_tasks_changed":
       return {
         ...s,
@@ -750,7 +771,7 @@ export function reduce(s: ChatState, o: WireMessage): ChatState {
         ...s,
         process: o.state as ProcessState,
         processError: (o.error as string) ?? null,
-        ...(o.state === "closed" || o.state === "error" ? { busy: false, streaming: null, pending: [], compacting: false, applied: null } : {}),
+        ...(o.state === "closed" || o.state === "error" ? { busy: false, streaming: null, pending: [], compacting: false, applied: null, remote: null } : {}),
       };
     case "_answered": {
       const p = s.pending.find((x) => x.requestId === o.requestId);
@@ -775,6 +796,8 @@ export function reduce(s: ChatState, o: WireMessage): ChatState {
       return { ...s, models: o.models as ModelInfo[] };
     case "_applied":
       return { ...s, applied: o.applied as AppliedSettings };
+    case "_remote":
+      return { ...s, remote: (o.remote as RemoteState | null) ?? null };
     case "_effort":
       return { ...s, effort: typeof o.effort === "string" ? o.effort : null, ultracode: o.ultracode === true };
     case "_model":

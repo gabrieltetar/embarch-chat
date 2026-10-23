@@ -152,7 +152,9 @@ export type ChatToHost =
   /** The MCP pill opened: the servers as the CLI has them now. */
   | { t: "mcpStatus" }
   /** Claude Code's MCP dialog's actions on one server. */
-  | { t: "mcp"; name: string; action: "reconnect" | "enable" | "disable" };
+  | { t: "mcp"; name: string; action: "reconnect" | "enable" | "disable" }
+  /** `/remote-control [name]`: Remote Control on, or off (dismissed, after a failure). */
+  | { t: "remoteControl"; name?: string };
 
 export type HostToList = {
   t: "groups";

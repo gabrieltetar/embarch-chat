@@ -1124,6 +1124,47 @@ test("the claude args carry the chat's flag settings only when it has some", () 
   assert.equal(a[a.indexOf("--settings") + 1], '{"effortLevel":"xhigh","ultracode":true}');
 });
 
+test("Remote Control as Claude Code's /remote-control turns it on: the session's link, the bridge connected, the process held open; a permission prompt still asks here; off again (its changelog L5709, L2097; open question 32)", async () => {
+  const { chat, inputs } = makeChat("remote", { mode: "default" });
+  chat.send("Reply with just: ok");
+  await turns(chat, 1);
+  assert.equal(chat.state.remote, null);
+  await chat.remoteControl();
+  await waitFor(() => chat.state.remote?.status === "connected");
+  assert.deepEqual(chat.state.remote, { status: "connected", url: "https://claude.ai/code/session_01FIXTURE0000000000000000", epoch: 1 });
+  // An idle close would end the phone's session: what the idle check asks says no.
+  assert.equal(chat.holdReason(), "Remote Control is on");
+  chat.send("Run the bash command `touch rc-check.txt` and then reply with just: done");
+  await waitFor(() => chat.state.pending.length === 1);
+  assert.equal(chat.state.pending[0].toolName, "Bash", "the prompt comes here too");
+  chat.allow(chat.state.pending[0]);
+  await turns(chat, 1);
+  assert.equal(chat.state.remote.status, "connected");
+  await chat.remoteControl();
+  assert.equal(chat.state.remote, null);
+  assert.deepEqual(inputs().filter((o) => o.request?.subtype === "remote_control").map((o) => o.request.enabled), [true, false]);
+  assert.equal(chat.holdReason(), null);
+  chat.dispose();
+});
+
+test("Remote Control's failures stay on the pill until dismissed; a bridge of an older epoch says nothing; the process going ends it", () => {
+  let s = core.reduce(core.initialState("11111111-2222-4333-8444-555555555555"), { type: "_remote", remote: { status: "connecting" } });
+  s = core.reduce(s, { type: "system", subtype: "bridge_state", state: "ready" });
+  assert.equal(s.remote.status, "connecting", "ready comes with every process");
+  s = core.reduce(s, { type: "_remote", remote: { ...s.remote, url: "https://claude.ai/code/session_x", epoch: 2 } });
+  s = core.reduce(s, { type: "system", subtype: "bridge_state", state: "failed", bridge_epoch: 1, detail: "old" });
+  assert.equal(s.remote.status, "connecting", "an older bridge");
+  s = core.reduce(s, { type: "system", subtype: "bridge_state", state: "connected", bridge_epoch: 2 });
+  assert.equal(s.remote.status, "connected");
+  s = core.reduce(s, { type: "system", subtype: "bridge_state", state: "failed", bridge_epoch: 2, detail: "the bridge lost its session" });
+  assert.deepEqual(s.remote, { status: "failed", url: "https://claude.ai/code/session_x", epoch: 2, error: "the bridge lost its session" });
+  s = core.reduce(s, { type: "_process", state: "closed" });
+  assert.equal(s.remote, null);
+  // Off, nothing the bridge says turns it on.
+  s = core.reduce(s, { type: "system", subtype: "bridge_state", state: "connected" });
+  assert.equal(s.remote, null);
+});
+
 test("the MCP server answers what it does not serve with an error, a notification with nothing, and a failing tool as a tool error", async () => {
   const server = core.mcpServer({ name: "x", version: "1" }, [{ name: "boom", description: "", inputSchema: { type: "object" }, call: async () => { throw new Error("no editor"); } }]);
   assert.equal(await server({ jsonrpc: "2.0", method: "notifications/initialized" }), null);

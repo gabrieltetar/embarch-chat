@@ -687,6 +687,19 @@ test("the model pill's effort reaches the chat: its next process starts at it, n
   assert.equal(lastSnapshot().state.sessionId, sid);
 });
 
+test("Remote Control on and off for the chat, as the page's /remote-control asks: nothing goes to Claude, and a new chat's process starts for it", { skip }, async () => {
+  const sid = await startUntracked("basic");
+  const spawnsBefore = calls().length;
+  const n = chatView.webview.posted.length;
+  chatView.webview.fromPage({ t: "remoteControl" });
+  await waitFor(() => chatView.webview.posted.slice(n).some((m) => m.t === "event" && m.e.type === "_remote" && m.e.remote?.status === "connecting"), 3000, "connecting");
+  await waitFor(() => calls().slice(spawnsBefore).some((c) => c.argv.includes("--input-format")), 3000, "the process started for it");
+  chatView.webview.fromPage({ t: "remoteControl" });
+  await waitFor(() => chatView.webview.posted.slice(n).some((m) => m.t === "event" && m.e.type === "_remote" && m.e.remote === null), 3000, "off again");
+  assert.ok(!chatView.webview.posted.slice(n).some((m) => m.t === "event" && m.e.type === "_sent"), "never sent to Claude");
+  assert.equal(lastSnapshot().state.sessionId, sid);
+});
+
 // ------------------------------------------------------------ a window reload (decision 63)
 
 /** The window reloads: this extension host deactivates and a new one activates, with the same workspace state. */
