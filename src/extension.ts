@@ -338,6 +338,7 @@ export function activate(context: vscode.ExtensionContext): void {
     const cwd = windowCwd(rec.chat.opts.cwd) ?? rec.chat.opts.cwd;
     const fresh = await startChat(rec.itemId ? { item_id: rec.itemId } : { untracked: true }, cwd, rec.itemTitle);
     if (!fresh) return;
+    haiku.handoffTaken(sid);
     haiku.sent(fresh.chat.sessionId);
     fresh.chat.send(text);
   }

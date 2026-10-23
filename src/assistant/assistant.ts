@@ -136,6 +136,14 @@ export class HaikuAssistant extends EventEmitter {
     return this.chats.get(sid)?.handoff ?? null;
   }
 
+  /** The fresh chat took the handoff: its chip goes; the other chips stay. */
+  handoffTaken(sid: string): void {
+    const c = this.chats.get(sid);
+    if (!c?.handoff) return;
+    c.handoff = null;
+    this.emitChips(sid);
+  }
+
   private emitChips(sid: string): void {
     this.emit("chips", sid, this.chipsFor(sid));
   }

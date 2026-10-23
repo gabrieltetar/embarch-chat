@@ -187,11 +187,12 @@ test("mode, model, rename, context meter and /compact over control requests", as
 
 test("a subagent's steps nest under its call; its background task holds the process", async () => {
   const { chat } = makeChat("subagent");
+  // Both results can arrive in one read of stdout, so wait for both at once.
+  const both = turns(chat, 2);
   chat.send("Use the Agent tool ...");
-  await turns(chat, 1);
+  await both;
   const agent = entries(chat.state, "tool").find((t) => t.name === "Agent");
   assert.ok(agent);
-  await turns(chat, 1);
   const s = chat.state;
   const kids = s.entries[agent.id].children.map((id) => s.entries[id]);
   assert.ok(kids.some((k) => k.kind === "tool" && k.name === "Bash" && k.result === "from-subagent"), "the subagent's Bash nests under the Agent call");

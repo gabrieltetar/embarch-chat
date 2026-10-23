@@ -157,6 +157,7 @@ export class ChatHost implements vscode.Disposable {
       warning: this.ctx.warning(),
     });
     this.post({ t: "chips", sid: rec.chat.sessionId, chips: this.ctx.assistant.chipsFor(rec.chat.sessionId) });
+    this.post({ t: "library", entries: this.ctx.library(), assistant: this.ctx.assistantOn() });
     this.pushPrompts();
     // A turn that ended while the chat was off screen gets its chips now (34).
     if (rec.ours) void this.ctx.assistant.shown(rec.chat.sessionId, () => assistInput(this.ctx, rec, ""));

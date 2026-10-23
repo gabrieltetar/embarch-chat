@@ -475,6 +475,16 @@ const CTRL_Z = "z";
 const TAB = "";
 const ENTER = "";
 const lastAssist = async (kind) => (await posts()).filter((p) => p.t === "assist" && p.kind === kind).at(-1);
+/** The page's latest ask of a kind, once it has made one (timers in a loaded headless browser run late). */
+const waitAssist = async (kind, ms = 5000) => {
+  const t0 = Date.now();
+  for (;;) {
+    const a = await lastAssist(kind);
+    if (a) return a;
+    if (Date.now() - t0 > ms) throw new Error(`no ${kind} request in ${ms} ms`);
+    await sleep(50);
+  }
+};
 
 await check("the instant wave: the owner's own past prompts complete the draft; typing through, Tab takes it", async () => {
   await fresh({}, false);
@@ -499,8 +509,7 @@ await check("Haiku's ghost text after a 300 ms pause, streamed; Tab takes it; th
   await type("now flash it on the");
   await sleep(150);
   assert.equal(await lastAssist("ghost"), undefined, "not before the pause");
-  await sleep(300);
-  const ask = await lastAssist("ghost");
+  const ask = await waitAssist("ghost");
   assert.equal(ask.text, "now flash it on the");
   const stream = ghostStream("ghost", ask.seq, ask.text);
   await send([stream[0]]);
@@ -516,8 +525,7 @@ await check("Haiku's ghost text after a 300 ms pause, streamed; Tab takes it; th
   // A call in flight, and a keystroke.
   await clearPosts();
   await type(" and");
-  await sleep(420);
-  assert.ok(await lastAssist("ghost"), "asked again after the pause");
+  await waitAssist("ghost");
   await type(" x");
   assert.ok((await posts()).some((p) => p.t === "assistCancel"), "cancelled by the next keystroke");
 });
@@ -525,9 +533,10 @@ await check("Haiku's ghost text after a 300 ms pause, streamed; Tab takes it; th
 await check("the 💡 lights with Haiku's cards; hovering a card previews its edit in the draft; a click applies it; Ctrl+Z restores", async () => {
   await fresh();
   await type("fix the flash thing");
-  await sleep(2150);
-  const ask = await lastAssist("cards");
-  assert.equal(ask?.text, "fix the flash thing", "cards after a 2 s pause");
+  await sleep(1500);
+  assert.equal(await lastAssist("cards"), undefined, "no cards before the 2 s pause");
+  const ask = await waitAssist("cards");
+  assert.equal(ask.text, "fix the flash thing", "cards after a 2 s pause");
   const cards = core.parseCards(haikuAnswer("cards"), ask.text, "w");
   await send([{ t: "cards", seq: ask.seq, cards }]);
   assert.equal(await exec("return document.querySelector('.bulb').classList.contains('lit')"), true);
@@ -563,8 +572,7 @@ await check("the compact card adds /compact focus on: …; Enter sends the draft
   const draft = "the widget is done. next, move on to the UART driver: add a ring buffer for RX and a test for it";
   const sid = await fresh({ context: { totalTokens: 136000, maxTokens: 200000, percentage: 68, categories: [] } });
   await exec("const t=document.querySelector('.composer textarea'); t.value=arguments[0]; t.dispatchEvent(new Event('input', {bubbles:true}))", [draft]);
-  await sleep(2150);
-  const ask = await lastAssist("cards");
+  const ask = await waitAssist("cards");
   const cards = core.parseCards(haikuAnswer("cards-compact"), draft, "k");
   const compact = cards.find((c) => c.kind === "compact");
   await send([{ t: "cards", seq: ask.seq, cards }]);
@@ -652,8 +660,7 @@ await check("the handoff card turns the draft into a request for a handoff, and 
   await fresh({ context: { totalTokens: 172000, maxTokens: 200000, percentage: 86, categories: [] } });
   const draft = "now write the release notes for the whole quarter";
   await exec("const t=document.querySelector('.composer textarea'); t.value=arguments[0]; t.dispatchEvent(new Event('input', {bubbles:true}))", [draft]);
-  await sleep(2150);
-  const ask = await lastAssist("cards");
+  const ask = await waitAssist("cards");
   const cards = core.parseCards(haikuAnswer("cards-context"), draft, "h");
   const handoff = cards.find((c) => c.kind === "handoff");
   await send([{ t: "cards", seq: ask.seq, cards }]);

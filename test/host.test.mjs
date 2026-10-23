@@ -303,4 +303,9 @@ test("a turn that wrote a handoff offers a fresh chat; the chip starts one on th
   const v = await client.view();
   assert.equal(v.sessions.find((x) => x.session_id === snap.state.sessionId)?.item_id, item, "on the same work item");
   assert.ok(lastGroups().groups.some((g) => g.threads.some((t) => t.sessionId === sid)), "the old one stays in the list");
+  // Back to the old chat: its chips without the spent one.
+  const n = chatView.webview.posted.length;
+  threadsView.webview.fromPage({ t: "open", sid });
+  const back = await waitFor(() => chatView.webview.posted.slice(n).find((m) => m.t === "chips" && m.sid === sid), 3000, "the old chat's chips");
+  assert.ok(!back.chips.some((c) => c.action === "freshChat"), "its chip is spent");
 });
