@@ -61,6 +61,12 @@ export interface MailboxEntry {
 
 export type AssignBody = { item_id: string } | { issue_key: string } | { new_title: string; desk?: string } | { untracked: true };
 
+/** The `client` mark of a session this panel runs (desk Interface: assign "gains client"). */
+export const CLIENT = "embarch-chat";
+
+/** A desk name no desk has: `/view?desk=` with it is a 404 on a desk that reads the parameter. */
+const NO_SUCH_DESK = "embarch-chat: no such desk";
+
 export function expandHome(p: string): string {
   return p.startsWith("~/") || p === "~" ? os.homedir() + p.slice(1) : p;
 }
@@ -141,8 +147,38 @@ export class DeskClient {
     return this.call<DeskView>("GET", desk ? `/view?desk=${encodeURIComponent(desk)}` : "/view");
   }
 
-  session(sid: string): Promise<{ session_id: string; cwd: string; untracked: boolean; work_item: { id: string; title: string } | null }> {
+  /**
+   * Whether this desk reads `/view?desk=` (desk b722b3b and later). Asked
+   * for a desk no one has, it answers 404; an older desk ignores the
+   * parameter and answers with the open desk's cards, which a window on
+   * another desk must not show as its own.
+   */
+  async readsDeskParam(): Promise<boolean> {
+    try {
+      await this.call("GET", `/view?desk=${encodeURIComponent(NO_SUCH_DESK)}`);
+      return false;
+    } catch (e) {
+      if (e instanceof DeskError && e.status === 404) return true;
+      throw e;
+    }
+  }
+
+  session(sid: string): Promise<{ session_id: string; cwd: string; untracked: boolean; client?: string | null; work_item: { id: string; title: string } | null }> {
     return this.call("GET", `/sessions/${encodeURIComponent(sid)}`);
+  }
+
+  /**
+   * Whether the desk has a session as this panel's: it echoes `client` in
+   * GET /sessions/{sid} (desk b722b3b and later). An older desk keeps no
+   * client, and a session it never heard of is not marked.
+   */
+  async isMarked(sid: string): Promise<boolean> {
+    try {
+      return (await this.session(sid)).client === CLIENT;
+    } catch (e) {
+      if (e instanceof DeskError && e.status === 404) return false;
+      throw e;
+    }
   }
 
   states(itemId: string): Promise<{ states: Array<{ id: string; name: string; type: string }> }> {
@@ -165,25 +201,27 @@ export class DeskClient {
 
   /** Binds a session to its work item before `claude` starts (decision 10), marked as this panel's. */
   assign(sid: string, body: AssignBody): Promise<{ item_id?: string; title?: string; untracked?: boolean }> {
-    return this.call("POST", `/sessions/${encodeURIComponent(sid)}/assign`, { ...body, client: "embarch-chat" });
+    return this.call("POST", `/sessions/${encodeURIComponent(sid)}/assign`, { ...body, client: CLIENT });
   }
 
   /**
    * Marks a session as this panel's without touching its work item — for a
-   * chat resumed here: an assign with an item or `untracked`
-   * moves it, and `untracked` clears its spans, the time of its open tiles.
-   * The desk applies `client` before it reads the item (desk b722b3b), so
-   * an assign naming no item marks the session and answers 400 "give an
-   * issue key or a title", changing nothing else; that answer is the mark
-   * landing, not an error.
+   * chat resumed here: an assign with an item or `untracked` moves it, and
+   * `untracked` clears its spans, the time of its open tiles. So the assign
+   * carries `client` alone. The desk's Interface does not say what it
+   * answers to that: desk b722b3b applies `client` first and then answers
+   * 400 for the missing item; a later desk may answer 200. Neither answer
+   * is taken as the mark: it is read back from the session. True when the
+   * desk has it; false when it does not keep it (an older desk).
    */
-  async markClient(sid: string): Promise<void> {
+  async markClient(sid: string): Promise<boolean> {
     try {
-      await this.call("POST", `/sessions/${encodeURIComponent(sid)}/assign`, { client: "embarch-chat" });
+      await this.call("POST", `/sessions/${encodeURIComponent(sid)}/assign`, { client: CLIENT });
     } catch (e) {
-      if (e instanceof DeskError && e.status === 400) return;
-      throw e;
+      // Whatever it says about the item; not the desk being away, the URL refused or the token wrong.
+      if (!(e instanceof DeskError) || e.unreachable || e.refused || e.status === 401 || e.status >= 500) throw e;
     }
+    return this.isMarked(sid);
   }
 
   setStatus(itemId: string, stateId: string): Promise<unknown> {

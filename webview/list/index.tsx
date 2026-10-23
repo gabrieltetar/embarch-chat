@@ -111,6 +111,7 @@ function App() {
         </button>
       </div>
       {d.error && <div class="warn-line">{d.error}</div>}
+      {!d.error && d.notice && <div class="warn-line notice">{d.notice}</div>}
       {!d.groups.length && (
         <div class="muted" style="padding:4px 8px">
           No threads yet. <Link onOpen={() => post({ t: "newChat" })}>Start a chat</Link>.

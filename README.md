@@ -126,6 +126,12 @@ npm install
 ./reinstall.sh --package-only  # build and package only
 ```
 
+**It needs embarch-desk b722b3b or later** — deploy the desk with it. An
+older desk ignores `/view?desk=` (a window on another desk than the open
+one would get the open desk's cards) and does not keep which chats run
+here; the list then says "Update embarch-desk" and shows only chats in the
+window's repos.
+
 Reload the window afterwards. The extension is not on any marketplace, so a
 VS Code server update drops it silently — re-run `./reinstall.sh`. **If the
 standalone `embarch-ui-launcher` is still installed, uninstall it**: this

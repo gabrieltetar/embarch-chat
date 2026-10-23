@@ -16,6 +16,8 @@ const HIDDEN_MS = 15000;
 const MAIL_MS = 3000;
 const MAIL_BACKOFF_MS = 60000;
 const TRANSCRIPT_MS = 30000;
+/** How often a desk found too old is asked again: an update clears the notice without a reload. */
+const RECHECK_MS = 10 * 60_000;
 const DAY = 86_400_000;
 
 function git(dir: string, args: string[]): Promise<string> {
@@ -55,6 +57,11 @@ export class DeskService extends EventEmitter {
   private ownDeskId: string | null = null;
   /** The desk the current view's cards belong to, when asked for one. */
   private scopedTo: string | null = null;
+  /** Whether the desk reads `/view?desk=` (null: not asked yet), and when it was asked. */
+  private deskParam: boolean | null = null;
+  private deskParamAt = 0;
+  /** Whether the desk kept the last `client` mark read back (null: none read yet). */
+  private marks: boolean | null = null;
   private timer: NodeJS.Timeout | undefined;
   private mailTimer: NodeJS.Timeout | undefined;
   private mailBackoffUntil = 0;
@@ -123,13 +130,50 @@ export class DeskService extends EventEmitter {
   }
 
   /**
+   * One line for the list when the running desk predates this panel's side
+   * of it (embarch-desk b722b3b): it ignores `/view?desk=`, or it does not
+   * keep which chats run here (`client`). Without it, a window on another
+   * desk than the open one would show the open desk's cards as its own.
+   */
+  get notice(): string | null {
+    if (this.deskParam !== false && this.marks !== false) return null;
+    const foreign = this.deskParam === false && !!this.desk && this.desk.id !== this.view?.open_desk?.id;
+    return `Update embarch-desk: the running one predates this panel${foreign ? " — only chats in this window's repos show" : ""}.`;
+  }
+
+  /** What a read-back of a session's `client` said (after an assign or a mark). */
+  noteMark(kept: boolean): void {
+    if (this.marks === kept) return;
+    this.marks = kept;
+    this.emit("changed");
+  }
+
+  /** Whether `/view?desk=` may be used: asked once, again after an outage, and every few minutes while it may not. */
+  private async scopedViews(): Promise<boolean> {
+    if (this.deskParam === null || (!this.deskParam && Date.now() - this.deskParamAt > RECHECK_MS)) {
+      const was = this.deskParam;
+      this.deskParam = await this.client.readsDeskParam();
+      this.deskParamAt = Date.now();
+      if (was === false && this.deskParam) {
+        this.log("the desk reads ?desk= now: updated");
+        this.marks = null;
+      }
+      if (!this.deskParam) this.log("the desk ignores ?desk=: it predates this panel; the open desk's view, by repo");
+    }
+    return this.deskParam;
+  }
+
+  /**
    * The view for this window (decision 9): its own desk's cards
    * (`/view?desk=`) when its folder is in a desk's repo, else the open
    * desk's. A desk deleted since answers 404: the plain view, and the
-   * window's desk is found again from it.
+   * window's desk is found again from it. A desk that ignores `?desk=`
+   * (one older than this panel) gets the plain view too: its cards are
+   * the open desk's, and buildThreads keeps only those in this window's
+   * repos.
    */
   private async fetchView(): Promise<DeskView> {
-    if (this.ownDeskId) {
+    if (this.ownDeskId && (await this.scopedViews())) {
       try {
         const v = await this.client.view(this.ownDeskId);
         this.scopedTo = this.ownDeskId;
@@ -144,7 +188,7 @@ export class DeskService extends EventEmitter {
     let v = await this.client.view();
     const own = ownDesk([...this.folders(), ...this.mains], v.desks ?? []);
     this.ownDeskId = own?.id ?? null;
-    if (own && own.id !== v.open_desk?.id) {
+    if (own && own.id !== v.open_desk?.id && (await this.scopedViews())) {
       // Another desk than the open one: its cards now, not after a poll.
       try {
         v = await this.client.view(own.id);
@@ -169,6 +213,11 @@ export class DeskService extends EventEmitter {
       }
     } catch (e) {
       this.error = e instanceof DeskError && e.unreachable ? "The desk is not running — showing this window's chats only." : `Desk: ${(e as Error).message}`;
+      // It may come back as another build: asked again then.
+      if (e instanceof DeskError && e.unreachable) {
+        this.deskParam = null;
+        this.marks = null;
+      }
     }
     const folders = this.folders();
     this.desk = this.view ? resolveDesk([...folders, ...this.mains], this.view.desks ?? [], this.view.open_desk ?? null) : null;

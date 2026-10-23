@@ -153,7 +153,7 @@ export function activate(context: vscode.ExtensionContext): void {
     jump: (sid) => void jumpTo(sid),
     newChat: (itemId) => void newChat(itemId),
     refresh: () => void desk.refresh(),
-    data: () => ({ t: "groups", groups: desk.groups, desk: desk.desk?.name ?? null, error: desk.error, selected: manager.current, now: Date.now() }),
+    data: () => ({ t: "groups", groups: desk.groups, desk: desk.desk?.name ?? null, error: desk.error, notice: desk.notice, selected: manager.current, now: Date.now() }),
     setVisible: (v) => desk.setVisible(v),
   });
   context.subscriptions.push(vscode.window.registerWebviewViewProvider(THREADS_VIEW, threads));
@@ -294,6 +294,13 @@ export function activate(context: vscode.ExtensionContext): void {
    * is down; a refusal is logged and dropped.
    */
   const telling = new Set<string>();
+  /** Whether the desk kept an assign's `client`: an older desk drops it, and the list says to update it. */
+  function checkMark(sid: string): void {
+    client.isMarked(sid).then(
+      (kept) => desk.noteMark(kept),
+      () => {},
+    );
+  }
   async function tellDesk(rec: ChatRecord): Promise<void> {
     const sid = rec.chat.sessionId;
     const due = rec.deskDue;
@@ -310,11 +317,14 @@ export function activate(context: vscode.ExtensionContext): void {
           rec.itemTitle = s.work_item.title;
           desk.noteItem(sid, { id: s.work_item.id, title: s.work_item.title });
         }
-        await client.markClient(sid);
+        const kept = await client.markClient(sid);
+        desk.noteMark(kept);
+        if (!kept) log(`desk: ${sid.slice(0, 8)} not marked as this panel's: the desk keeps no client (update it)`);
       } else {
         const r = await client.assign(sid, due);
         rec.itemId = r.item_id ?? null;
         rec.itemTitle = r.title ?? rec.itemTitle;
+        checkMark(sid);
       }
       rec.deskDue = null;
       log(`desk: ${sid.slice(0, 8)} ${due === "mark" ? "marked as this panel's" : `on ${rec.itemId ?? "untracked"}`}`);
@@ -347,8 +357,9 @@ export function activate(context: vscode.ExtensionContext): void {
         const r = await client.assign(sid, body);
         itemId = r.item_id ?? null;
         itemTitle = r.title ?? itemTitle;
+        checkMark(sid);
       } else {
-        await client.markClient(sid);
+        desk.noteMark(await client.markClient(sid));
       }
     } catch (e) {
       if (e instanceof DeskError && e.unreachable) {

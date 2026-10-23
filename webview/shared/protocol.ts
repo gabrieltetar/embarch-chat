@@ -97,6 +97,8 @@ export type HostToList = {
   groups: ThreadGroup[];
   desk: string | null;
   error: string | null;
+  /** One line when the running desk predates this panel: update it. */
+  notice?: string | null;
   selected: string | null;
   now: number;
 };

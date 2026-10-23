@@ -32,7 +32,9 @@ stay at runtime: never in a fixture, a test or a commit.
 `npm run build` (esbuild: extension + two Preact webviews), `npm run typecheck`,
 `npm test` (node --test; the wire and assistant tests replay real recorded
 sessions and Haiku calls through `test/fake-claude.mjs`, the desk and host
-tests run against a scratch `embarch-desk` named by `EMBARCH_DESK_BIN`),
+tests run against a scratch `embarch-desk` named by `EMBARCH_DESK_BIN`, and
+the "update embarch-desk" test against an older one named by
+`EMBARCH_DESK_OLD_BIN`, built from 80368bf),
 `npm run test:webview` (headless Firefox). `plugin/` is the library's Claude
 Code plugin; `claude plugin validate plugin` checks it.
 `./reinstall.sh --package-only` builds the .vsix without installing it.

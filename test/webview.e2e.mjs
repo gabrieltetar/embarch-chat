@@ -895,6 +895,14 @@ await check("the list says so when the desk is down", async () => {
   assert.ok((await posts()).some((p) => p.t === "newChat"));
 });
 
+await check("the list says so when the desk predates this panel", async () => {
+  const notice = "Update embarch-desk: the running one predates this panel — only chats in this window's repos show.";
+  await send([{ t: "groups", groups: [], desk: "Example", error: null, notice, selected: null, now: Date.now() }]);
+  assert.deepEqual(await text(".warn-line"), [notice]);
+  await send([{ t: "groups", groups: [], desk: "Example", error: null, notice: null, selected: null, now: Date.now() }]);
+  assert.deepEqual(await text(".warn-line"), []);
+});
+
 await check("the pages run under the production CSP, with nothing refused", async () => {
   assert.deepEqual(await exec("return window.__violations"), [], "the list");
   await go("/chat.html");

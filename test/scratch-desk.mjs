@@ -5,6 +5,8 @@
 //   desk.test 4980–4981 · host.test 4982–4983 · resume.test 4984–4985
 //   settings.test 4986–4987 · webview.e2e 4988–4989
 //
+// (desk.test's older desk, EMBARCH_DESK_OLD_BIN, takes 4981 for its one test.)
+//
 // A `start` mailbox entry is written only by Start work, server-side (the
 // desk refuses one posted to /mailbox), and Start work needs Linear and a
 // worktree; the tests seed one into the desk's store instead, while it is
@@ -22,6 +24,9 @@ const FAKE = path.join(path.dirname(fileURLToPath(import.meta.url)), "fake-claud
 
 export const BIN = process.env.EMBARCH_DESK_BIN;
 export const haveDesk = !!BIN && fs.existsSync(BIN);
+/** Optional: a desk older than the chat panel's side (e.g. built from 80368bf), for the "update embarch-desk" notice. */
+export const OLD_BIN = process.env.EMBARCH_DESK_OLD_BIN;
+export const haveOldDesk = !!OLD_BIN && fs.existsSync(OLD_BIN);
 
 /** A port in [base, base + n). */
 export const scratchPort = (base, n = 2) => base + Math.floor(Math.random() * n);
@@ -30,10 +35,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export class ScratchDesk {
   /** `claudeDir`: the scratch CLAUDE_CONFIG_DIR the desk reads memory files from (never the owner's). */
-  constructor(dir, port, claudeDir = path.join(dir, "claude")) {
+  constructor(dir, port, claudeDir = path.join(dir, "claude"), bin = BIN) {
     this.dir = dir;
     this.port = port;
     this.claudeDir = claudeDir;
+    this.bin = bin;
     this.proc = null;
     fs.mkdirSync(path.join(dir, "data"), { recursive: true });
     fs.mkdirSync(path.join(dir, "config"), { recursive: true });
@@ -49,7 +55,7 @@ export class ScratchDesk {
     fs.mkdirSync(bin, { recursive: true });
     if (!fs.existsSync(path.join(bin, "claude"))) fs.symlinkSync(FAKE, path.join(bin, "claude"));
     const { FAKE_CLAUDE_ARGS_LOG: _log, FAKE_CLAUDE_AGENTS: _agents, ...env } = process.env;
-    this.proc = spawn(BIN, ["serve"], {
+    this.proc = spawn(this.bin, ["serve"], {
       env: {
         ...env,
         PATH: `${bin}:${process.env.PATH}`,
@@ -63,8 +69,9 @@ export class ScratchDesk {
     const exited = new Promise((r) => this.proc.once("exit", r));
     for (let i = 0; i < 150; i++) {
       // An authenticated read: only our desk holds the token it wrote, so a
-      // stray desk already on the port never passes for ours.
-      if (await this.client.call("GET", "/settings").then(() => true, () => false)) return this;
+      // stray desk already on the port never passes for ours. (/view: an
+      // older desk has no /settings.)
+      if (await this.client.call("GET", "/view").then(() => true, () => false)) return this;
       if (this.proc.exitCode !== null) break;
       await sleep(70);
     }

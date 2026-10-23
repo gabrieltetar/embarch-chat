@@ -10,7 +10,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as http from "node:http";
-import { ScratchDesk, haveDesk } from "./scratch-desk.mjs";
+import { ScratchDesk, haveDesk, haveOldDesk, OLD_BIN } from "./scratch-desk.mjs";
 
 const require = createRequire(import.meta.url);
 const core = require("../test-out/core.js");
@@ -149,6 +149,105 @@ test("a stopped desk reads as unreachable", async () => {
   // Nothing listens on the probe port's loopback side.
   const c = new core.DeskClient({ baseUrl: `http://127.0.0.1:${PROBE_PORT}`, tokenPath: "/nonexistent" });
   await assert.rejects(c.view(), (err) => err.unreachable === true);
+});
+
+// ------------------------------------------------------------ an older desk
+
+test("the mark is read back from the session: the desk's answer to it, 200 or 400, decides nothing", async () => {
+  // A desk on the probe port that answers the mark either way, and keeps it or not.
+  let answer = 200;
+  let keeps = true;
+  const kept = new Set();
+  const srv = http.createServer((req, res) => {
+    const sid = /^\/sessions\/([^/]+)/.exec(req.url)?.[1];
+    let body = "";
+    req.on("data", (d) => (body += d));
+    req.on("end", () => {
+      if (req.method === "POST" && req.url.endsWith("/assign")) {
+        if (keeps && JSON.parse(body).client === "embarch-chat") kept.add(sid);
+        res.writeHead(answer, { "content-type": "application/json" });
+        return res.end(answer === 200 ? "{}" : JSON.stringify({ error: "give an issue key or a title" }));
+      }
+      if (req.method === "GET" && sid) {
+        res.writeHead(200, { "content-type": "application/json" });
+        return res.end(JSON.stringify({ session_id: sid, ...(keeps ? { client: kept.has(sid) ? "embarch-chat" : null } : {}), work_item: null }));
+      }
+      res.writeHead(404);
+      res.end("{}");
+    });
+  });
+  await new Promise((r) => srv.listen(PROBE_PORT, "127.0.0.1", r));
+  try {
+    const c = new core.DeskClient({ baseUrl: `http://127.0.0.1:${PROBE_PORT}`, tokenPath: "/nonexistent" });
+    const sid = (n) => `0b0e1a1e-0000-4000-8000-0000000000${n}`;
+    assert.equal(await c.markClient(sid("b1")), true, "a 200 that kept it");
+    answer = 400;
+    assert.equal(await c.markClient(sid("b2")), true, "a 400 that kept it (desk b722b3b)");
+    keeps = false;
+    assert.equal(await c.markClient(sid("b3")), false, "a 400 that kept nothing (an older desk)");
+    answer = 200;
+    assert.equal(await c.markClient(sid("b4")), false, "a 200 that kept nothing");
+  } finally {
+    await new Promise((r) => srv.close(r));
+  }
+});
+
+/** Desk A open, desk B the window's, an item on each; a DeskService for a window in B's repo. */
+async function twoDesks(c, root) {
+  const repo = (n) => {
+    fs.mkdirSync(path.join(root, n), { recursive: true });
+    return path.join(root, n);
+  };
+  const idOf = (r) => r.id ?? r.desk?.id;
+  const a = idOf(await c.call("POST", "/desks", { name: "Desk A", firmware_repos: [repo("fw-a")] }));
+  const b = idOf(await c.call("POST", "/desks", { name: "Desk B", firmware_repos: [repo("fw-b")] }));
+  await c.call("POST", "/open", { desk: a });
+  const { id: onA } = await c.call("POST", "/items", { title: "ABC-211 on the open desk", desk: a });
+  const { id: onB } = await c.call("POST", "/items", { title: "ABC-210 on the window's desk", desk: b });
+  const chats = new core.ChatManager(() => ({ claudePath: "/bin/false", idleMs: 60000, log: () => {} }));
+  const svc = new core.DeskService(() => c, chats, () => [path.join(root, "fw-b")], () => {});
+  await svc.poll();
+  const items = () => svc.groups.map((g) => g.item?.id).filter(Boolean);
+  return { svc, onA, onB, items };
+}
+
+test("on a desk that reads ?desk=, a window on another desk shows its own desk's cards and no notice", live, async () => {
+  assert.equal(await client.readsDeskParam(), true);
+  const sid = "0b0e1a1e-0000-4000-8000-0000000000c1";
+  assert.equal(await client.markClient(sid), true, "the mark is kept");
+  assert.equal((await client.session(sid)).work_item, null, "and moves no item");
+  const root = fs.mkdtempSync(path.join(dir, "two-"));
+  const { svc, onA, onB, items } = await twoDesks(client, root);
+  try {
+    assert.ok(items().includes(onB) && !items().includes(onA), JSON.stringify(items()));
+    assert.equal(svc.notice, null);
+  } finally {
+    svc.dispose();
+  }
+});
+
+test("on a desk older than the panel: not another desk's cards, and a line to update it", { skip: haveOldDesk ? false : "EMBARCH_DESK_OLD_BIN not set" }, async () => {
+  // The probe port is free by now: the old desk takes it for this test only.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "embarch-chat-olddesk-"));
+  const old = await new ScratchDesk(path.join(root, "desk"), PROBE_PORT, path.join(root, "claude"), OLD_BIN).start();
+  try {
+    const c = old.client;
+    assert.equal(await c.readsDeskParam(), false, "it ignores ?desk=");
+    assert.equal(await c.markClient("0b0e1a1e-0000-4000-8000-0000000000d1"), false, "it keeps no client");
+    const { svc, onA, onB, items } = await twoDesks(c, root);
+    try {
+      assert.ok(!items().includes(onA), `the open desk's card is not shown as this window's: ${JSON.stringify(items())}`);
+      assert.ok(!items().includes(onB), "the old desk cannot give the window's desk's cards");
+      assert.match(svc.notice, /^Update embarch-desk: the running one predates this panel — only chats in this window's repos show\.$/);
+      svc.noteMark(false);
+      assert.match(svc.notice, /Update embarch-desk/);
+    } finally {
+      svc.dispose();
+    }
+  } finally {
+    await old.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 // ------------------------------------------------------------ the list
