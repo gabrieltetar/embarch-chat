@@ -617,7 +617,12 @@ export function activate(context: vscode.ExtensionContext): void {
     const rec = manager.get(sid);
     if (!rec || !isSessionId(uuid)) return;
     const entry = Object.values(rec.chat.state.entries).find((e) => e.kind === "user" && e.uuid === uuid);
-    const text = entry?.kind === "user" ? entry.text : "";
+    // One of this chat's own messages, never another chat's (review r4 UI M3).
+    if (entry?.kind !== "user") {
+      log(`[${sid.slice(0, 8)}] not forked: ${uuid.slice(0, 8)} is not a message of this chat's`);
+      return;
+    }
+    const text = entry.text;
     // `--resume` finds the session by its folder, and a chat runs in the window's (decisions 5, 10).
     const cwd = rec.chat.opts.cwd || rec.chat.state.cwd || "";
     if (!desk.isWindowFolder(cwd)) {

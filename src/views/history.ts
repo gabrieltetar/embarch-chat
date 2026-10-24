@@ -12,6 +12,7 @@ import * as path from "path";
 import * as vscode from "vscode";
 import type { ChatRecord } from "../chats";
 import type { Chat, RewindResult } from "../wire/chat";
+import type { UserEntry } from "../wire/reducer";
 import { conversationText, exportFileName } from "../wire/history";
 import type { ChatToHost, HostToChat } from "../../webview/shared/protocol";
 import type { HostCtx } from "./chatHost";
@@ -26,6 +27,21 @@ function quote(text: string): string {
   const l = text.trim().split("\n")[0];
   return l.length > 60 ? `${l.slice(0, 59)}…` : l;
 }
+
+/**
+ * The owner's message `uuid` in this chat, as the page offers it — settled,
+ * with its uuid on record — or undefined. A rewind or a fork names one of
+ * the chat this page serves, never another's (review r4 UI M3): the page's
+ * dialog is its chat's, and the host checks it again.
+ */
+function ownerMessage(chat: Chat, uuid: string): UserEntry | undefined {
+  if (typeof uuid !== "string" || !uuid) return undefined;
+  const e = Object.values(chat.state.entries).find((x): x is UserEntry => x.kind === "user" && x.uuid === uuid);
+  return e && !e.pending && !e.held && !e.unsent ? e : undefined;
+}
+
+/** Why a message of another chat, or none, is refused. */
+const NOT_OURS = "That message is not one of this chat's.";
 
 /** Why the files of this chat cannot be rewound now, or null. Only a chat this window runs has the process that holds its checkpoints. */
 function noFileRewind(rec: ChatRecord): string | null {
@@ -54,7 +70,7 @@ export async function historyMessage(ctx: HostCtx, rec: ChatRecord, m: HistoryMe
   const chat = rec.chat;
   switch (m.t) {
     case "rewindCheck": {
-      const no = noFileRewind(rec);
+      const no = ownerMessage(chat, m.uuid) ? noFileRewind(rec) : NOT_OURS;
       let result: RewindResult;
       if (no) result = { canRewind: false, error: no };
       else {
@@ -69,8 +85,12 @@ export async function historyMessage(ctx: HostCtx, rec: ChatRecord, m: HistoryMe
       return;
     }
     case "rewind": {
-      const e = Object.values(chat.state.entries).find((x) => x.kind === "user" && x.uuid === m.uuid);
-      const what = e && e.kind === "user" ? `“${quote(e.text)}”` : "that message";
+      const e = ownerMessage(chat, m.uuid);
+      if (!e) {
+        ctx.log(`[${chat.sessionId.slice(0, 8)}] rewind to ${String(m.uuid).slice(0, 8)} refused: not a message of this chat's`);
+        return chat.note(`Not rewound or forked: ${NOT_OURS}`, "error");
+      }
+      const what = `“${quote(e.text)}”`;
       if (m.restore !== "conversation") {
         // Files change on disk: only as confirmed, from the dry run the owner saw.
         const no = noFileRewind(rec);

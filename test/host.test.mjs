@@ -1124,6 +1124,38 @@ test("a file rewind waits for the chat's background tasks: none is checked or do
   }
 });
 
+test("a rewind or a fork names one of the owner's messages in the chat the page shows: another chat's is refused, and nothing reaches the CLI (review r4 UI M3)", { skip }, async () => {
+  const inputs = path.join(dir, "inputs-m3.jsonl");
+  process.env.FAKE_CLAUDE_INPUT_LOG = inputs;
+  try {
+    // Chat A, whose message a stale dialog still quotes (another recording than B's: another message id).
+    await startUntracked("attach");
+    const n0 = chatView.webview.posted.length;
+    chatView.webview.fromPage({ t: "send", text: "What do the lines say?" });
+    await waitFor(() => chatView.webview.posted.slice(n0).some((m) => m.t === "event" && m.e.type === "result"), 5000, "A's turn");
+    const aUuid = chatView.webview.posted.slice(n0).find((m) => m.t === "event" && m.e.type === "user" && m.e.isReplay).e.uuid;
+    // Chat B in the view, with a turn of its own.
+    const b = await startUntracked("basic");
+    const n = chatView.webview.posted.length;
+    chatView.webview.fromPage({ t: "send", text: "Run the bash command `echo hello-from-bash` and then reply with just: done" });
+    await waitFor(() => chatView.webview.posted.slice(n).some((m) => m.t === "event" && m.e.type === "result"), 5000, "B's turn");
+    const forks = calls().filter((c) => c.argv.includes("--fork-session")).length;
+    const asked = () => (fs.existsSync(inputs) ? fs.readFileSync(inputs, "utf8").trim().split("\n").map((l) => JSON.parse(l).o) : []).filter((o) => o.request?.subtype === "rewind_files").length;
+    chatView.webview.fromPage({ t: "rewindCheck", uuid: aUuid });
+    const check = await waitFor(() => posted((m) => m.t === "rewindCheck" && m.uuid === aUuid), 5000, "the answer");
+    assert.deepEqual(check.result, { canRewind: false, error: "That message is not one of this chat's." });
+    for (const restore of ["both", "code", "conversation"]) chatView.webview.fromPage({ t: "rewind", uuid: aUuid, restore });
+    const notes = () => chatView.webview.posted.slice(n).filter((m) => m.t === "event" && m.e.type === "_note" && m.e.text === "Not rewound or forked: That message is not one of this chat's.");
+    await waitFor(() => notes().length === 3, 3000, "a note for each");
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(asked(), 0, "no file rewind, not even a dry run, reached B's CLI");
+    assert.equal(calls().filter((c) => c.argv.includes("--fork-session")).length, forks, "no fork");
+    assert.ok(!chatView.webview.posted.slice(n).some((m) => m.t === "snapshot" && m.state.sessionId !== b), "B stays on screen: no fork opened");
+  } finally {
+    delete process.env.FAKE_CLAUDE_INPUT_LOG;
+  }
+});
+
 test("a fork no message was sent to comes back after a reload still a fork: what it starts from, its name, and its first message copies the parent (decisions 63, 73)", { skip }, async () => {
   const { id: item } = await client.call("POST", "/items", { title: "ABC-132 fork, then reload", desk: "none" });
   await mock.state.commands.get("embarchChat.refresh")();
