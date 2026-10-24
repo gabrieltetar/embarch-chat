@@ -111,11 +111,19 @@ export class ChatManager extends EventEmitter {
   /**
    * A new chat of this window's, already assigned on the desk (decision 10);
    * its process starts with the first message. A fork's (decision 73) copies
-   * another session's conversation up to a point.
+   * another session's conversation up to a point, in its parent's mode.
+   * `mode`: the chat's, when it is not a new chat's auto (22); `settle`: see
+   * ChatOptions.
    */
-  create(sessionId: string, cwd: string, itemId: string | null, itemTitle: string | null, opts: { untracked?: boolean; deskDue?: DeskDue | null; fork?: { from: string; at: string } } = {}): ChatRecord {
+  create(
+    sessionId: string,
+    cwd: string,
+    itemId: string | null,
+    itemTitle: string | null,
+    opts: { untracked?: boolean; deskDue?: DeskDue | null; fork?: { from: string; at: string }; mode?: string; settle?: boolean } = {},
+  ): ChatRecord {
     const s = this.settings();
-    const chat = new Chat({ sessionId, cwd, claudePath: s.claudePath, existing: false, idleMs: s.idleMs, log: s.log, hooks: s.hooks, fork: opts.fork });
+    const chat = new Chat({ sessionId, cwd, claudePath: s.claudePath, existing: false, idleMs: s.idleMs, log: s.log, hooks: s.hooks, fork: opts.fork, mode: opts.mode, settle: opts.settle });
     const rec: ChatRecord = {
       chat,
       ours: true,
@@ -136,9 +144,10 @@ export class ChatManager extends EventEmitter {
 
   /**
    * Opens a thread this window does not run, from its transcript. `resumable`
-   * when nothing runs it and it worked in this window's folder.
+   * when nothing runs it and it worked in this window's folder; `mode`: the
+   * one a process started for it takes (a reload's, 63).
    */
-  openViewer(sessionId: string, cwd: string | null, itemId: string | null, itemTitle: string | null, resumable: boolean): ChatRecord | null {
+  openViewer(sessionId: string, cwd: string | null, itemId: string | null, itemTitle: string | null, resumable: boolean, mode?: string): ChatRecord | null {
     if (!isSessionId(sessionId)) return null;
     const existing = this.records.get(sessionId);
     if (existing) {
@@ -150,7 +159,7 @@ export class ChatManager extends EventEmitter {
     }
     const file = findTranscript(sessionId, cwd ?? undefined);
     const s = this.settings();
-    const chat = new Chat({ sessionId, cwd: cwd ?? "", claudePath: s.claudePath, existing: true, idleMs: s.idleMs, log: s.log, hooks: s.hooks });
+    const chat = new Chat({ sessionId, cwd: cwd ?? "", claudePath: s.claudePath, existing: true, idleMs: s.idleMs, log: s.log, hooks: s.hooks, mode });
     const rec: ChatRecord = { chat, ours: false, viewer: true, resumable, itemId, itemTitle, untracked: false, deskDue: null, createdMs: Date.now(), lastMs: Date.now() };
     this.records.set(sessionId, rec);
     this.wire(sessionId, rec);

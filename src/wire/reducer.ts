@@ -84,6 +84,8 @@ export interface NoteEntry {
   kept?: string;
   /** A compaction's summary, the line the CLI sends after its boundary (decision 76). */
   summary?: string;
+  /** It offers to continue the step a reload interrupted (63): a button while `rerunOffer` names it. */
+  offer?: "rerun";
 }
 export type Entry = UserEntry | TextEntry | ThinkingEntry | ToolEntry | NoteEntry;
 
@@ -207,6 +209,8 @@ export interface ChatState {
   applied: AppliedSettings | null;
   /** Remote Control while it is on or has failed; null when off. */
   remote: RemoteState | null;
+  /** The note that offers to continue the step a reload interrupted (63), until a process starts. */
+  rerunOffer: string | null;
   seq: number;
 }
 
@@ -246,6 +250,7 @@ export function initialState(sessionId: string, mode = "auto"): ChatState {
     ultracode: false,
     applied: null,
     remote: null,
+    rerunOffer: null,
     seq: 0,
   };
 }
@@ -422,8 +427,10 @@ function taskTool(s: ChatState, taskId: unknown): string | undefined {
   return typeof taskId === "string" ? s.tasks?.[taskId] : undefined;
 }
 
-function note(s: ChatState, text: string, tone: NoteEntry["tone"], kept?: string): ChatState {
-  return put(s, { kind: "note", id: `n:${s.seq}`, text, tone, ...(kept ? { kept } : {}) }, null);
+function note(s: ChatState, text: string, tone: NoteEntry["tone"], kept?: string, offer?: NoteEntry["offer"]): ChatState {
+  const id = `n:${s.seq}`;
+  const n = put(s, { kind: "note", id, text, tone, ...(kept ? { kept } : {}), ...(offer ? { offer } : {}) }, null);
+  return offer === "rerun" ? { ...n, rerunOffer: id } : n;
 }
 
 /** The last thing in the timeline, the owner's own messages aside, is a compaction's card. */
@@ -742,6 +749,8 @@ export function reduce(s: ChatState, o: WireMessage): ChatState {
     // ---- the host's own events
     case "_sent": {
       // Sent: the time above it, and the "Not responding" clock starts (68).
+      // `restored`: one a reload cut off before Claude took it (63), waiting
+      // again at the bottom with no process yet — nothing runs for it.
       const at = typeof o.at === "number" ? o.at : undefined;
       const e: UserEntry = {
         kind: "user",
@@ -754,10 +763,12 @@ export function reduce(s: ChatState, o: WireMessage): ChatState {
         ...(typeof o.uuid === "string" ? { uuid: o.uuid } : {}),
         ...(Array.isArray(o.context) && o.context.length ? { context: o.context as ContextItem[] } : {}),
       };
-      const n: ChatState = { ...s, busy: true, unconfirmed: [...(s.unconfirmed ?? []), e.id], ...(at !== undefined ? { lastLineAt: at } : {}) };
+      const n: ChatState = o.restored
+        ? { ...s, unconfirmed: [...(s.unconfirmed ?? []), e.id] }
+        : { ...s, busy: true, unconfirmed: [...(s.unconfirmed ?? []), e.id], ...(at !== undefined ? { lastLineAt: at } : {}) };
       // Sent while Claude works, or waits on a card: it waits at the bottom
       // until Claude takes it (port item 72; decision 55), not among the steps.
-      if (s.busy || s.compacting || s.pending.length || o.held || (s.queue ?? []).length) return { ...n, entries: { ...n.entries, [e.id]: e }, queue: [...(s.queue ?? []), e.id] };
+      if (s.busy || s.compacting || s.pending.length || o.held || o.restored || (s.queue ?? []).length) return { ...n, entries: { ...n.entries, [e.id]: e }, queue: [...(s.queue ?? []), e.id] };
       return put(n, e, null);
     }
     case "_dequeued": {
@@ -775,6 +786,8 @@ export function reduce(s: ChatState, o: WireMessage): ChatState {
         process: o.state as ProcessState,
         processError: (o.error as string) ?? null,
         ...(gone ? { busy: false, streaming: null, pending: [], compacting: false, applied: null, remote: null, background: [] } : {}),
+        // Any process ends the offer to continue a step (63): the owner went on another way, or took it.
+        ...(o.state === "starting" ? { rerunOffer: null } : {}),
       };
       // Its background tasks went with it (a crash sends no background_tasks_changed): their rows end, nothing holds the next process (41, 71).
       if (gone) {
@@ -828,7 +841,7 @@ export function reduce(s: ChatState, o: WireMessage): ChatState {
     case "_sideClear":
       return { ...s, side: (s.side ?? []).filter((q) => q.pending) };
     case "_note":
-      return note(s, String(o.text), (o.tone as NoteEntry["tone"]) ?? "info", typeof o.kept === "string" ? o.kept : undefined);
+      return note(s, String(o.text), (o.tone as NoteEntry["tone"]) ?? "info", typeof o.kept === "string" ? o.kept : undefined, o.offer === "rerun" ? "rerun" : undefined);
     default:
       return s;
   }

@@ -502,6 +502,44 @@ test("a crash in a new chat's first turn: the next message starts it again by th
   }
 });
 
+test("a new chat back after a reload with only the CLI's queue lines on record starts by its id: its first process sets them aside (decision 63)", async () => {
+  const dir = tmp("settle-");
+  const config = path.join(dir, "config");
+  const sid = "11111111-2222-4333-8444-555555555555";
+  const project = path.join(config, "projects", dir.replace(/[^a-zA-Z0-9]/g, "-"));
+  fs.mkdirSync(project, { recursive: true });
+  fs.writeFileSync(path.join(project, `${sid}.jsonl`), JSON.stringify({ type: "queue-operation", operation: "enqueue", sessionId: sid, content: "hi" }) + "\n");
+  const env = { ...process.env, FAKE_CLAUDE_FIXTURE: fixture("basic"), CLAUDE_CONFIG_DIR: config, FAKE_CLAUDE_STRICT: "1" };
+  const chat = new core.Chat({ sessionId: sid, cwd: dir, claudePath: FAKE, existing: false, idleMs: 60000, settle: true, env });
+  const turn = turns(chat, 1);
+  const closed = once(chat, "closed");
+  chat.send("Run the bash command `echo hello-from-bash` and then reply with just: done");
+  const ended = await Promise.race([turn.then(() => "a turn"), closed.then(() => `an exit: ${chat.state.processError}`)]);
+  assert.equal(ended, "a turn");
+  assert.equal(fs.readdirSync(project).filter((f) => f.startsWith(`${sid}.jsonl.unstarted-`)).length, 1);
+  chat.dispose();
+});
+
+test("what a reload gave back waits with nothing running for it, and goes ahead of the owner's next message; a process that starts ends the offer to continue (decision 63)", async () => {
+  const { chat, inputs } = makeChat("basic", { existing: true });
+  chat.offerRerun();
+  const uuid = "aaaaaaaa-1111-4111-8111-111111111111";
+  chat.restoreQueued([{ text: "also check the log after", uuid }]);
+  assert.ok(chat.state.rerunOffer, "the offer stands");
+  assert.equal(chat.state.busy, false, "no turn runs for it");
+  assert.equal(chat.state.queue.length, 1, "it waits above the input");
+  assert.equal(chat.running, false);
+  assert.deepEqual(chat.untaken().map((w) => [w.text, w.uuid]), [["also check the log after", uuid]], "a second reload would give it back again");
+  chat.send("Run the bash command `echo hello-from-bash` and then reply with just: done");
+  await turns(chat, 1);
+  assert.deepEqual(inputs().filter((o) => o.type === "user").map((o) => [o.message.content, o.uuid === uuid]), [
+    ["also check the log after", true],
+    ["Run the bash command `echo hello-from-bash` and then reply with just: done", false],
+  ]);
+  assert.equal(chat.state.rerunOffer, null, "the owner went on another way");
+  chat.dispose();
+});
+
 test("a local slash command the CLI ran is sent, though nothing echoes it: a later crash gives back only what it never took", async () => {
   const { chat, spawns } = makeChat("slash");
   const unsent = [];

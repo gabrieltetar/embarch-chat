@@ -745,10 +745,13 @@ async function reload(before = () => {}) {
   chatView.webview.fromPage({ t: "ready" });
 }
 
-test("a reload brings the window's chats back, and one cut off mid-turn continues its step, labelled; after a close nothing comes back (decision 63)", { skip }, async () => {
+test("a reload brings the window's chats back in their own mode; one cut off mid-turn continues its step only on Continue, labelled; after a close nothing comes back (decision 63)", { skip }, async () => {
   process.env.FAKE_CLAUDE_TRANSCRIPT = "prompt";
   try {
     const sid = await startUntracked("deny");
+    // Ask mode: what Claude asks to run waits on the owner, after the reload too.
+    chatView.webview.fromPage({ t: "mode", mode: "default" });
+    await waitFor(() => posted((m) => m.t === "event" && m.e.type === "_mode" && m.e.mode === "default"), 3000, "ask mode");
     const n = chatView.webview.posted.length;
     chatView.webview.fromPage({ t: "send", text: "Run the bash command `touch should-not-exist.txt`. If it is refused, reply with just: refused" });
     await waitFor(() => chatView.webview.posted.slice(n).some((m) => m.t === "event" && m.e.type === "control_request"), 5000, "the chat mid-turn, waiting on the owner");
@@ -762,13 +765,25 @@ test("a reload brings the window's chats back, and one cut off mid-turn continue
       return s?.state.sessionId === sid && s.view.ours && s;
     }, 15000, "the chat back in the sidebar, the window's own");
     assert.ok(back.state.timeline.length > 0, "with its history, from the transcript");
+    assert.equal(back.state.mode, "default", "in the mode it ran in, never a new chat's auto");
     assert.ok(mock.state.panels.length > tabsBefore && mock.state.panels.at(-1).title, "its tab back");
+    // A close and a reopen look the same as a reload: the step waits for the owner's word.
+    const offer = await waitFor(() => chatView.webview.posted.find((m) => m.t === "event" && m.e.type === "_note" && m.e.offer === "rerun"), 10000, "the offer to continue");
+    assert.equal(offer.e.text, core.RERUN_OFFER_NOTE);
+    await new Promise((r) => setTimeout(r, 500));
+    assert.ok(!calls().slice(spawnsBefore).some((c) => c.argv.includes("--input-format")), "nothing reruns by itself");
+    chatView.webview.fromPage({ t: "continueStep" });
     const note = await waitFor(() => chatView.webview.posted.find((m) => m.t === "event" && m.e.type === "_note" && m.e.text === core.RERUN_NOTE), 10000, "the rerun's label");
     assert.ok(note);
     await waitFor(() => chatView.webview.posted.some((m) => m.t === "event" && m.e.type === "result"), 10000, "the step's end");
     const rerun = calls().slice(spawnsBefore).find((c) => c.argv.includes("--input-format"));
     assert.equal(rerun.argv.find((a) => a.startsWith("--resume")), `--resume=${sid}`);
     assert.equal(rerun.env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN, "1");
+    assert.ok(rerun.argv.includes("--permission-mode=default"), "rerun in ask mode");
+    // The offer went with its process: a second click starts nothing.
+    chatView.webview.fromPage({ t: "continueStep" });
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(calls().slice(spawnsBefore).filter((c) => c.argv.includes("--input-format")).length, 1);
     // A close, and a window opened later: nothing comes back (decision 5).
     await reload(() => {
       const k = "embarchChat.openChats";
@@ -785,22 +800,111 @@ test("a reload brings the window's chats back, and one cut off mid-turn continue
   }
 });
 
-test("with continueAfterReload off, a chat cut off mid-turn comes back saying no reply follows, and nothing runs (decision 63)", { skip }, async () => {
+test("with continueAfterReload off, a chat cut off mid-turn comes back saying no reply follows, nothing runs, and a message that waited is back in the draft (decision 63)", { skip }, async () => {
   process.env.FAKE_CLAUDE_TRANSCRIPT = "prompt";
   mock.state.config["embarchChat.continueAfterReload"] = false;
+  try {
+    const sid = await startUntracked("askqueued");
+    const n = chatView.webview.posted.length;
+    chatView.webview.fromPage({ t: "send", text: "Use the AskUserQuestion tool to ask me whether I prefer tea or coffee." });
+    await waitFor(() => chatView.webview.posted.slice(n).some((m) => m.t === "event" && m.e.type === "control_request"), 5000, "mid-turn");
+    chatView.webview.fromPage({ t: "send", text: "Also end your reply with the word: kiwi" });
+    await waitFor(() => transcriptHas(sid, "kiwi"), 5000, "the message in the CLI's queue");
+    const spawnsBefore = calls().length;
+    await reload();
+    await waitFor(() => chatView.webview.posted.find((m) => m.t === "event" && m.e.type === "_note" && m.e.text === core.NO_REPLY_NOTE), 15000, "the no-reply note");
+    assert.equal(lastSnapshot().state.sessionId, sid);
+    const draft = await waitFor(() => posted((m) => m.t === "draft" && m.sid === sid), 3000, "the waiting message in the draft");
+    assert.equal(draft.text, "Also end your reply with the word: kiwi");
+    assert.ok(posted((m) => m.t === "event" && m.e.type === "_note" && /^A message Claude had not taken when the window reloaded is back in the draft/.test(m.e.text)), "a line says so");
+    assert.ok(!calls().slice(spawnsBefore).some((c) => c.argv.includes("--input-format")), "no process started");
+  } finally {
+    delete process.env.FAKE_CLAUDE_TRANSCRIPT;
+    delete mock.state.config["embarchChat.continueAfterReload"];
+  }
+});
+
+/** The CLI's transcript of a chat in the window's folder holds this text (a queue line counts). */
+const transcriptHas = (sid, text) => {
+  const f = path.join(process.env.CLAUDE_CONFIG_DIR, "projects", folder.replace(/[^a-zA-Z0-9]/g, "-"), `${sid}.jsonl`);
+  return fs.existsSync(f) && fs.readFileSync(f, "utf8").includes(text);
+};
+
+test("a message waiting above the input when the window reloads comes back waiting, and goes with Continue, after the step (decisions 63, 72)", { skip }, async () => {
+  process.env.FAKE_CLAUDE_TRANSCRIPT = "prompt";
+  const inputs = path.join(dir, "inputs-reload-queue.jsonl");
+  try {
+    const sid = await startUntracked("askqueued");
+    const n = chatView.webview.posted.length;
+    chatView.webview.fromPage({ t: "send", text: "Use the AskUserQuestion tool to ask me whether I prefer tea or coffee." });
+    await waitFor(() => chatView.webview.posted.slice(n).some((m) => m.t === "event" && m.e.type === "control_request"), 5000, "the question waits");
+    chatView.webview.fromPage({ t: "send", text: "Also end your reply with the word: kiwi" });
+    const sent = await waitFor(() => posted((m) => m.t === "event" && m.e.type === "_sent" && m.e.text.includes("kiwi")), 3000, "it waits above the input");
+    // In the CLI's queue only: a reload drops that queue, and the resumed CLI does not take it [measured].
+    await waitFor(() => transcriptHas(sid, "kiwi"), 5000, "its queue line");
+    const spawnsBefore = calls().length;
+    await reload(() => (process.env.FAKE_CLAUDE_FIXTURE = path.join(here, "fixtures", "wire", "reload.jsonl")));
+    const back = await waitFor(() => posted((m) => m.t === "event" && m.e.type === "_sent" && m.e.restored), 15000, "the message back above the input");
+    assert.equal(back.e.text, "Also end your reply with the word: kiwi");
+    assert.equal(back.e.uuid, sent.e.uuid, "the same message");
+    await waitFor(() => posted((m) => m.t === "event" && m.e.type === "_note" && m.e.offer === "rerun"), 3000, "the offer to continue");
+    await new Promise((r) => setTimeout(r, 300));
+    assert.ok(!calls().slice(spawnsBefore).some((c) => c.argv.includes("--input-format")), "nothing goes by itself");
+    process.env.FAKE_CLAUDE_INPUT_LOG = inputs;
+    chatView.webview.fromPage({ t: "continueStep" });
+    await waitFor(() => fs.existsSync(inputs) && fs.readFileSync(inputs, "utf8").includes("kiwi"), 5000, "the message to the rerun's process");
+    const lines = fs.readFileSync(inputs, "utf8").trim().split("\n").map((l) => JSON.parse(l).o);
+    assert.deepEqual(lines.slice(0, 2).map((o) => o.type), ["control_request", "user"], "after initialize, as the step's own process takes it");
+    assert.equal(lines.filter((o) => o.type === "user").length, 1);
+    assert.equal(lines[1].uuid, sent.e.uuid);
+    const rerun = calls().slice(spawnsBefore).find((c) => c.argv.includes("--input-format"));
+    assert.equal(rerun.env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN, "1");
+  } finally {
+    delete process.env.FAKE_CLAUDE_TRANSCRIPT;
+    delete process.env.FAKE_CLAUDE_INPUT_LOG;
+  }
+});
+
+test("a new chat reloaded before the CLI took its first message comes back with it in the draft, and nothing runs (decision 63)", { skip }, async () => {
+  const sid = await startUntracked("deny");
+  // A slow start (MCP servers connecting): the CLI has read the message and written nothing yet.
+  const slow = path.join(dir, "slow-start.jsonl");
+  const first = fs.readFileSync(path.join(here, "fixtures", "wire", "deny.jsonl"), "utf8").split("\n")[0];
+  fs.writeFileSync(slow, `${first}\n${JSON.stringify({ d: "in", o: { type: "control_request", request: { subtype: "never" } } })}\n`);
+  process.env.FAKE_CLAUDE_FIXTURE = slow;
+  chatView.webview.fromPage({ t: "send", text: "Run the bash command `touch should-not-exist.txt`. If it is refused, reply with just: refused" });
+  await waitFor(() => calls().some((c) => c.argv.includes("--session-id") && c.argv.includes(sid)), 5000, "its process");
+  await new Promise((r) => setTimeout(r, 300));
+  const spawnsBefore = calls().length;
+  await reload(() => (process.env.FAKE_CLAUDE_FIXTURE = path.join(here, "fixtures", "wire", "reload.jsonl")));
+  const draft = await waitFor(() => posted((m) => m.t === "draft" && m.sid === sid), 15000, "the message in the draft");
+  assert.equal(draft.text, "Run the bash command `touch should-not-exist.txt`. If it is refused, reply with just: refused");
+  assert.ok(posted((m) => m.t === "event" && m.e.type === "_note" && /back in the draft/.test(m.e.text)), "a line says so");
+  await new Promise((r) => setTimeout(r, 500));
+  assert.ok(!calls().slice(spawnsBefore).some((c) => c.argv.includes("--input-format")), "no empty session started for it");
+  assert.ok(lastSnapshot().view.ours && !posted((m) => m.t === "event" && m.e.type === "_note" && m.e.offer === "rerun"), "new, with nothing to continue");
+});
+
+test("a second reload while the first still waits for a chat's old process to go keeps that chat (decision 63)", { skip }, async () => {
+  process.env.FAKE_CLAUDE_TRANSCRIPT = "prompt";
   try {
     const sid = await startUntracked("deny");
     const n = chatView.webview.posted.length;
     chatView.webview.fromPage({ t: "send", text: "Run the bash command `touch should-not-exist.txt`. If it is refused, reply with just: refused" });
     await waitFor(() => chatView.webview.posted.slice(n).some((m) => m.t === "event" && m.e.type === "control_request"), 5000, "mid-turn");
-    const spawnsBefore = calls().length;
+    // The old process lingers: `claude agents` still lists it, so the chat waits read-only.
+    process.env.FAKE_CLAUDE_AGENTS = JSON.stringify([{ sessionId: sid, pid: 4242, kind: "sdk" }]);
     await reload();
-    await waitFor(() => chatView.webview.posted.find((m) => m.t === "event" && m.e.type === "_note" && m.e.text === core.NO_REPLY_NOTE), 15000, "the no-reply note");
-    assert.equal(lastSnapshot().state.sessionId, sid);
-    assert.ok(!calls().slice(spawnsBefore).some((c) => c.argv.includes("--input-format")), "no process started");
+    await waitFor(() => lastSnapshot()?.state.sessionId === sid, 5000, "back, read-only while it waits");
+    await new Promise((r) => setTimeout(r, 300));
+    await reload(() => (process.env.FAKE_CLAUDE_AGENTS = "[]"));
+    await waitFor(() => {
+      const s = lastSnapshot();
+      return s?.state.sessionId === sid && s.view.ours;
+    }, 15000, "back again after the second reload, the window's own");
   } finally {
     delete process.env.FAKE_CLAUDE_TRANSCRIPT;
-    delete mock.state.config["embarchChat.continueAfterReload"];
+    delete process.env.FAKE_CLAUDE_AGENTS;
   }
 });
 
@@ -891,6 +995,9 @@ test("Fork conversation from here: a new chat on the same item with the conversa
   // The parent runs at high effort with Ultracode (82): so will its fork.
   chatView.webview.fromPage({ t: "effort", effort: "high", ultracode: true });
   await waitFor(() => chatView.webview.posted.slice(n0).some((m) => m.t === "event" && m.e.type === "_effort" && m.e.effort === "high"), 3000, "the parent's effort");
+  // And in Accept edits: so will its fork, never a new chat's auto (22).
+  chatView.webview.fromPage({ t: "mode", mode: "acceptEdits" });
+  await waitFor(() => chatView.webview.posted.slice(n0).some((m) => m.t === "event" && m.e.type === "_mode" && m.e.mode === "acceptEdits"), 3000, "the parent's mode");
   // Claude's transcript of it, as the CLI wrote it for the recording.
   const text = fs.readFileSync(PARENT_FIXTURE, "utf8").replaceAll("6c563cde-6794-42ea-b651-dbbcb0946fdc", parent).replaceAll("/work/rec/fork", folder);
   const file = path.join(process.env.CLAUDE_CONFIG_DIR, "projects", folder.replace(/[^a-zA-Z0-9]/g, "-"), `${parent}.jsonl`);
@@ -924,6 +1031,7 @@ test("Fork conversation from here: a new chat on the same item with the conversa
   assert.equal(run.argv[run.argv.indexOf("--resume-session-at") + 1], second.parentUuid);
   assert.equal(run.env.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING, "true");
   assert.deepEqual(JSON.parse(run.argv[run.argv.indexOf("--settings") + 1]), { effortLevel: "high", ultracode: true }, "the parent's effort and Ultracode");
+  assert.ok(run.argv.includes("--permission-mode=acceptEdits"), "the parent's mode");
   // A fork keeps its name: Haiku names no fork (12).
   await new Promise((r) => setTimeout(r, 300));
   const haikuName = core.parseTurn(haikuAnswer("turn")).name;

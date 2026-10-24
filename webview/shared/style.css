@@ -511,6 +511,11 @@ button.link-button:focus-visible {
   margin-top: 4px;
   color: var(--vscode-foreground);
 }
+/* "Continue the interrupted step" after a reload (63). */
+.note .offer {
+  margin-top: 4px;
+  text-align: center;
+}
 .note .kept pre {
   flex: 1;
   margin: 0;

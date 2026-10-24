@@ -161,7 +161,9 @@ export type ChatToHost =
   /** `/remote-control [name]`: Remote Control on, or off (dismissed, after a failure). */
   | { t: "remoteControl"; name?: string }
   /** Keep a reply on the chat's work item as a note of this kind (Claude Code's bookmark, the desk's way). */
-  | { t: "keep"; entryId: string; kind: KeepKind };
+  | { t: "keep"; entryId: string; kind: KeepKind }
+  /** Continue the step a reload interrupted (decision 63): the owner's word, never the reload's. */
+  | { t: "continueStep" };
 
 export type HostToList = {
   t: "groups";

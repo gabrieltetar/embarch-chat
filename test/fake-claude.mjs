@@ -20,7 +20,9 @@
 // FAKE_CLAUDE_SIGNAL (dies by it on the first message), FAKE_CLAUDE_TRANSCRIPT
 // ("queue" or "prompt": what the CLI writes to the session's transcript for
 // each message, under $CLAUDE_CONFIG_DIR/projects — its queue lines, and
-// with "prompt" the message too), FAKE_CLAUDE_STRICT (refuses an id as the
+// with "prompt" the message too, under the uuid it was sent with; one that
+// comes while a turn runs waits in the CLI's queue, so only its enqueue
+// line is written, as 2.1.287 writes it), FAKE_CLAUDE_STRICT (refuses an id as the
 // CLI does: `--session-id` once the transcript exists, `--resume` while it
 // holds no message);
 // for -p, FAKE_HAIKU_DIR (default test/fixtures/haiku), FAKE_HAIKU_<TASK>
@@ -120,16 +122,20 @@ if (process.env.FAKE_CLAUDE_STRICT && transcript) {
     process.exit(1);
   }
 }
+/** A message taken and its turn's result not written yet: another waits in the queue. */
+let turnOpen = false;
 function writeTranscript(o) {
   const mode = process.env.FAKE_CLAUDE_TRANSCRIPT;
   if (!mode || !transcript || o.type !== "user") return;
   fs.mkdirSync(path.dirname(transcript), { recursive: true });
   const at = new Date().toISOString();
   const content = typeof o.message?.content === "string" ? o.message.content : "";
+  const queued = turnOpen;
+  turnOpen = true;
   const lines = [
     { type: "queue-operation", operation: "enqueue", timestamp: at, sessionId: sid, content },
-    { type: "queue-operation", operation: "dequeue", timestamp: at, sessionId: sid },
-    ...(mode === "prompt" ? [{ type: "user", message: { role: "user", content }, sessionId: sid, timestamp: at }] : []),
+    ...(queued ? [] : [{ type: "queue-operation", operation: "dequeue", timestamp: at, sessionId: sid }]),
+    ...(mode === "prompt" && !queued ? [{ type: "user", message: { role: "user", content }, sessionId: sid, timestamp: at, ...(o.uuid ? { uuid: o.uuid } : {}) }] : []),
   ];
   fs.appendFileSync(transcript, lines.map((l) => JSON.stringify(l) + "\n").join(""));
 }
@@ -191,6 +197,7 @@ process.stdin.on("end", () => {
 let written = 0;
 function write(o) {
   written++;
+  if (o.type === "result") turnOpen = false;
   let s = JSON.stringify(o);
   if (sid && recordedSid) s = s.split(recordedSid).join(sid);
   for (const [rec, got] of uuidMap) s = s.split(rec).join(got);

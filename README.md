@@ -75,14 +75,20 @@ whose decision numbers the code cites.
   unless a background task runs or it waits on you; the next message resumes
   it — one written while it is closing goes to the resumed process. Chats
   die with their window — except across a reload: the chats it had on
-  screen come back (the sidebar's and its tabs), and one cut off mid-turn
-  resumes with the CLI's own `CLAUDE_CODE_RESUME_INTERRUPTED_TURN`, which
-  reruns the interrupted step, labelled "Continuing the step that was
+  screen come back (the sidebar's and its tabs), in the mode they ran in,
+  and one cut off mid-turn shows the interrupted step with a "Continue the
+  interrupted step" button. Nothing reruns until it is clicked; then the
+  chat resumes with the CLI's own `CLAUDE_CODE_RESUME_INTERRUPTED_TURN`,
+  which reruns the step, labelled "Continuing the step that was
   interrupted when the window reloaded." (at most twice before a turn
   finishes, never for a step over an hour old; otherwise, or with
-  `embarchChat.continueAfterReload` off, it says no reply follows). VS Code
-  cannot tell a reload from a close: a window back within 90 s of its last
-  note is a reload.
+  `embarchChat.continueAfterReload` off, it says no reply follows). A
+  message Claude had not taken — waiting above the input, held for a
+  compaction, or a new chat's first — comes back: waiting above the input
+  again, to go with Continue or the next message, or else in the draft,
+  with a line that says so. VS Code cannot tell a reload from a close: a
+  window back within 90 s of its last note is a reload, which is why a
+  step never reruns by itself.
 - **Start work and Open chat on the Desk land here** through the desk's
   mailbox: the window whose folder matches takes the entry, once.
 - **A thread this window does not run is read-only**, from its transcript,
@@ -245,7 +251,7 @@ The extension does not run in an untrusted workspace.
 | `embarchChat.deskTokenPath` | `"~/.config/embarch-desk/desk-token"` | The desk's token. |
 | `embarchChat.assistant` | `true` | The Haiku assistant: ghost text, cards, chips, naming. Off, the instant prefix match and the CLI's own suggestion remain. |
 | `embarchChat.autosave` | `true` | Save an open file's unsaved changes before Claude reads, edits or writes it. |
-| `embarchChat.continueAfterReload` | `true` | After a reload, a chat cut off mid-turn continues the interrupted step. |
+| `embarchChat.continueAfterReload` | `true` | After a reload, a chat cut off mid-turn offers to continue the interrupted step (a button; never by itself). |
 | `embarchChat.diagnosticsTool` | `false` | Give Claude `getDiagnostics`, the Problems panel (its definition rides in every chat's tool list). |
 | `embarchChat.attachOpenFile` | `true` | The file open in the editor goes with each message. Off, a file goes only with selected lines. |
 | `embarchChat.attachSelection` | `true` | The selected lines, with their text, go with each message. Off, `@` still inserts them. |

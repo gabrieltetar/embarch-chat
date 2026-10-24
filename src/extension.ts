@@ -164,6 +164,7 @@ export function activate(context: vscode.ExtensionContext): void {
     freshChat: (sid) => void freshChat(sid),
     resume: (sid, text) => resume(sid, text),
     fork: (sid, uuid) => forkChat(sid, uuid),
+    continueStep: (sid) => reloadMemory?.continueStep(sid),
     rename: (sid) => renameChat(sid),
     editor,
   };
@@ -184,8 +185,8 @@ export function activate(context: vscode.ExtensionContext): void {
   });
   context.subscriptions.push(vscode.window.registerWebviewViewProvider(THREADS_VIEW, threads));
 
-  // A reload brings this window's chats back, and a step it cut off goes on (decision 63).
-  reloadMemory = new ReloadMemory(context.workspaceState, manager, () => panels.sessions());
+  // A reload brings this window's chats back, and a step it cut off goes on at the owner's word (decision 63).
+  reloadMemory = new ReloadMemory(context.workspaceState, manager, () => panels.sessions(), log);
   context.subscriptions.push(reloadMemory);
   void restoreAfterReload({
     state: context.workspaceState,
@@ -436,7 +437,7 @@ export function activate(context: vscode.ExtensionContext): void {
     body: AssignBody | null,
     cwd: string,
     label: string | null,
-    opts: { onRefusal?: (why: string) => void; fork?: { from: string; at: string; events: WireMessage[] } } = {},
+    opts: { onRefusal?: (why: string) => void; fork?: { from: string; at: string; events: WireMessage[] }; mode?: string } = {},
   ): Promise<ChatRecord | null> {
     const sid = crypto.randomUUID();
     let itemId: string | null = null;
@@ -468,7 +469,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     log(`new chat ${sid} on ${itemId ?? (body && "untracked" in body ? "untracked" : "no item yet")} in ${cwd}`);
     const fork = opts.fork;
-    const rec = manager.create(sid, cwd, itemId, itemTitle, { untracked: !!body && "untracked" in body, deskDue: due, fork: fork && { from: fork.from, at: fork.at } });
+    const rec = manager.create(sid, cwd, itemId, itemTitle, { untracked: !!body && "untracked" in body, deskDue: due, fork: fork && { from: fork.from, at: fork.at }, mode: opts.mode });
     // A fork shows the conversation it starts from (decision 73).
     if (fork) rec.chat.preload(fork.events);
     if (refused !== null) opts.onRefusal!(refused);
@@ -633,7 +634,8 @@ export function activate(context: vscode.ExtensionContext): void {
     const item = desk.itemFor(sid)?.id ?? rec.itemId;
     const body: AssignBody | null = item ? { item_id: item } : rec.untracked ? { untracked: true } : null;
     const fork = point.at ? { from: sid, at: point.at, events: historyUpTo(file, point.at) } : undefined;
-    const fresh = await startChat(body, cwd, rec.itemTitle, { fork });
+    // In this chat's mode, never a new chat's auto (22): a fork of a chat in Ask or Plan must not act unasked.
+    const fresh = await startChat(body, cwd, rec.itemTitle, { fork, mode: rec.chat.state.mode });
     if (!fresh) return;
     log(`[${sid.slice(0, 8)}] forked before ${uuid.slice(0, 8)}: ${fresh.chat.sessionId}`);
     // The fork runs at this chat's effort and Ultracode (82): its process starts with them.

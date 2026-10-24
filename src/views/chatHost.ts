@@ -67,6 +67,8 @@ export interface HostCtx {
   fork: (sid: string, uuid: string) => Promise<void>;
   /** The owner names a chat (decision 75). */
   rename: (sid: string) => Promise<void>;
+  /** "Continue the interrupted step" after a reload (decision 63): only on the owner's click. */
+  continueStep: (sid: string) => void;
   /** The editor's open file or selection, which goes with a message by default (60). */
   editor: EditorContext;
 }
@@ -366,6 +368,9 @@ export class ChatHost implements vscode.Disposable {
       }
       case "interrupt":
         return chat.interrupt();
+      case "continueStep":
+        if (rec.ours) this.ctx.continueStep(chat.sessionId);
+        return;
       // Work that runs on its own (port items 70–72): only where the chat runs.
       case "runInBackground":
         if (rec.ours) await chat.runInBackground(m.toolUseId);

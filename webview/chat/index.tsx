@@ -338,6 +338,13 @@ function App() {
         return (
           <div class={`note ${e.tone}`}>
             {e.text}
+            {e.offer === "rerun" && acts && state.rerunOffer === e.id && (
+              <div class="offer">
+                <button title="Resume the chat and rerun the step the reload cut off, in the chat's own mode" onClick={() => post({ t: "continueStep" })}>
+                  Continue the interrupted step
+                </button>
+              </div>
+            )}
             {e.kept && (
               <div class="kept">
                 <pre>{e.kept}</pre>

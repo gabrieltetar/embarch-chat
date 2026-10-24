@@ -34,6 +34,26 @@ export interface ChatOptions {
   log?: (line: string) => void;
   /** What the panel does for the CLI (decisions 61, 65), read as each process starts: settings may have changed. */
   hooks?: () => HostHooks;
+  /**
+   * Back after a reload with no conversation on record (63): a process of
+   * it may have left a transcript of queue lines, so its first process
+   * looks, as one after a crash in the first turn does.
+   */
+  settle?: boolean;
+}
+
+/**
+ * One of the owner's messages the CLI had not taken, as a reload writes it
+ * down (decision 63): its words and what went with it, never its images —
+ * those it only counts.
+ */
+export interface Untaken {
+  text: string;
+  uuid?: string;
+  /** Held for a compaction that will not come now. */
+  held?: boolean;
+  images?: number;
+  context?: ContextItem[];
 }
 
 /** `rewind_files`' answer, as the CLI gives it. */
@@ -58,6 +78,8 @@ export interface SendExtra {
 /** Claude Code's own words for a step rerun after a reload, and for one that will not be (decision 63). */
 export const RERUN_NOTE = "Continuing the step that was interrupted when the window reloaded.";
 export const NO_REPLY_NOTE = "No reply was recorded for this message before the session was reloaded.";
+/** A step a reload cut off is continued only on the owner's word (63): the note that offers it, with its button. */
+export const RERUN_OFFER_NOTE = "The window reloaded while Claude was working: the interrupted step was not continued.";
 /** How old a step the CLI reruns, as Claude Code sets it (an hour). */
 export const RERUN_MAX_AGE_MS = 3_600_000;
 
@@ -201,6 +223,8 @@ export class Chat extends EventEmitter {
 
   /** Messages written while the process was closing (an idle close under way): they go to the resumed one, once it has exited. */
   private queued: Array<Outgoing & { uuid?: string }> = [];
+  /** Messages a reload cut off before the CLI took them (63): they go with Continue, or ahead of the owner's next message — never on their own. */
+  private restored: Array<Outgoing & { uuid?: string }> = [];
 
   /**
    * Before a new chat's process starts again: one that died in its first
@@ -213,7 +237,7 @@ export class Chat extends EventEmitter {
    */
   private settleSession(env: NodeJS.ProcessEnv): void {
     // A brand-new id has no transcript until a process of this chat's ran.
-    if (this.hasSession || !this.proc) return;
+    if (this.hasSession || (!this.proc && !this.opts.settle)) return;
     const file = findTranscript(this.sessionId, this.opts.cwd || undefined, projectsRoot(env));
     if (!file) return;
     if (holdsMessage(file)) {
@@ -386,15 +410,63 @@ export class Chat extends EventEmitter {
     this.touch();
   }
 
-  /** To the running process; while one is closing, to the next, once it has gone (decision 41). */
+  /** To the running process; while one is closing, to the next, once it has gone (decision 41). What a reload gave back goes first. */
   private deliver(out: Outgoing, uuid?: string): void {
-    const line = { content: out.content, pastes: out.pastes, uuid };
+    const lines = [...this.takeRestored(), { content: out.content, pastes: out.pastes, uuid }];
     if (this.proc && !this.proc.exited && (this.closing || this.proc.closing)) {
-      this.queued.push(line);
+      this.queued.push(...lines);
       return;
     }
-    const proc = this.ensureProcess();
-    if (!proc.sendUser(line.content, uuid, line.pastes) && !proc.exited) this.queued.push(line);
+    this.sendLines(this.ensureProcess(), lines);
+  }
+
+  private sendLines(proc: ClaudeProcess, lines: Array<Outgoing & { uuid?: string }>): void {
+    for (const l of lines) if (!proc.sendUser(l.content, l.uuid, l.pastes) && !proc.exited) this.queued.push(l);
+  }
+
+  private takeRestored(): Array<Outgoing & { uuid?: string }> {
+    const r = this.restored;
+    this.restored = [];
+    return r;
+  }
+
+  /**
+   * The owner's messages the CLI has not taken, oldest first, for a reload
+   * to give back (decision 63): sent and not echoed, queued, held, written
+   * while the process closed. Before the session is on record, every one
+   * sent here (`s:`; a fork's copied history is its parent's): none of them
+   * is in a transcript yet.
+   */
+  untaken(): Untaken[] {
+    const st = this.state;
+    const ids = this.hasSession ? (st.unconfirmed ?? []) : [...st.timeline, ...(st.queue ?? [])];
+    const out: Untaken[] = [];
+    for (const id of ids) {
+      const e = st.entries[id];
+      if (!id.startsWith("s:") || e?.kind !== "user" || e.unsent || (!e.text.trim() && !e.images)) continue;
+      out.push({ text: e.text, ...(e.uuid ? { uuid: e.uuid } : {}), ...(e.held ? { held: true } : {}), ...(e.images ? { images: e.images } : {}), ...(e.context?.length ? { context: e.context } : {}) });
+    }
+    return out;
+  }
+
+  /**
+   * After a reload (63): messages the CLI had not taken wait above the
+   * input again, as they did, and go to the process Continue starts — the
+   * CLI takes them after the step it reruns [measured, 2.1.287] — or ahead
+   * of the owner's next message.
+   */
+  restoreQueued(list: Untaken[]): void {
+    for (const w of list) {
+      const uuid = w.uuid ?? randomUUID();
+      const context = w.context ?? [];
+      this.dispatch({ type: "_sent", n: ++this.sent, text: w.text, images: 0, restored: true, at: Date.now(), uuid, ...(context.length ? { context } : {}) });
+      this.restored.push({ ...outgoing(w.text, [], context), uuid });
+    }
+  }
+
+  /** The step a reload cut off waits for the owner's word (63): a note with its button. */
+  offerRerun(): void {
+    this.dispatch({ type: "_note", text: RERUN_OFFER_NOTE, tone: "info", offer: "rerun" });
   }
 
   private uuidOf(entryId: string | null): string | undefined {
@@ -429,6 +501,7 @@ export class Chat extends EventEmitter {
     this.held = [];
     this.compactRan = false;
     this.queued = [];
+    this.restored = [];
     const ids = [...(this.state.unconfirmed ?? [])];
     for (const id of ids) {
       const e = this.state.entries[id];
@@ -472,7 +545,8 @@ export class Chat extends EventEmitter {
   continueInterrupted(): void {
     if (this.running || this.disposed) return;
     this.rerun = true;
-    this.ensureProcess();
+    // What a reload gave back goes too: the CLI takes it after the step.
+    this.sendLines(this.ensureProcess(), this.takeRestored());
     this.touch();
   }
 
@@ -629,6 +703,10 @@ export class Chat extends EventEmitter {
       // Written while the process was closing: not at the CLI yet.
       this.queued = this.queued.filter((q) => q.uuid !== e.uuid);
       gone = true;
+    } else if (this.restored.some((q) => q.uuid === e.uuid)) {
+      // Given back by a reload, and not sent again yet (63).
+      this.restored = this.restored.filter((q) => q.uuid !== e.uuid);
+      gone = true;
     } else if (this.running && e.uuid) {
       try {
         gone = (await this.proc!.request("cancel_async_message", { message_uuid: e.uuid })).cancelled === true;
@@ -651,7 +729,7 @@ export class Chat extends EventEmitter {
    */
   async sendNow(id: string): Promise<void> {
     const e = this.state.entries[id];
-    if (e?.kind !== "user" || !e.uuid || !this.running || !(this.state.queue ?? []).includes(id) || this.held.some((h) => h.entry === id)) return;
+    if (e?.kind !== "user" || !e.uuid || !this.running || !(this.state.queue ?? []).includes(id) || this.held.some((h) => h.entry === id) || this.restored.some((q) => q.uuid === e.uuid)) return;
     // A Bash call or a subagent just started: its task comes within a second, then it can move.
     for (let waited = 0; !anyMovable(this.state) && soonMovable(this.state) && waited < 3000; waited += 100) await new Promise((r) => setTimeout(r, 100));
     try {
@@ -1000,6 +1078,7 @@ export class Chat extends EventEmitter {
   dispose(): void {
     this.disposed = true;
     this.queued = [];
+    this.restored = [];
     this.clearIdle();
     this.closing = true;
     this.proc?.kill();

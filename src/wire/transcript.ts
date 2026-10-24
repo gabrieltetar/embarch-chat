@@ -78,6 +78,43 @@ export function holdsMessage(file: string): boolean {
   });
 }
 
+/** The permission modes the CLI takes (`--permission-mode`). */
+export const MODES = ["default", "acceptEdits", "plan", "auto", "bypassPermissions", "dontAsk"];
+
+/**
+ * The mode the session last ran in, from the `permissionMode` the CLI
+ * writes on each of the owner's lines (its last 256 KB read); null when
+ * none says.
+ */
+export function transcriptMode(file: string): string | null {
+  let text: string;
+  try {
+    const fd = fs.openSync(file, "r");
+    try {
+      const size = fs.fstatSync(fd).size;
+      const len = Math.min(size, HOLDS_SCAN);
+      const buf = Buffer.alloc(len);
+      fs.readSync(fd, buf, 0, len, size - len);
+      text = buf.toString("utf8");
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return null;
+  }
+  const lines = text.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!lines[i].includes('"permissionMode"')) continue;
+    try {
+      const o = JSON.parse(lines[i]) as { type?: unknown; permissionMode?: unknown };
+      if (o.type === "user" && typeof o.permissionMode === "string" && MODES.includes(o.permissionMode)) return o.permissionMode;
+    } catch {
+      /* the cut first line */
+    }
+  }
+  return null;
+}
+
 export interface TranscriptMeta {
   sessionId: string;
   file: string;
