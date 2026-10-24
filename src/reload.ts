@@ -22,7 +22,9 @@
 // setting off: then the chat says no reply follows. Something still
 // running it keeps it read-only (31).
 //
-// The owner's words never go with the window: what the CLI had not taken —
+// The owner's words never go with the window: a draft typed and not sent
+// comes back into the draft (an editor tab's page keeps no state across a
+// reload, the sidebar's does); what the CLI had not taken —
 // messages waiting above the input, a /compact's held rest, one written
 // while the process closed, a new chat's first message the CLI had not
 // written down — comes back waiting above the input again when Continue
@@ -73,6 +75,8 @@ interface SavedChat {
   untaken?: Untaken[];
   /** Text that waited for the chat's draft. */
   draft?: string;
+  /** The owner's own draft, typed and not sent, as the page last told it. */
+  typed?: string;
 }
 
 interface Saved {
@@ -167,6 +171,7 @@ export class ReloadMemory implements vscode.Disposable {
         ...(st.ultracode ? { ultracode: true } : {}),
         ...(untaken.length ? { untaken } : {}),
         ...(r.draft ? { draft: r.draft } : {}),
+        ...(r.typed?.trim() ? { typed: r.typed } : {}),
       });
     }
     const saved: Saved | undefined = chats.length ? { at: Date.now(), current: this.manager.current, chats } : undefined;
@@ -231,6 +236,8 @@ export async function restoreAfterReload(o: RestoreCtx): Promise<void> {
     if (fresh && c.title) void rec.chat.renameByHand(c.title);
     rec.untracked = c.untracked;
     if (c.unread) rec.unread = true;
+    // The owner's unsent draft, for the page that shows it — before its tab opens; kept again by a second reload.
+    if (c.typed) rec.typed = rec.typedBack = c.typed;
     // No process runs it yet: the next one starts with them.
     if (c.effort || c.ultracode) void rec.chat.setEffort(c.effort ?? null, !!c.ultracode);
     o.memory.noteRerun(c.sid, c.reruns);

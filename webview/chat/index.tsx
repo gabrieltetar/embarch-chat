@@ -231,7 +231,7 @@ function App() {
           setChips({ sid: m.sid, chips: m.chips });
           return;
         case "draft":
-          returnToDraft(m.sid, m.text);
+          returnToDraft(m.sid, m.text, m.typed === true);
           return;
         case "editor":
           setEditor(m.editor);

@@ -1205,6 +1205,20 @@ await check("text for a chat's draft that lands before its composer listens is n
   assert.equal(await value(), "Read the issue and start on it.");
 });
 
+await check("an unsent draft is told to the host a moment after the last key; given back after a reload, it fills an empty draft only — a sidebar that kept it holds it once (63)", async () => {
+  const sid = await fresh({}, false);
+  await type("half a thought about the");
+  await sleep(450);
+  assert.deepEqual((await posts()).filter((p) => p.t === "typed" && p.sid === sid), [{ t: "typed", sid, text: "half a thought about the" }], "once, after the pause");
+  // The sidebar kept its page state across the reload: the host's copy does not double it.
+  await send([{ t: "draft", sid, text: "half a thought about the", typed: true }]);
+  assert.equal(await value(), "half a thought about the");
+  // An editor tab's new page starts empty: the host's copy is the draft.
+  const tab = `22222222-0000-4000-8000-${String(++sidN).padStart(12, "0")}`;
+  await send([snapshot({ sessionId: tab }), { t: "draft", sid: tab, text: "the tab's unsent words", typed: true }]);
+  assert.equal(await value(), "the tab's unsent words");
+});
+
 await check("just before send: a long draft typed fast waits for its cards; the 💡 opens; Enter again sends it as it is", async () => {
   await fresh();
   const draft = "please also update the readme with the new flash steps";

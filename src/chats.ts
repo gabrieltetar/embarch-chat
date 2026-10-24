@@ -38,6 +38,14 @@ export interface ChatRecord {
   deskDue: DeskDue | null;
   /** Text waiting to go into the draft of the page that shows it next. */
   draft?: string | null;
+  /**
+   * The owner's unsent draft as the page showing the chat last told it, for
+   * a reload (63): VS Code keeps a sidebar's page state across one, but no
+   * editor tab's — nothing restores the panel, a new one is opened.
+   */
+  typed?: string;
+  /** That draft back after a reload, for each page that shows the chat (once), until the owner changes it: it fills an empty draft only. */
+  typedBack?: string | null;
   /** A turn ended while it was off screen, and the owner has not looked since (Claude Code's unread mark). */
   unread?: boolean;
   createdMs: number;

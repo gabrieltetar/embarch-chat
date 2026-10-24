@@ -115,6 +115,23 @@ function saveDraft(sid: string, text: string): void {
   if (text) drafts[sid] = text;
   else delete drafts[sid];
   vscodeApi.setState({ ...st, drafts });
+  tellHost(sid, text);
+}
+
+/**
+ * And the host hears it a moment after the last key (63): VS Code keeps a
+ * sidebar's page state across a reload but no editor tab's, so the host's
+ * note of the window's chats carries it back.
+ */
+const told: Record<string, string> = {};
+const telling: Record<string, number> = {};
+function tellHost(sid: string, text: string): void {
+  clearTimeout(telling[sid]);
+  if ((told[sid] ?? "") === text) return;
+  telling[sid] = window.setTimeout(() => {
+    told[sid] = text;
+    vscodeApi.postMessage({ t: "typed", sid, text });
+  }, 300);
 }
 
 const words = (s: string) => s.trim().split(/\s+/).filter(Boolean).length;
@@ -138,8 +155,11 @@ const terminalTip = (t: TerminalRef) =>
  * it may not be mounted, or not listening yet, when the message lands.
  */
 const returned: Record<string, string> = {};
-export function returnToDraft(sid: string, text: string): void {
-  returned[sid] = returned[sid] ? `${returned[sid]}\n\n${text}` : text;
+/** The owner's own unsent draft from before a reload (63): it fills an empty draft only, so a sidebar that kept it holds it once. */
+const typedBack: Record<string, string> = {};
+export function returnToDraft(sid: string, text: string, typed = false): void {
+  if (typed) typedBack[sid] = text;
+  else returned[sid] = returned[sid] ? `${returned[sid]}\n\n${text}` : text;
   window.dispatchEvent(new CustomEvent("embarch-draft", { detail: sid }));
 }
 
@@ -255,10 +275,13 @@ export function Composer(p: Props) {
   // Text given back to this chat's draft goes first, the owner's newer draft after it.
   useEffect(() => {
     const take = () => {
+      const was = typedBack[sid];
+      delete typedBack[sid];
       const back = returned[sid];
-      if (!back) return;
       delete returned[sid];
-      const cur = textRef.current;
+      if (!back && !was) return;
+      const cur = textRef.current.trim() ? textRef.current : (was ?? "");
+      if (!back) return void (cur !== textRef.current && setText(cur));
       setText(cur.trim() ? `${back}\n\n${cur}` : back);
     };
     const on = (e: Event) => (e as CustomEvent<string>).detail === sid && take();

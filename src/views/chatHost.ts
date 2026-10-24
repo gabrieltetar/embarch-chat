@@ -244,9 +244,20 @@ export class ChatHost implements vscode.Disposable {
     this.post({ t: "editor", editor: item ? { ...item, label: editorLabel(item, rec.chat.opts.cwd || rec.chat.state.cwd || "") } : null });
   }
 
-  /** Text for the draft, once, to the page showing the chat. */
+  /** The chats whose draft from before a reload this page was given: once each. */
+  private typedGiven = new Set<string>();
+
+  /**
+   * Text for the draft, once, to the page showing the chat. The owner's own
+   * from before a reload goes first, to each page that shows it — the
+   * sidebar and a tab may both — once; it fills an empty draft only.
+   */
   private pushDraft(): void {
     const rec = this.sid ? this.ctx.chats.get(this.sid) : undefined;
+    if (rec?.typedBack && !this.typedGiven.has(rec.chat.sessionId)) {
+      this.typedGiven.add(rec.chat.sessionId);
+      this.post({ t: "draft", sid: rec.chat.sessionId, text: rec.typedBack, typed: true });
+    }
     if (!rec?.draft) return;
     this.post({ t: "draft", sid: rec.chat.sessionId, text: rec.draft });
     rec.draft = null;
@@ -275,6 +286,15 @@ export class ChatHost implements vscode.Disposable {
       return;
     }
     if (m.t === "newChat") return this.ctx.newChat();
+    // The chat it names, which this page may have just stopped showing: the debounce ran on.
+    if (m.t === "typed") {
+      const r = typeof m.sid === "string" ? this.ctx.chats.get(m.sid) : undefined;
+      if (!r || typeof m.text !== "string") return;
+      r.typed = m.text;
+      // The owner changed the draft since the reload gave it back: no page is given the old one now.
+      if (r.typedBack && m.text !== r.typedBack) r.typedBack = null;
+      return;
+    }
     const rec = this.sid ? this.ctx.chats.get(this.sid) : undefined;
     if (!rec) return;
     const chat = rec.chat;

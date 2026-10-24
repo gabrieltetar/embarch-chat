@@ -61,8 +61,12 @@ export type HostToChat =
   | { t: "cards"; seq: number; cards: Card[] }
   /** The reply chips for the chat on screen (25). */
   | { t: "chips"; sid: string; chips: Chip[] }
-  /** Text back into a chat's draft: a held message not sent, a start the desk refused. */
-  | { t: "draft"; sid: string; text: string }
+  /**
+   * Text back into a chat's draft: a held message not sent, a start the desk
+   * refused. `typed`: the owner's own unsent draft from before a reload (63),
+   * which only fills a draft that is empty — the sidebar keeps its own.
+   */
+  | { t: "draft"; sid: string; text: string; typed?: boolean }
   /**
    * What rewinding the files to before message `uuid` would change: the dry
    * run the confirmation shows (decision 73). `again`: the files changed
@@ -142,6 +146,8 @@ export type ChatToHost =
   | { t: "states" }
   | { t: "setStatus"; stateId: string }
   | { t: "newChat" }
+  /** The owner's unsent draft of chat `sid`, a moment after the last key: kept by the host for a reload (63). */
+  | { t: "typed"; sid: string; text: string }
   | { t: "refreshContext" }
   /** Asks the assistant about the draft: ghost text after a 300 ms pause, cards after 2 s or before send (26). */
   | { t: "assist"; kind: "ghost" | "cards"; text: string; seq: number }
