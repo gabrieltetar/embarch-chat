@@ -133,7 +133,7 @@ export interface RemoteState {
   /** The bridge's epoch: a bridge_state of an older one says nothing of this. */
   epoch?: number;
   error?: string;
-  /** Started by the CLI itself (its `remoteControlAtStartup`), not by `/remote-control` here: no link to open. */
+  /** Started by the CLI itself (its `remoteControlAtStartup`), not by `/remote-control` here: no link to open, and no process held open (83). */
   auto?: boolean;
 }
 
@@ -619,9 +619,10 @@ function foldSystem(s: ChatState, o: WireMessage): ChatState {
     case "bridge_state": {
       const r = s.remote;
       // One the panel did not start — the CLI's own remoteControlAtStartup —
-      // is on all the same (review r4 L6): the pill shows it and the process
-      // stays up (83); when Claude Code's default turned it on, its notice
-      // says so, once. The bridge the owner just turned off is not.
+      // is on all the same (review r4 L6): the pill shows it, though it keeps
+      // no process past the idle close (83; review r6 L4); when Claude Code's
+      // default turned it on, its notice says so, once. The bridge the owner
+      // just turned off is not.
       if (!r) {
         if (o.state !== "connected") return s;
         const epoch = typeof o.bridge_epoch === "number" ? o.bridge_epoch : undefined;

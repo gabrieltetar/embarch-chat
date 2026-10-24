@@ -1085,8 +1085,10 @@ export class Chat extends EventEmitter {
     if (!this.running) return null;
     if (this.state.pending.length) return "waits on the owner";
     if (this.state.background.length) return "a background task runs";
-    // Closing would drop the phone's session: the owner may answer, or write, from there.
-    if (this.state.remote && this.state.remote.status !== "failed") return "Remote Control is on";
+    // Closing would drop the phone's session: the owner may answer, or write, from there. Only
+    // a bridge the owner turned on here (83): one the CLI started by itself — its
+    // remoteControlAtStartup, Claude Code's default — would keep every chat's process for good.
+    if (this.state.remote && this.state.remote.status !== "failed" && !this.state.remote.auto) return "Remote Control is on";
     if (this.state.busy || this.state.compacting) return "a turn is running";
     if ((this.state.side ?? []).some((q) => q.pending)) return "a side question is out";
     return null;
