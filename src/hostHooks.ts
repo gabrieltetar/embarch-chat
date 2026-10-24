@@ -9,10 +9,11 @@ import { saveIfDirty } from "./autosave";
 import { DIAGNOSTICS_TOOL, FileDiagnostics, PANEL_MCP_SERVER, formatDiagnostics } from "./diagnostics";
 import { mcpServer } from "./mcpServer";
 
-export function hostHooks(log: (s: string) => void): HostHooks {
+/** For one chat's process: `cwd` is the folder the chat runs in, the only one besides the window's whose files autosave touches (61). */
+export function hostHooks(log: (s: string) => void, cwd: string): HostHooks {
   const c = vscode.workspace.getConfiguration("embarchChat");
   const h: HostHooks = {};
-  if (c.get<boolean>("autosave", true)) h.beforeFileTool = (tool, file, cwd) => saveIfDirty(tool, file, cwd, log);
+  if (c.get<boolean>("autosave", true)) h.beforeFileTool = (tool, file, hookCwd) => saveIfDirty(tool, file, hookCwd, cwd, log);
   if (c.get<boolean>("diagnosticsTool", false)) {
     h.mcp = { [PANEL_MCP_SERVER]: mcpServer({ name: PANEL_MCP_SERVER, version: "0.1.0" }, [{ ...DIAGNOSTICS_TOOL, call: getDiagnostics }]) };
   }

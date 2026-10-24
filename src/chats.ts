@@ -50,8 +50,8 @@ export interface ChatSettings {
   claudePath: string;
   idleMs: number;
   log: (line: string) => void;
-  /** What the panel does for the CLI (decisions 61, 65). */
-  hooks?: () => HostHooks;
+  /** What the panel does for the CLI (decisions 61, 65), for a chat in the folder `cwd`. */
+  hooks?: (cwd: string) => HostHooks;
 }
 
 /**

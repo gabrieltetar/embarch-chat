@@ -380,7 +380,7 @@ test("a link opens once, in the browser, and only http(s); a URI is never opened
   assert.ok(mock.state.opened[0].endsWith("/src/main.c"), mock.state.opened[0]);
 });
 
-test("an open file with unsaved changes is saved before Claude reads it (decision 61)", { skip }, async () => {
+test("an open file with unsaved changes is saved before Claude reads it — only under the chat's folder or the window's (decision 61; review r4 L1)", { skip }, async () => {
   const saved = [];
   const doc = {
     uri: mock.vscode.Uri.file("/work/rec/autosave/note.txt"),
@@ -395,15 +395,31 @@ test("an open file with unsaved changes is saved before Claude reads it (decisio
   const clean = { uri: mock.vscode.Uri.file("/work/rec/autosave/other.txt"), isDirty: false, save: async () => saved.push("clean") };
   const other = { uri: mock.vscode.Uri.file("/work/rec/elsewhere/note.txt"), isDirty: true, save: async () => saved.push("other") };
   mock.state.textDocuments.push(doc, clean, other);
-  await startUntracked("autosave");
-  const n = chatView.webview.posted.length;
-  chatView.webview.fromPage({ t: "send", text: "Read note.txt, then use the Edit tool to change MANGO to KIWI in it. Then reply with just: done" });
-  const ask = await waitFor(() => chatView.webview.posted.slice(n).find((m) => m.t === "event" && m.e.type === "control_request"), 5000, "the Edit's permission prompt");
-  assert.deepEqual(saved, ["/work/rec/autosave/note.txt"], "saved once, before the Read");
-  chatView.webview.fromPage({ t: "allow", requestId: ask.e.request_id });
-  await waitFor(() => chatView.webview.posted.slice(n).some((m) => m.t === "event" && m.e.type === "result"), 5000, "the turn's end");
-  assert.ok(mock.state.output.some((l) => l.includes("autosave: /work/rec/autosave/note.txt saved before Read")));
-  mock.state.textDocuments.length = 0;
+  /** One recorded turn: Read note.txt, then an Edit that asks; what was saved by the time it asks. */
+  const turn = async () => {
+    await startUntracked("autosave");
+    const n = chatView.webview.posted.length;
+    chatView.webview.fromPage({ t: "send", text: "Read note.txt, then use the Edit tool to change MANGO to KIWI in it. Then reply with just: done" });
+    const ask = await waitFor(() => chatView.webview.posted.slice(n).find((m) => m.t === "event" && m.e.type === "control_request"), 5000, "the Edit's permission prompt");
+    const by = [...saved];
+    chatView.webview.fromPage({ t: "allow", requestId: ask.e.request_id });
+    await waitFor(() => chatView.webview.posted.slice(n).some((m) => m.t === "event" && m.e.type === "result"), 5000, "the turn's end");
+    return by;
+  };
+  try {
+    // The recording's file is under neither the chat's folder nor the window's, as ~/.claude/settings.json is:
+    // the hook runs before the permission check, so a Read the owner would refuse must not have saved it.
+    assert.deepEqual(await turn(), [], "nothing saved outside");
+    assert.ok(doc.isDirty);
+    assert.ok(mock.state.output.some((l) => l.includes("autosave: /work/rec/autosave/note.txt is outside the chat's folder and the window's; not saved before Read")));
+    // A folder of the window's: saved, once, before the Read.
+    mock.state.folders.push("/work/rec");
+    assert.deepEqual(await turn(), ["/work/rec/autosave/note.txt"], "saved once, before the Read");
+    assert.ok(mock.state.output.some((l) => l.includes("autosave: /work/rec/autosave/note.txt saved before Read")));
+  } finally {
+    mock.state.folders = [folder];
+    mock.state.textDocuments.length = 0;
+  }
 });
 
 test("with the diagnostics tool on, a chat's Claude reads the Problems panel through the panel's own MCP server (decision 65)", { skip }, async () => {

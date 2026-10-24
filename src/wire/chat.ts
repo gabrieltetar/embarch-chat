@@ -32,8 +32,8 @@ export interface ChatOptions {
   /** A fork (decision 73): the first process copies `from`'s conversation up to its entry `at`. */
   fork?: { from: string; at: string };
   log?: (line: string) => void;
-  /** What the panel does for the CLI (decisions 61, 65), read as each process starts: settings may have changed. */
-  hooks?: () => HostHooks;
+  /** What the panel does for the CLI (decisions 61, 65), read as each process starts: settings may have changed. Given the chat's folder. */
+  hooks?: (cwd: string) => HostHooks;
   /**
    * Back after a reload with no conversation on record (63): a process of
    * it may have left a transcript of queue lines, so its first process
@@ -267,7 +267,7 @@ export class Chat extends EventEmitter {
     if (rerun) env = { ...env, CLAUDE_CODE_RESUME_INTERRUPTED_TURN: "1", CLAUDE_CODE_RESUME_INTERRUPTED_TURN_MAX_AGE_MS: String(RERUN_MAX_AGE_MS) };
     let label = rerun;
     // The panel's own hooks and MCP servers (61, 65), read as each process starts, in its one initialize.
-    const hooks = this.opts.hooks?.() ?? {};
+    const hooks = this.opts.hooks?.(this.opts.cwd) ?? {};
     const init = initializeRequest(hooks);
     const spec: SpawnSpec = {
       claudePath: this.opts.claudePath,

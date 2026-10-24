@@ -88,7 +88,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
 
-  chats = new ChatManager(() => ({ claudePath: cfg().claudePath, idleMs: cfg().idleMs, log, hooks: () => hostHooks(log) }));
+  chats = new ChatManager(() => ({ claudePath: cfg().claudePath, idleMs: cfg().idleMs, log, hooks: (cwd) => hostHooks(log, cwd) }));
   const manager = chats;
   deskService = new DeskService(() => client, manager, folders, log);
   const desk = deskService;
