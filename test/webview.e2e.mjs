@@ -17,6 +17,7 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { MEASURE_OPEN, MEASURE_UPDATES, longSession, streamedReply } from "./longsession.mjs";
 
 const require = createRequire(import.meta.url);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -2039,6 +2040,101 @@ await check("the header's ✎ asks the host to rename the chat; a thread run els
   assert.ok((await posts()).some((p) => p.t === "rename"));
   await basicChat({ ...OURS, ours: false, readOnly: true });
   assert.equal((await text(".header .rename")).length, 0);
+});
+
+// ------------------------------------------------------------ a long chat (decision 85)
+
+// test/longsession.mjs's generated chat: 60 turns, 600 steps, build logs of
+// 100K characters, long replies; and a 20 KB reply streaming in small deltas.
+const LONG = longSession();
+const longState = (lines = LONG, sessionId = SID) => core.reduceAll({ ...core.initialState(sessionId), cwd: "/work/fw/app", process: "running" }, lines);
+const REPLY = streamedReply();
+const asyncExec = (script, args = []) => wd("POST", `${S}/execute/async`, { script, args });
+const atBottom = () => exec("const t=document.querySelector('.timeline'); return t.scrollHeight - t.scrollTop - t.clientHeight < 40");
+const longChat = async (lines) => {
+  await go("/chat.html");
+  await send([snapshot(longState(lines))]);
+  await send([sent("Why does the sensor read zero after a flash?")]);
+};
+
+await check("a long chat keeps every row in the page, and a delta costs what it costs in an empty chat, give or take: the old rows are not drawn again", async () => {
+  await wd("POST", `${S}/timeouts`, { script: 120_000 });
+  const deltas = events(REPLY.deltas.slice(0, 150));
+  // Against the same deltas in an empty chat on the same machine, so a
+  // loaded one slows both; once more before failing. Before decision 85 the
+  // long chat cost 8 to 9 times the empty one; now 2.5 to 3.
+  let ratio = Infinity;
+  let costs = null;
+  for (let attempt = 0; attempt < 2 && ratio >= 6; attempt++) {
+    await go("/chat.html");
+    await send([snapshot(), sent("q")]);
+    const empty = await asyncExec(MEASURE_UPDATES, [deltas]);
+    await go("/chat.html");
+    const open = await asyncExec(MEASURE_OPEN, [snapshot(longState())]);
+    assert.equal((await text(".timeline .user")).length, 60, "every turn is in the page: Ctrl+F finds it");
+    assert.ok(open.nodes > 5000, `${open.nodes} nodes`);
+    await send([sent("q")]);
+    const long = await asyncExec(MEASURE_UPDATES, [deltas]);
+    // Means: the page's timers are whole milliseconds, a median of them too coarse.
+    const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
+    costs = { empty: mean(empty.work), long: mean(long.work), open: open.ms };
+    ratio = costs.long / costs.empty;
+  }
+  assert.ok(ratio < 6, `a delta in the long chat took ${ratio.toFixed(1)} times one in an empty chat: ${JSON.stringify(costs)}`);
+});
+
+await check("a long chat sticks to the bottom while a reply streams; scrolled up, it stays where the owner left it; back at the bottom, it sticks again", async () => {
+  await longChat();
+  await send(events(REPLY.deltas.slice(0, 60)));
+  assert.ok(await atBottom(), "at the bottom while it streams");
+  await exec("const t=document.querySelector('.timeline'); t.scrollTop = 2000;");
+  await settle();
+  const before = await exec("const t=document.querySelector('.timeline'); return [t.scrollTop, t.scrollHeight]");
+  await send(events(REPLY.deltas.slice(60, 200)));
+  const after = await exec("const t=document.querySelector('.timeline'); return [t.scrollTop, t.scrollHeight]");
+  assert.equal(after[0], before[0], "the owner's place is kept");
+  assert.ok(after[1] > before[1], "the reply grew below it");
+  await exec("const t=document.querySelector('.timeline'); t.scrollTop = t.scrollHeight;");
+  await settle();
+  await send(events(REPLY.deltas.slice(200, 320)));
+  assert.ok(await atBottom(), "back at the bottom, it follows the reply again");
+  await send(events([...REPLY.deltas.slice(320), ...REPLY.done]));
+  assert.ok(await atBottom(), "and when it lands");
+});
+
+await check("in a long chat, a late result changes its old row in place, a run opened in an old turn stays open, and ↶ on an old message forks from it", async () => {
+  // The first edit, and a step of the second turn's run, get their results late, many turns on.
+  const t2 = LONG.findIndex((o, i) => o.type === "user" && typeof o.message.content === "string" && i > 1);
+  const calls = LONG.slice(t2).filter((o) => o.type === "assistant" && o.message.content[0].type === "tool_use").map((o) => o.message.content[0]);
+  const edit = calls.find((c) => c.name === "Edit").id;
+  const step = calls.find((c) => c.name === "Bash").id;
+  const late = (id) => LONG.find((o) => o.type === "user" && Array.isArray(o.message.content) && o.message.content[0].tool_use_id === id);
+  await longChat(LONG.filter((o) => o !== late(edit) && o !== late(step)));
+  await send(events(REPLY.deltas.slice(0, 40)));
+  // The two still running: the edit's own row, and the run holding the step.
+  assert.equal(await exec("const r=[...document.querySelectorAll('.timeline > div > .tool:not(.run)')].filter(t => t.querySelector(':scope > .line .spinner')); r.forEach(t => t.__mark = 1); return r.length"), 1);
+  assert.equal(await exec("const r=[...document.querySelectorAll('.timeline > div > .run')].filter(t => t.querySelector(':scope > .line .spinner')); r.forEach(t => t.__mark = 1); return r.length"), 1);
+  // The run opened by the owner, before the results come.
+  await exec("[...document.querySelectorAll('.timeline > div > .run')].find(r => r.__mark).querySelector(':scope > .line').click()");
+  await settle();
+  const err = (id, text) => ({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: text, is_error: true }] } });
+  await send(events([err(edit, "String to replace not found"), ...REPLY.deltas.slice(40, 80), err(step, "Exit code 2\nno board found")]));
+  const rows = await exec(
+    "return [...document.querySelectorAll('.timeline > div > .tool')].filter(t => t.__mark).map(t => ({ cls: t.className, spin: !!t.querySelector(':scope > .line .spinner'), st: [...t.querySelectorAll(':scope > .line .st')].map(s => s.textContent).join(' '), open: !!t.querySelector(':scope > .steps') }))",
+  );
+  assert.equal(rows.length, 2, "the same two rows, changed in place");
+  const [editRow, runRow] = rows[0].cls.includes("run") ? [rows[1], rows[0]] : rows;
+  assert.deepEqual(editRow, { cls: "tool error", spin: false, st: "error", open: false });
+  assert.equal(runRow.spin, false);
+  assert.match(runRow.st, /error/);
+  assert.equal(runRow.open, true, "the owner's toggle stayed");
+  // ↶ on the first turn's message, while the reply still streams.
+  await clearPosts();
+  await messageMenu("Turn 1:");
+  await click(".msg-menu .menu-item", "Fork conversation from here");
+  assert.deepEqual((await posts()).filter((p) => p.t === "rewind"), [{ t: "rewind", uuid: LONG[1].uuid, restore: "conversation" }]);
+  await send(events(REPLY.deltas.slice(80, 120)));
+  assert.equal((await text(".live.cursor")).length, 1, "still streaming");
 });
 
 // ------------------------------------------------------------ what goes into a message (56–60)

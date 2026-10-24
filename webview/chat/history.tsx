@@ -77,13 +77,19 @@ const firstLine = (t: string) => t.trim().split("\n")[0];
 
 // ------------------------------------------------------------ replies
 
+/** The last answer, kept while the timeline and its entries are the same objects: a streamed delta changes neither (decision 85). */
+let lastReplies: { timeline: string[]; entries: ChatState["entries"]; open: boolean; out: Map<string, string> } | null = null;
+
 /**
  * Each finished turn's reply — the main thread's text, every block of it,
  * as Markdown — keyed by its last text block, where its Copy button goes.
  * A turn still running has none yet.
  */
 export function replies(s: ChatState): Map<string, string> {
+  const open = s.busy || s.compacting;
+  if (lastReplies && lastReplies.timeline === s.timeline && lastReplies.entries === s.entries && lastReplies.open === open) return lastReplies.out;
   const out = new Map<string, string>();
+  lastReplies = { timeline: s.timeline, entries: s.entries, open, out };
   let texts: string[] = [];
   let last: string | null = null;
   const flush = () => {

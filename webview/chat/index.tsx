@@ -3,10 +3,11 @@
 // wire events, folded here by the same reducer the host runs; events are
 // folded as they come and rendered once per frame. The timeline is in turns,
 // one per message of the owner's (decision 51), and runs of quiet steps fold
-// into one row (decision 50). Its history — fork, rewind, copy, export — is
-// history.tsx's (decisions 73 and 74). Messages that wait for Claude sit
-// above the input, background tasks open from the status line (port items
-// 70–72).
+// into one row (decision 50); only the turns and rows that changed are
+// drawn again (decision 85, settled.tsx). Its history — fork, rewind, copy,
+// export — is history.tsx's (decisions 73 and 74). Messages that wait for
+// Claude sit above the input, background tasks open from the status line
+// (port items 70–72).
 
 import "../shared/style.css";
 import { render } from "preact";
@@ -21,7 +22,7 @@ import { duration, vscodeApi } from "../shared/vscode";
 import { CompactCard, PendingCards } from "./cards";
 import { Composer, EditorChip, returnToDraft } from "./composer";
 import { RunView, ToolCtx, ToolView, quiet, toolRenderers } from "./tools";
-import { foldRuns, liveTool } from "./runs";
+import { Fold, foldRuns, liveTool } from "./runs";
 import { benchRenderer } from "./bench";
 import { BackgroundPanel, BackgroundToggle } from "./background";
 import { Queued } from "./queue";
@@ -35,6 +36,7 @@ import { cacheClock } from "../../src/wire/limits";
 import { CopyReply, ExportDialog, LOCAL_COMMANDS, MessageActions, RewindDialog, Toast, localCommand, replies, useEscEsc } from "./history";
 import { SideQuestions } from "./side";
 import { ContextRows } from "./context";
+import { Settled, turns } from "./settled";
 
 let uiUrl = "";
 toolRenderers.push(benchRenderer(() => uiUrl));
@@ -388,7 +390,36 @@ function App() {
   // The page's own /rewind, /copy and /export join the session's commands once it has them: a chat with none yet has nothing to rewind.
   // And the footer's /remote-control (footer.tsx), which the CLI has not over this wire.
   const commands = state.slashCommands.length ? [...state.slashCommands, ...[...LOCAL_COMMANDS, ...FOOTER_COMMANDS].filter((c) => !state.slashCommands.includes(c))] : state.slashCommands;
+  // The time above the owner's messages and Claude's replies, a date line where the day changes (68).
+  const stamps = new Map<string, { at: number; day: boolean }>();
   let lastDay = "";
+  for (const r of rows) {
+    const e = get(r.ids[0])!;
+    const at = view.timestamps && !r.run && (e.kind === "user" || e.kind === "text") && !streaming.has(e.id) ? e.at : undefined;
+    if (at === undefined) continue;
+    const day = dayKey(at);
+    stamps.set(r.key, { at, day: day !== lastDay });
+    lastDay = day;
+  }
+  const row = (r: Fold, first: boolean) => {
+    const e = get(r.ids[0])!;
+    const stamp = stamps.get(r.key);
+    // A turn begins at each of the owner's messages: a rule above it, none above the first (decision 51).
+    return (
+      <div key={r.key} class={!first && !r.run && e.kind === "user" ? "turn" : undefined}>
+        {stamp && <Stamp at={stamp.at} mine={e.kind === "user"} day={stamp.day} />}
+        {r.run ? (
+          <RunView steps={r.ids.map((id) => get(id)!)} entries={entries} ctx={ctx} render={renderEntry} />
+        ) : e.kind === "tool" ? (
+          renderRow(e)
+        ) : (
+          // A settled row is drawn once (decision 85): of ctx these rows read only its links and cwd, so a turn
+          // starting or ending draws none of them again. A tool's row has its own memo, which also follows its subagent's steps.
+          <Settled deps={[e, view, reply.get(e.id), cwd]} render={() => renderRow(e)} />
+        )}
+      </div>
+    );
+  };
   const placeholder = view.readOnly ? "" : view.resumable ? "Message to resume this chat here" : busy ? "Queue a message…" : "Message Claude — @ for files, / for commands";
 
   return (
@@ -406,21 +437,15 @@ function App() {
         {!state.timeline.length && !liveB.length && (
           <div class="empty-note">{view.ours ? "A new chat. The first message starts Claude, in this window's folder." : "Nothing in this chat's transcript yet."}</div>
         )}
-        {rows.map((r, i) => {
-          const e = get(r.ids[0])!;
-          // The time above the owner's messages and Claude's replies, a date line where the day changes (68).
-          const at = view.timestamps && !r.run && (e.kind === "user" || e.kind === "text") && !streaming.has(e.id) ? e.at : undefined;
-          const day = at !== undefined ? dayKey(at) : null;
-          const newDay = day !== null && day !== lastDay;
-          if (day) lastDay = day;
-          // A turn begins at each of the owner's messages: a rule above it, none above the first (decision 51).
-          return (
-            <div key={r.key} class={i > 0 && !r.run && e.kind === "user" ? "turn" : undefined}>
-              {at !== undefined && <Stamp at={at} mine={e.kind === "user"} day={newDay} />}
-              {r.run ? <RunView steps={r.ids.map((id) => get(id)!)} entries={entries} ctx={ctx} render={renderEntry} /> : renderRow(e)}
-            </div>
-          );
-        })}
+        {turns(rows, get, entries).map((t, k) => (
+          // A turn none of whose entries changed is not drawn again (decision 85): its rows read only these and the page's ctx,
+          // view, cwd, each reply's whole text and the stamps' date lines.
+          <Settled
+            key={t.key}
+            deps={[ctx, view, cwd, ...t.deps, ...t.rows.map((r) => reply.get(r.key)), ...t.rows.map((r) => stamps.get(r.key)?.day)]}
+            render={() => t.rows.map((r, i) => row(r, k === 0 && i === 0))}
+          />
+        ))}
       </div>
       {/* Each chat's own: another chat put in this view closes them, so a rewind never acts on a message of the chat before (73, 74). */}
       <RewindDialog key={`rewind:${state.sessionId}`} state={state} view={view} />
