@@ -218,7 +218,8 @@ const CHOICES: Array<{ value: Restore; label: string; description: string }> = [
   { value: "code", label: "Restore code", description: "The conversation stays as it is." },
 ];
 
-type Phase = { kind: "list" } | { kind: "check"; e: UserEntry; mode?: "code" | "both"; result: RewindResult | null };
+/** `changed`: the host found the files changed since the dry run the owner confirmed, and asks again on this one. */
+type Phase = { kind: "list" } | { kind: "check"; e: UserEntry; mode?: "code" | "both"; result: RewindResult | null; changed?: boolean };
 
 /** The owner's messages a rewind can go back to, newest first. */
 function points(s: ChatState): UserEntry[] {
@@ -258,6 +259,12 @@ export function RewindDialog({ state, view }: { state: ChatState; view: ChatView
     const onHost = (ev: MessageEvent<HostToChat>) => {
       const m = ev.data;
       if (m.t !== "rewindCheck") return;
+      // Nothing was rewound: the files changed since the owner looked, so the confirmation comes back with what a rewind restores now (review r4 L4).
+      const e = m.again && m.again !== "conversation" ? points(stateRef.current).find((x) => x.uuid === m.uuid) : undefined;
+      if (e && m.again && m.again !== "conversation") {
+        setPhase({ kind: "check", e, mode: m.again, result: m.result, changed: true });
+        return;
+      }
       setPhase((p) => (p?.kind === "check" && p.e.uuid === m.uuid ? { ...p, result: m.result } : p));
     };
     window.addEventListener("embarch-rewind", onOpen);
@@ -316,7 +323,7 @@ export function RewindDialog({ state, view }: { state: ChatState; view: ChatView
     );
   }
 
-  const { e, mode, result } = phase;
+  const { e, mode, result, changed } = phase;
   const files = result?.filesChanged ?? [];
   const codeOk = !!result?.canRewind && files.length > 0;
   // The picker offers what applies; the hover menu came with its own.
@@ -339,6 +346,7 @@ export function RewindDialog({ state, view }: { state: ChatState; view: ChatView
         <p class="rewind-to">
           To before <q>{firstLine(e.text)}</q>
         </p>
+        {changed && <p class="warn">The files changed since you looked, so nothing was rewound. This is what a rewind restores now.</p>}
         {mode === "both" && <p class="muted">The conversation is forked into a new chat once the files are back.</p>}
         {offered.length > 0 && (
           <div class="choices" role="group" aria-label="What to restore">

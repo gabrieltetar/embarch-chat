@@ -8,7 +8,9 @@
 // panel answers differently from the real session. Session and request ids,
 // and the uuids messages were sent with, are rewritten to the client's own.
 // A control request the recording does not expect next (the panel's own
-// context-meter refresh, say) gets a canned answer instead of failing.
+// context-meter refresh, say) gets a canned answer instead of failing; a
+// `rewind_files` dry run asked again gets the recorded one's answer — the
+// files as they were — or FAKE_CLAUDE_DRY_RUN's, files changed since.
 //
 // With -p it stands in for one of the Haiku assistant's calls instead
 // (test/fixtures/haiku/*.jsonl, from record-haiku.mjs): it reads the prompt
@@ -28,7 +30,8 @@
 // for -p, FAKE_HAIKU_DIR (default test/fixtures/haiku), FAKE_HAIKU_<TASK>
 // (a recording for one task, e.g. FAKE_HAIKU_CARDS), FAKE_HAIKU_DELAY_MS
 // (between lines, default 5); FAKE_CLAUDE_INPUT_LOG (each line the client
-// sends, with how many lines had been written by then).
+// sends, with how many lines had been written by then); FAKE_CLAUDE_DRY_RUN
+// (JSON: the answer to a `rewind_files` dry run the recording did not ask).
 
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -154,6 +157,19 @@ let stdinEnded = false;
 
 const subtypeOf = (o) => o.request?.subtype ?? o.response?.subtype;
 const nextIn = () => entries.slice(pos).find((e) => e.d === "in")?.o;
+/** The request the recording has next: the same subtype, and for a file rewind, a dry run only for a dry run. */
+const expected = (want, o) => want.request?.subtype === o.request?.subtype && (o.request?.subtype !== "rewind_files" || !!want.request.dry_run === !!o.request.dry_run);
+
+/** The recorded answer to the last `rewind_files` dry run replayed so far. */
+function lastDryRun() {
+  const asked = new Set();
+  let answer;
+  for (const e of entries.slice(0, pos)) {
+    if (e.d === "in" && e.o.request?.subtype === "rewind_files" && e.o.request.dry_run) asked.add(e.o.request_id);
+    if (e.d === "out" && e.o.type === "control_response" && asked.has(e.o.response?.request_id)) answer = e.o.response.response;
+  }
+  return answer;
+}
 
 function cannedAnswer(o) {
   const st = o.request?.subtype;
@@ -162,7 +178,9 @@ function cannedAnswer(o) {
       ? { categories: [{ name: "Messages", tokens: 1000, kind: "used" }], totalTokens: 1000, maxTokens: 200000, percentage: 1 }
       : st === "set_permission_mode"
         ? { mode: o.request.mode }
-        : {};
+        : st === "rewind_files" && o.request.dry_run
+          ? (process.env.FAKE_CLAUDE_DRY_RUN ? JSON.parse(process.env.FAKE_CLAUDE_DRY_RUN) : (lastDryRun() ?? { canRewind: false, error: "no dry run recorded" }))
+          : {};
   write({ type: "control_response", response: { subtype: "success", request_id: o.request_id, response } });
 }
 
@@ -181,7 +199,7 @@ process.stdin.on("data", (d) => {
     // FAKE_CLAUDE_SIGNAL: dies by that signal on its first message (a crash, an OOM kill).
     if (process.env.FAKE_CLAUDE_SIGNAL && o.type === "user") process.kill(process.pid, process.env.FAKE_CLAUDE_SIGNAL);
     const want = nextIn();
-    if (o.type === "control_request" && !(want && want.type === "control_request" && want.request?.subtype === o.request?.subtype)) {
+    if (o.type === "control_request" && !(want && want.type === "control_request" && expected(want, o))) {
       cannedAnswer(o);
       continue;
     }

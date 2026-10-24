@@ -1063,27 +1063,65 @@ test("Fork conversation from here: a new chat on the same item with the conversa
   assert.ok(!chatView.webview.posted.slice(n1).some((m) => m.t === "event" && m.e.type === "_title" && m.e.title === haikuName), "no Haiku name");
 });
 
-test("Rewind code: a dry run for the confirmation, then the files only on the owner's word, and a note says so", { skip }, async () => {
-  const sid = await startUntracked("rewind");
-  const n = chatView.webview.posted.length;
-  const evs = () => chatView.webview.posted.slice(n).filter((m) => m.t === "event").map((m) => m.e);
-  const allow = async (k) => {
-    const req = await waitFor(() => evs().filter((e) => e.type === "control_request")[k], 5000, "a permission prompt");
+test("Rewind code: a dry run for the confirmation, then the files only on the owner's word, and a note says so; files changed since the confirmation are shown and asked again (decision 73; review r4 L4)", { skip }, async () => {
+  // At Rewind the files have changed since the dry run the owner saw: a second file, more lines.
+  const later = { canRewind: true, filesChanged: ["/work/rec/rewind/a.txt", "/work/rec/rewind/b.txt"], insertions: 3, deletions: 1 };
+  process.env.FAKE_CLAUDE_DRY_RUN = JSON.stringify(later);
+  try {
+    const sid = await startUntracked("rewind");
+    const n = chatView.webview.posted.length;
+    const evs = () => chatView.webview.posted.slice(n).filter((m) => m.t === "event").map((m) => m.e);
+    const allow = async (k) => {
+      const req = await waitFor(() => evs().filter((e) => e.type === "control_request")[k], 5000, "a permission prompt");
+      chatView.webview.fromPage({ t: "allow", requestId: req.request_id });
+    };
+    chatView.webview.fromPage({ t: "send", text: "Use the Write tool to create a.txt containing exactly the word: one. Then reply with just: done" });
+    await allow(0);
+    await waitFor(() => evs().filter((e) => e.type === "result").length >= 1, 5000, "the first turn");
+    chatView.webview.fromPage({ t: "send", text: "Use the Edit tool to change one to two in a.txt. Then reply with just: done" });
+    await allow(1);
+    await waitFor(() => evs().filter((e) => e.type === "result").length >= 2, 5000, "the second turn");
+    const second = evs().filter((e) => e.type === "user" && e.isReplay)[1].uuid;
+    chatView.webview.fromPage({ t: "rewindCheck", uuid: second });
+    const check = await waitFor(() => posted((m) => m.t === "rewindCheck" && m.uuid === second), 5000, "the dry run");
+    assert.deepEqual(check.result, { canRewind: true, filesChanged: ["/work/rec/rewind/a.txt"], insertions: 1, deletions: 1 });
+    const n1 = chatView.webview.posted.length;
+    chatView.webview.fromPage({ t: "rewind", uuid: second, restore: "code" });
+    const again = await waitFor(() => chatView.webview.posted.slice(n1).find((m) => m.t === "rewindCheck"), 5000, "the confirmation again");
+    assert.deepEqual(again, { t: "rewindCheck", uuid: second, result: later, again: "code" }, "what a rewind restores now, for the same restore");
+    await new Promise((r) => setTimeout(r, 200));
+    assert.ok(!evs().some((e) => e.type === "_note" && /^Files rewound/.test(e.text)), "nothing rewound on a confirmation of other files");
+    // Confirmed again, on the files as they are now: done.
+    chatView.webview.fromPage({ t: "rewind", uuid: second, restore: "code" });
+    await waitFor(() => evs().some((e) => e.type === "_note" && e.text === "Files rewound to before “Use the Edit tool to change one to two in a.txt. Then reply…”."), 5000, "the note");
+    assert.ok(!chatView.webview.posted.slice(n).some((m) => m.t === "snapshot" && m.state.sessionId !== sid), "the files only: no fork");
+  } finally {
+    delete process.env.FAKE_CLAUDE_DRY_RUN;
+  }
+});
+
+test("a file rewind waits for the chat's background tasks: none is checked or done while one runs (review r4 L4)", { skip }, async () => {
+  const inputs = path.join(dir, "inputs-rewind-bg.jsonl");
+  process.env.FAKE_CLAUDE_INPUT_LOG = inputs;
+  try {
+    await startUntracked("bgstop");
+    const n = chatView.webview.posted.length;
+    const evs = () => chatView.webview.posted.slice(n).filter((m) => m.t === "event").map((m) => m.e);
+    chatView.webview.fromPage({ t: "send", text: "Run the bash command `for i in $(seq 1 30); do echo tick $i; sleep 1; done` with run_in_background, then reply with just: started" });
+    const req = await waitFor(() => evs().find((e) => e.type === "control_request"), 5000, "the Bash prompt");
     chatView.webview.fromPage({ t: "allow", requestId: req.request_id });
-  };
-  chatView.webview.fromPage({ t: "send", text: "Use the Write tool to create a.txt containing exactly the word: one. Then reply with just: done" });
-  await allow(0);
-  await waitFor(() => evs().filter((e) => e.type === "result").length >= 1, 5000, "the first turn");
-  chatView.webview.fromPage({ t: "send", text: "Use the Edit tool to change one to two in a.txt. Then reply with just: done" });
-  await allow(1);
-  await waitFor(() => evs().filter((e) => e.type === "result").length >= 2, 5000, "the second turn");
-  const second = evs().filter((e) => e.type === "user" && e.isReplay)[1].uuid;
-  chatView.webview.fromPage({ t: "rewindCheck", uuid: second });
-  const check = await waitFor(() => posted((m) => m.t === "rewindCheck" && m.uuid === second), 5000, "the dry run");
-  assert.deepEqual(check.result, { canRewind: true, filesChanged: ["/work/rec/rewind/a.txt"], insertions: 1, deletions: 1 });
-  chatView.webview.fromPage({ t: "rewind", uuid: second, restore: "code" });
-  await waitFor(() => evs().some((e) => e.type === "_note" && e.text === "Files rewound to before “Use the Edit tool to change one to two in a.txt. Then reply…”."), 5000, "the note");
-  assert.ok(!chatView.webview.posted.slice(n).some((m) => m.t === "snapshot" && m.state.sessionId !== sid), "the files only: no fork");
+    await waitFor(() => evs().some((e) => e.type === "result"), 5000, "the turn, its shell still running");
+    const uuid = evs().find((e) => e.type === "user" && e.isReplay).uuid;
+    chatView.webview.fromPage({ t: "rewindCheck", uuid });
+    const check = await waitFor(() => posted((m) => m.t === "rewindCheck" && m.uuid === uuid), 5000, "the answer");
+    assert.deepEqual(check.result, { canRewind: false, error: "A background task runs: stop it, or let it finish, first." });
+    chatView.webview.fromPage({ t: "rewind", uuid, restore: "code" });
+    await waitFor(() => evs().some((e) => e.type === "_note" && e.text === "Files not rewound: A background task runs: stop it, or let it finish, first."), 3000, "the note");
+    const sent = fs.readFileSync(inputs, "utf8").trim().split("\n").map((l) => JSON.parse(l).o);
+    assert.ok(!sent.some((o) => o.request?.subtype === "rewind_files"), "the CLI was not asked");
+  } finally {
+    delete process.env.FAKE_CLAUDE_INPUT_LOG;
+  }
 });
 
 test("a fork no message was sent to comes back after a reload still a fork: what it starts from, its name, and its first message copies the parent (decisions 63, 73)", { skip }, async () => {

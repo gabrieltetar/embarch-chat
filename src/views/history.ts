@@ -1,14 +1,17 @@
 // The chat's history, host side (decisions 73 and 74): a rewind
 // checked with a dry run, then done — the files only with the owner's
 // confirmation, the conversation always as a fork, as Claude Code's panel
-// does it — and the export dialog's text and its save.
+// does it — and the export dialog's text and its save. The confirmation is
+// not the page's word alone (review r4 L4): the files are rewound only if
+// a dry run at that moment says what the one the owner saw said, and never
+// while a background task may still be writing them.
 
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
 import type { ChatRecord } from "../chats";
-import type { RewindResult } from "../wire/chat";
+import type { Chat, RewindResult } from "../wire/chat";
 import { conversationText, exportFileName } from "../wire/history";
 import type { ChatToHost, HostToChat } from "../../webview/shared/protocol";
 import type { HostCtx } from "./chatHost";
@@ -29,7 +32,22 @@ function noFileRewind(rec: ChatRecord): string | null {
   if (!rec.ours) return "Its files are rewound from where this chat runs; here only the conversation, as a fork.";
   if (rec.chat.state.busy || rec.chat.state.compacting) return "Claude is working: stop the turn first.";
   if (rec.chat.state.pending.length) return "Claude waits on your answer: answer or stop first.";
+  // A background shell or subagent could change files after the dry run, or write over the rewind.
+  if (rec.chat.state.background.length) return "A background task runs: stop it, or let it finish, first.";
   return null;
+}
+
+/** The dry run each chat's owner was last shown, by message: what a rewind may do without asking again. */
+const shown = new WeakMap<Chat, Map<string, string>>();
+
+/** A dry run as the confirmation shows it: the files, and the lines removed and added. */
+const dryRunKey = (r: RewindResult) => JSON.stringify([[...(r.filesChanged ?? [])].sort(), r.insertions ?? 0, r.deletions ?? 0]);
+
+function remember(chat: Chat, uuid: string, r: RewindResult): void {
+  let m = shown.get(chat);
+  if (!m) shown.set(chat, (m = new Map()));
+  if (r.canRewind) m.set(uuid, dryRunKey(r));
+  else m.delete(uuid);
 }
 
 export async function historyMessage(ctx: HostCtx, rec: ChatRecord, m: HistoryMessage, post: (m: HostToChat) => void): Promise<void> {
@@ -46,6 +64,7 @@ export async function historyMessage(ctx: HostCtx, rec: ChatRecord, m: HistoryMe
           result = { canRewind: false, error: (e as Error).message };
         }
       }
+      remember(chat, m.uuid, result);
       post({ t: "rewindCheck", uuid: m.uuid, result });
       return;
     }
@@ -57,6 +76,16 @@ export async function historyMessage(ctx: HostCtx, rec: ChatRecord, m: HistoryMe
         const no = noFileRewind(rec);
         if (no) return chat.note(`Files not rewound: ${no}`, "error");
         try {
+          // The owner confirmed one dry run: a fresh one that says otherwise is shown and asked again, and nothing is done.
+          const now = await chat.rewindFiles(m.uuid, true);
+          if (!now.canRewind) return chat.note(`Files not rewound: ${now.error ?? "Claude Code could not."}`, "error");
+          if (shown.get(chat)?.get(m.uuid) !== dryRunKey(now)) {
+            ctx.log(`[${chat.sessionId.slice(0, 8)}] rewind to ${m.uuid.slice(0, 8)}: the files changed since the confirmation; asked again`);
+            remember(chat, m.uuid, now);
+            post({ t: "rewindCheck", uuid: m.uuid, result: now, again: m.restore });
+            return;
+          }
+          shown.get(chat)?.delete(m.uuid);
           const r = await chat.rewindFiles(m.uuid, false);
           if (!r.canRewind) return chat.note(`Files not rewound: ${r.error ?? "Claude Code could not."}`, "error");
           const skipped = r.skippedLinks ? ` ${r.skippedLinks} link${r.skippedLinks > 1 ? "s were" : " was"} left alone.` : "";

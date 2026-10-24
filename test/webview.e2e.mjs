@@ -1947,6 +1947,25 @@ await check("Rewind code to here: a dry run's files and lines first; the files c
   assert.deepEqual((await posts()).filter((p) => p.t === "rewind"), [{ t: "rewind", uuid: BASIC_UUIDS[1], restore: "both" }]);
 });
 
+await check("files changed since the confirmation: nothing was rewound, and the confirmation comes back with what a rewind restores now (review r4 L4)", async () => {
+  await basicChat();
+  await messageMenu("Reply with just: ok");
+  await click(".msg-menu .menu-item", "Rewind code to here");
+  await send([{ t: "rewindCheck", uuid: BASIC_UUIDS[1], result: { canRewind: true, filesChanged: ["/work/rec/basic/a.txt"], insertions: 0, deletions: 1 } }]);
+  await click(".dialog.rewind button.primary");
+  assert.equal((await text(".dialog")).length, 0);
+  await clearPosts();
+  // The host's fresh dry run at Rewind says otherwise: it did nothing and asks again.
+  await send([{ t: "rewindCheck", uuid: BASIC_UUIDS[1], result: { canRewind: true, filesChanged: ["/work/rec/basic/a.txt", "/work/rec/basic/src/b.c"], insertions: 3, deletions: 5 }, again: "code" }]);
+  assert.equal((await text(".dialog-title"))[0], "Rewind code");
+  assert.deepEqual(await text(".dialog .warn"), ["The files changed since you looked, so nothing was rewound. This is what a rewind restores now.", "Files edited by hand or by Bash are not rewound."]);
+  assert.equal((await text(".rewind-sum"))[0], "5 lines will be removed and 3 lines added, across 2 files:");
+  assert.deepEqual(await text(".rewind-files li"), ["a.txt", "src/b.c"]);
+  await shot("history-rewind-again");
+  await click(".dialog.rewind button.primary");
+  assert.deepEqual((await posts()).filter((p) => p.t.startsWith("rewind")), [{ t: "rewind", uuid: BASIC_UUIDS[1], restore: "code" }], "confirmed on the new list");
+});
+
 await check("a file rewind Claude Code refuses says why, and its button stays off", async () => {
   await basicChat();
   await messageMenu("Run the bash command");

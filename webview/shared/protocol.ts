@@ -63,8 +63,13 @@ export type HostToChat =
   | { t: "chips"; sid: string; chips: Chip[] }
   /** Text back into a chat's draft: a held message not sent, a start the desk refused. */
   | { t: "draft"; sid: string; text: string }
-  /** What rewinding the files to before message `uuid` would change: the dry run the confirmation shows (decision 73). */
-  | { t: "rewindCheck"; uuid: string; result: RewindResult }
+  /**
+   * What rewinding the files to before message `uuid` would change: the dry
+   * run the confirmation shows (decision 73). `again`: the files changed
+   * since the one the owner confirmed, so nothing was done — the
+   * confirmation opens again on this one, for that restore.
+   */
+  | { t: "rewindCheck"; uuid: string; result: RewindResult; again?: Restore }
   /** The conversation as plain text, for the export dialog (decision 74). */
   | { t: "export"; text: string; filename: string }
   /** The end of a background shell's or Monitor's output, for the page that asked (port item 71). */
