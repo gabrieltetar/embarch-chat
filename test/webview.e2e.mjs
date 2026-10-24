@@ -2412,6 +2412,42 @@ await check("above the input at once — a held card, side questions, a queued m
   assert.equal(await exec("return document.querySelectorAll('.composer .attachments .thumb').length"), 1);
 });
 
+await check("a 300 px sidebar with everything above the input: the side answers, the background tasks and the queue give way to a line each before the timeline goes under a quarter of the panel; the card stays answerable, Send at the right (50, 55)", async () => {
+  // Headless Firefox keeps its window 500 px wide or more: the page is made 300 px instead.
+  await exec("document.getElementById('app').style.width = '300px'");
+  try {
+    await fresh({ model: "opus", effort: "xhigh", ultracode: true, mcp: [{ name: "embarch-api", status: "failed", error: "MCP error -32000: Connection closed" }], remote: { status: "connected", url: "https://claude.ai/code/session_x" }, capabilities: ["interrupt_send_now_v1"] }, false);
+    const lines = allowed("bgstop");
+    await send([sentU(1, "count the ticks"), ...events(lines.slice(0, lines.findIndex(isResultLine) + 1)), limit({ status: "allowed_warning", rateLimitType: "seven_day", utilization: 0.86, resetsAt: inH(50) })]);
+    await send([sentU(2, "now flash the dev bench with the new build and run the study"), toolCall("tf9", "mcp__embarch-api__flash", { project: "demo" })]);
+    await send([sentU(3, "use the other board instead")]);
+    await send(events([{ type: "_side", id: "q:1", question: "which port did it pick?" }, { type: "_side", id: "q:1", response: "`/dev/ttyACM0`, the first one it found." }]));
+    await send([{ t: "editor", editor: { ...SEL, label: "src/main.c#L10-24" } }]);
+    await click(".bg-toggle");
+    await settle();
+    await send([taskOut(lines.find(isTaskStarted).task_id, "tick 1\ntick 2\ntick 3\n")]);
+    await pasteIn({ files: [{ name: "shot.png", type: "image/png", data: PNG }] });
+    await type("@term");
+    await send([{ t: "mentions", q: "term", items: [{ insert: "west build", label: "west build", detail: "terminal output", terminal: "west build" }] }]);
+    await type(ENTER);
+    await type("and the baud rate");
+    // A permission card on top of it all, forward once the typing pauses (55).
+    await send(events(upTo(outLines("deny"), (o) => o.type === "control_request").filter((o) => o.type === "control_request")));
+    await sleep(1700);
+    await settle();
+    const m = await exec(`const r = (s) => { const e = document.querySelector(s); if (!e) return null; const b = e.getBoundingClientRect(); return { top: b.top, bottom: b.bottom, right: b.right, h: b.height }; };
+      return { vh: window.innerHeight, timeline: r('.timeline'), cards: r('.cards'), allow: r('.card .actions button.primary'), side: r('.side'), bg: r('.bg-tasks'), queue: r('.queue'), composer: r('.composer'), bar: r('.composer .bar'), primary: r('.composer .bar button.primary') };`);
+    await shot("narrow-everything");
+    assert.ok(m.timeline.h >= m.vh / 4 - 1, `the timeline keeps a quarter of the panel: ${JSON.stringify(m.timeline)} of ${m.vh}`);
+    assert.ok(m.allow.top >= m.cards.top && m.allow.bottom <= m.cards.bottom, `the card's Allow on screen: ${JSON.stringify([m.allow, m.cards])}`);
+    for (const k of ["side", "bg", "queue"]) assert.ok(m[k].h >= 24, `${k} keeps a line: ${JSON.stringify(m[k])}`);
+    assert.ok(m.composer.bottom <= m.vh + 1, "the input on screen");
+    assert.ok(m.bar.right - m.primary.right <= 1, `Queue at the bar's right: ${JSON.stringify([m.primary, m.bar])}`);
+  } finally {
+    await exec("document.getElementById('app').style.width = ''");
+  }
+});
+
 await check("the MCP pill: each server with Claude Code's mark and words, a ✗ when one failed, Reconnect and Disable on this chat's process; /mcp opens it (its changelog L6014)", async () => {
   // The servers as the recording's mcp_status answered, and one whose rebuilt binary did not start.
   const answer = outLines("mcp").find((o) => o.type === "control_response" && o.response.response?.mcpServers).response.response.mcpServers;

@@ -920,20 +920,22 @@ export function Composer(p: Props) {
             💬
           </button>
         </span>
-        <span class="spacer" />
-        {busy && (
-          <button title="Stop this turn (Esc); background tasks go on" onClick={() => post({ t: "interrupt" })}>
-            Stop
+        {/* Stop and Send together at the right, where a narrow sidebar wraps them too. */}
+        <span class="send">
+          {busy && (
+            <button title="Stop this turn (Esc); background tasks go on" onClick={() => post({ t: "interrupt" })}>
+              Stop
+            </button>
+          )}
+          <button
+            class="primary"
+            disabled={!text.trim() && (aside || (!images.length && !terminals.length))}
+            onClick={send}
+            title={aside ? "Ask aside (Enter): not added to the conversation" : p.waiting ? "Queued: Claude takes it after your answer to the card above" : busy ? "Queued: it waits above the input until Claude reads it, at its next step" : "Send (Enter)"}
+          >
+            {aside ? "Ask" : busy ? "Queue" : "Send"}
           </button>
-        )}
-        <button
-          class="primary"
-          disabled={!text.trim() && (aside || (!images.length && !terminals.length))}
-          onClick={send}
-          title={aside ? "Ask aside (Enter): not added to the conversation" : p.waiting ? "Queued: Claude takes it after your answer to the card above" : busy ? "Queued: it waits above the input until Claude reads it, at its next step" : "Send (Enter)"}
-        >
-          {aside ? "Ask" : busy ? "Queue" : "Send"}
-        </button>
+        </span>
       </div>
     </div>
   );
