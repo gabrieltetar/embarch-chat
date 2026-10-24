@@ -27,7 +27,9 @@
 // while the process closed, a new chat's first message the CLI had not
 // written down — comes back waiting above the input again when Continue
 // is offered (Continue takes it, or the owner's next message does), and
-// otherwise back into the draft with a line that says so, as after a crash.
+// otherwise back into the draft with a line that says so, as after a crash
+// (Chat.releaseUntaken: no process starts again unasked, 41; a held rest
+// goes back as for a stopped compaction, 36).
 
 import * as fs from "fs";
 import * as vscode from "vscode";
