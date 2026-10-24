@@ -646,6 +646,8 @@ export function Composer(p: Props) {
   };
 
   const onKey = (e: KeyboardEvent) => {
+    // An Esc a panel took first (the footer's pills, the ↶ menu) closed that panel, and is spent.
+    if (e.key === "Escape" && e.defaultPrevented) return;
     if (pop && pop.items.length) {
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();

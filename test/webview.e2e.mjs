@@ -1782,6 +1782,16 @@ const messageMenu = async (t) => {
   await settle();
 };
 const keyOn = (sel, key) => exec("document.querySelector(arguments[0]).dispatchEvent(new KeyboardEvent('keydown', { key: arguments[1], bubbles: true, cancelable: true })); return true;", [sel, key]).then(settle);
+/** Keys as the keyboard sends them, to whatever has focus (`type` sends them to the input). */
+const keys = async (str) => {
+  const actions = [];
+  for (const ch of str) actions.push({ type: "keyDown", value: ch }, { type: "keyUp", value: ch });
+  await wd("POST", `${S}/actions`, { actions: [{ type: "key", id: "kb", actions }] });
+  await wd("DELETE", `${S}/actions`);
+  await settle();
+};
+/** What has focus, as its tag and classes. */
+const focused = () => exec("const a = document.activeElement; return a ? a.tagName + [...a.classList].map((c) => '.' + c).join('') : null");
 
 await check("a reply's Copy takes the whole reply as Markdown; /copy the latest, /copy 2 the one before — nothing goes to Claude", async () => {
   await basicChat();
@@ -1843,6 +1853,20 @@ await check("each of the owner's messages has a menu: fork from it, and with its
   assert.deepEqual((await posts()).filter((p) => p.t === "rewind"), [{ t: "rewind", uuid: BASIC_UUIDS[1], restore: "conversation" }], "a fork changes no file: no confirmation");
   assert.equal((await text(".msg-menu")).length, 0);
   await mouseAway();
+});
+
+await check("the ↶ menu by keyboard: Enter opens it, Tab walks its items, Esc closes it and gives the keys back to ↶ (73)", async () => {
+  await basicChat();
+  await exec("[...document.querySelectorAll('.user')].at(-1).querySelector('.msg-act').focus(); return true");
+  await keys(ENTER);
+  assert.equal((await text(".msg-menu")).length, 1);
+  await keys(TAB);
+  assert.equal(await exec("return document.activeElement.textContent"), "Fork conversation from here");
+  await keys(TAB);
+  assert.equal(await exec("return document.activeElement.textContent"), "Rewind code to here");
+  await keys(ESC);
+  assert.equal((await text(".msg-menu")).length, 0);
+  assert.equal(await focused(), "BUTTON.icon.msg-act");
 });
 
 await check("a past chat nothing runs offers the fork alone; a thread run elsewhere, nothing", async () => {
@@ -2343,6 +2367,28 @@ await check("the MCP pill: each server with Claude Code's mark and words, a ✗ 
   // A chat read-only here has no pill.
   await send([snapshot({}, { ...OURS, ours: false, readOnly: false, resumable: true })]);
   assert.equal((await text(".composer .pill.mcp")).length, 0);
+});
+
+await check("Esc that closes the MCP or the model panel does only that: the turn runs on, and it is not the first of Esc twice (73, 81)", async () => {
+  await fresh({ mcp: [{ name: "embarch-api", status: "failed", error: "MCP error -32000: Connection closed" }] }, false);
+  await send([sentU(1, "flash it"), toolCall("tf1", "mcp__embarch-api__flash", { project: "demo" })]);
+  await type("/mcp " + ENTER);
+  assert.equal((await text(".mcp-pop")).length, 1);
+  assert.equal(await focused(), "TEXTAREA", "the input keeps the keys");
+  await clearPosts();
+  await keys(ESC);
+  assert.equal((await text(".mcp-pop")).length, 0, "Esc closed the panel");
+  assert.ok(!(await posts()).some((p) => p.t === "interrupt"), "and did not stop the turn");
+  await keys(ESC);
+  assert.ok((await posts()).some((p) => p.t === "interrupt"), "the next Esc is Stop's");
+  // Idle, the input empty: the Esc that closes the model panel opens no rewind with the next.
+  await basicChat();
+  await click(".composer .pill.model");
+  await settle();
+  await keys(ESC);
+  assert.equal((await text(".model-pop")).length, 0);
+  await keys(ESC);
+  assert.equal((await text(".dialog.rewind")).length, 0);
 });
 
 // ------------------------------------------------------------ the list

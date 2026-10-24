@@ -474,7 +474,18 @@ button.link-button:focus-visible {
   z-index: 20;
 }
 .msg-menu .menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
   white-space: nowrap;
+  color: inherit;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+}
+.msg-menu .menu-item:focus-visible {
+  outline: 1px solid var(--focus);
+  outline-offset: -1px;
 }
 /* A reply's Copy (decision 74): quiet under its last block, clearer with the pointer on it. */
 .reply-acts {

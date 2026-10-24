@@ -120,18 +120,31 @@ function openExport(): void {
   window.dispatchEvent(new Event("embarch-export"));
 }
 
-/** The menu on one of the owner's messages: fork from it; with the files, only in a chat this window runs. */
+/**
+ * The menu on one of the owner's messages: fork from it; with the files,
+ * only in a chat this window runs. Its items are buttons, so Tab walks them;
+ * Esc closes it and gives the keys back to the ↶, and the input takes that
+ * Esc as spent, as it does a footer panel's (composer.tsx).
+ */
 export function MessageActions({ e, view }: { e: UserEntry; view: ChatView }) {
   const [open, setOpen] = useState(false);
   const [at, setAt] = useState<{ top?: number; bottom?: number }>({});
   const box = useRef<HTMLSpanElement>(null);
+  const btn = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (!open) return;
     const away = (ev: MouseEvent) => {
       if (box.current && !box.current.contains(ev.target as Node)) setOpen(false);
     };
+    const esc = (ev: KeyboardEvent) => {
+      if (ev.key !== "Escape") return;
+      ev.preventDefault();
+      setOpen(false);
+      btn.current?.focus();
+    };
     document.addEventListener("mousedown", away);
-    return () => document.removeEventListener("mousedown", away);
+    document.addEventListener("keydown", esc, true);
+    return () => (document.removeEventListener("mousedown", away), document.removeEventListener("keydown", esc, true));
   }, [open]);
   if (!e.uuid || e.pending || view.readOnly) return null;
   const uuid = e.uuid;
@@ -139,6 +152,7 @@ export function MessageActions({ e, view }: { e: UserEntry; view: ChatView }) {
   return (
     <span class={`msg-acts ${open ? "open" : ""}`} ref={box}>
       <button
+        ref={btn}
         class="icon msg-act"
         title="Fork or rewind from this message"
         aria-expanded={open}
@@ -154,17 +168,17 @@ export function MessageActions({ e, view }: { e: UserEntry; view: ChatView }) {
       </button>
       {open && (
         <div class="msg-menu" style={at}>
-          <div class="menu-item" onClick={pick(() => post({ t: "rewind", uuid, restore: "conversation" }))}>
+          <button class="menu-item" onClick={pick(() => post({ t: "rewind", uuid, restore: "conversation" }))}>
             Fork conversation from here
-          </div>
+          </button>
           {view.ours && (
             <>
-              <div class="menu-item" onClick={pick(() => openRewind({ uuid, mode: "code" }))}>
+              <button class="menu-item" onClick={pick(() => openRewind({ uuid, mode: "code" }))}>
                 Rewind code to here
-              </div>
-              <div class="menu-item" onClick={pick(() => openRewind({ uuid, mode: "both" }))}>
+              </button>
+              <button class="menu-item" onClick={pick(() => openRewind({ uuid, mode: "both" }))}>
                 Fork conversation and rewind code
-              </div>
+              </button>
             </>
           )}
         </div>
@@ -439,8 +453,9 @@ export function useEscEsc(enabled: boolean): void {
     const key = (ev: KeyboardEvent) => {
       if (ev.key !== "Escape") return;
       const ta = document.querySelector<HTMLTextAreaElement>(".composer textarea");
-      // Not while the input asks aside (57): that Esc leaves the side-question mode.
-      const free = on.current && !ta?.value && !ta?.classList.contains("aside") && !document.querySelector(".popup, .menu, .dialog-back, .msg-menu");
+      // Not while the input asks aside (57): that Esc leaves the side-question
+      // mode; nor with a footer pill's panel open (81, 82): that Esc closes it.
+      const free = on.current && !ta?.value && !ta?.classList.contains("aside") && !document.querySelector(".popup, .menu, .dialog-back, .msg-menu, .pop");
       if (!free) {
         last.current = 0;
         return;

@@ -29,7 +29,12 @@ import { vscodeApi } from "../shared/vscode";
 
 const post = (m: unknown) => vscodeApi.postMessage(m);
 
-/** A panel over the input, closed by a click outside it and its pill, or Escape. */
+/**
+ * A panel over the input, closed by a click outside it and its pill, or
+ * Escape. That Escape closes the panel and does nothing else: taken ahead
+ * of the input and marked, so the input's own Esc — Stop while a turn runs
+ * (8) — leaves it be. From inside the panel the keys go back to the pill.
+ */
 function Pop({ kind, anchor, onClose, children }: { kind: string; anchor: HTMLElement | null; onClose: () => void; children: ComponentChildren }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -38,12 +43,17 @@ function Pop({ kind, anchor, onClose, children }: { kind: string; anchor: HTMLEl
       if (ref.current?.contains(t) || anchor?.contains(t)) return;
       onClose();
     };
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const esc = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      if (ref.current?.contains(document.activeElement)) anchor?.focus();
+      onClose();
+    };
     document.addEventListener("mousedown", away);
-    document.addEventListener("keydown", esc);
+    document.addEventListener("keydown", esc, true);
     return () => {
       document.removeEventListener("mousedown", away);
-      document.removeEventListener("keydown", esc);
+      document.removeEventListener("keydown", esc, true);
     };
   }, [anchor, onClose]);
   return (
