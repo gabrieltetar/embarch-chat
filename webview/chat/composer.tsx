@@ -754,6 +754,16 @@ export function Composer(p: Props) {
     }),
   }));
 
+  // A menu is open only while it shows: one whose cards stopped applying to
+  // the draft closes, rather than stay open unseen to take the next Esc —
+  // Stop's — or to open again by itself on the next cards (38).
+  const menuShown = menu === "bulb" ? bulbGroups.length > 0 : menu === "library" ? libGroups.length > 0 : false;
+  useEffect(() => {
+    if (!menu || menuShown) return;
+    setMenu(null);
+    setPreview(null);
+  }, [menu, menuShown]);
+
   return (
     <div
       class="composer"

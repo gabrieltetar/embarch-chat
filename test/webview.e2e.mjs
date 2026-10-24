@@ -1213,6 +1213,25 @@ await check("just before send: a long draft typed fast waits for its cards; the 
   assert.equal((await posts()).find((p) => p.t === "send")?.text, draft + " too");
 });
 
+await check("a 💡 menu whose cards stop applying closes with them: the next Esc is Stop's (26, 38)", async () => {
+  const ESC = "";
+  await fresh();
+  await send([sent("flash it"), toolCall("tf1", "mcp__embarch-api__flash", { project: "demo" })]);
+  const draft = "please also update the readme with the new flash steps";
+  await exec("const t=document.querySelector('.composer textarea'); t.value=arguments[0]; t.dispatchEvent(new Event('input', {bubbles:true}))", [draft]);
+  await type(ENTER);
+  const ask = await lastAssist("cards");
+  await send([{ t: "cards", seq: ask.seq, cards: [{ id: "r1", category: "improve", title: "Name the file", edit: { op: "replace", find: "readme", with: "README.md" } }] }]);
+  assert.equal((await text(".menu.bulb")).length, 1, "the 💡 opens on its card");
+  // The owner rewrites the word the card would change: no card applies, the menu goes.
+  await exec("const t=document.querySelector('.composer textarea'); t.value='please also update the docs with the new flash steps'; t.dispatchEvent(new Event('input', {bubbles:true}))");
+  await settle();
+  assert.equal((await text(".menu.bulb")).length, 0);
+  await clearPosts();
+  await type(ESC);
+  assert.ok((await posts()).some((p) => p.t === "interrupt"), "the first Esc stops the turn");
+});
+
 // Decision 55: the question recorded with a message sent while it waited (askqueued).
 const askLines = outLines("askqueued");
 const askAt = askLines.findIndex((o) => o.type === "control_request");
