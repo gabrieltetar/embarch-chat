@@ -2924,6 +2924,24 @@ await check("the list's ✎ names a thread this window runs or nothing runs; one
   assert.deepEqual((await posts()).filter((p) => p.t !== "ready"), [{ t: "rename", sid: "o" }], "it does not open the thread too");
 });
 
+await check("the list by keyboard: a row takes focus and Enter opens it; Tab reaches its actions and a group's +, which show while focused (review r4 P2)", async () => {
+  await send([listMsg]);
+  await clearPosts();
+  const mine = "[...document.querySelectorAll('.thread')].find((t) => t.textContent.includes('My chat'))";
+  assert.equal(await exec(`${mine}.focus(); return document.activeElement === ${mine}`), true, "the row takes focus");
+  await keys("\uE007");
+  assert.deepEqual((await posts()).filter((p) => p.t === "open"), [{ t: "open", sid: "o" }], "Enter opens it");
+  await clearPosts();
+  await keys("\uE004");
+  const at = await exec("const e = document.activeElement; return [e.title, e.closest('.thread')?.textContent.includes('My chat'), getComputedStyle(e.closest('.acts')).opacity]");
+  assert.deepEqual(at, ["Rename", true, "1"], "Tab goes to the row's first action, on screen");
+  await keys("\uE007");
+  assert.deepEqual((await posts()).filter((p) => p.t !== "ready"), [{ t: "rename", sid: "o" }], "Enter on it acts, and does not open the row too");
+  const add = await exec("const b = document.querySelector('.group-head .add'); b.focus(); return [document.activeElement === b, getComputedStyle(b).opacity]");
+  assert.deepEqual(add, [true, "1"], "a group's + too");
+  await exec("document.activeElement.blur()");
+});
+
 await check("a chat whose turn finished unseen lists unread: a filled dot in the done colour, and Mark as Unread on its right-click", async () => {
   const groups = core.buildThreads({
     view: null,

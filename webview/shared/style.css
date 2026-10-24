@@ -1769,11 +1769,15 @@ body.vscode-high-contrast-light .on {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Out of sight but not out of reach: Tab still finds it, and it shows while it has focus. */
 .group-head .add {
-  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
 }
-.group-head:hover .add {
-  visibility: visible;
+.group-head:hover .add,
+.group-head:focus-within .add {
+  opacity: 1;
+  pointer-events: auto;
 }
 .badge {
   background: var(--waiting);
@@ -1815,13 +1819,17 @@ body.vscode-high-contrast-light .on {
 .thread .tmeta .w {
   color: var(--waiting);
 }
+/* As the group's +: Tab reaches the row's actions, which show while the row or one of them has focus. */
 .thread .acts {
-  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
   display: flex;
   gap: 2px;
 }
-.thread:hover .acts {
-  visibility: visible;
+.thread:hover .acts,
+.thread:focus-within .acts {
+  opacity: 1;
+  pointer-events: auto;
 }
 .dot {
   width: 8px;

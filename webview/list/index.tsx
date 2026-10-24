@@ -2,7 +2,8 @@
 // waiting-on-you first, Untracked last. A + on a group starts a chat on that
 // item; the top + picks one (decision 10). Threads this window does not run
 // open read-only, with Jump (decision 31). A thread nothing else runs can be
-// renamed by hand (decision 75).
+// renamed by hand (decision 75). Tab walks the rows and their actions, and
+// Enter opens a row.
 
 import "../shared/style.css";
 import { render } from "preact";
@@ -29,7 +30,14 @@ function Row({ t, selected, now }: { t: Thread; selected: boolean; now: number }
   return (
     <div
       class={`thread ${selected ? "sel" : ""}`}
+      // Reachable by keyboard (review r4 P2): Enter or Space on the row itself opens it; on one of its buttons, that button acts.
+      tabIndex={0}
       onClick={() => post({ t: "open", sid: t.sessionId })}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget || (e.key !== "Enter" && e.key !== " ")) return;
+        e.preventDefault();
+        post({ t: "open", sid: t.sessionId });
+      }}
       title={t.title}
       // This window's chats get Mark as Unread on right-click (package.json, webview/context).
       data-vscode-context={t.ours ? JSON.stringify({ webviewSection: "embarchChat", sid: t.sessionId }) : undefined}
