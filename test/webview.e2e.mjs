@@ -1748,6 +1748,17 @@ await check("messages sent while Claude works wait above the input, with Send no
   assert.ok((await text(".timeline .user")).at(-1).startsWith(two), "the last of the owner's messages is the one taken");
 });
 
+await check("a message a reload gave back says it goes with Continue, or before the owner's next message — until a process starts for it (63; review r5 N5)", async () => {
+  await fresh({}, false);
+  await send([
+    { t: "event", e: { type: "_note", text: core.RERUN_OFFER_NOTE, tone: "info", offer: "rerun" } },
+    { t: "event", e: { type: "_sent", n: 1, text: "Also end your reply with the word: kiwi", restored: true, uuid: U(1) } },
+  ]);
+  assert.deepEqual(await text(".queued-bar .muted"), ["Queued — goes with Continue, or before your next message"]);
+  await send([{ t: "event", e: { type: "_process", state: "starting" } }]);
+  assert.deepEqual(await text(".queued-bar .muted"), ["Queued — Claude reads it at its next step"], "Continue started it: the step, then this");
+});
+
 await check("a step that cannot move to the background makes Send now say it stops it", async () => {
   await fresh({ capabilities: ["interrupt_send_now_v1"] }, false);
   await send([

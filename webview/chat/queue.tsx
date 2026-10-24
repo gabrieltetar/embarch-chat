@@ -40,7 +40,8 @@ export function Queued({ state, readOnly }: { state: ChatState; readOnly: boolea
       {ids.map((id) => {
         const e = state.entries[id];
         if (e.kind !== "user") return null;
-        const when = e.held ? "after the compaction" : card ? "after your answer to the card above" : "Claude reads it at its next step";
+        // One a reload gave back waits for the owner while the offer to continue stands: nothing runs for it until then (63; review r5 N5).
+        const when = e.held ? "after the compaction" : card ? "after your answer to the card above" : e.restored && state.rerunOffer ? "goes with Continue, or before your next message" : "Claude reads it at its next step";
         return (
           <div key={id} class="queued">
             <div class="queued-text">

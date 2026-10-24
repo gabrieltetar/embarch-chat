@@ -26,6 +26,8 @@ export interface UserEntry {
   held?: boolean;
   /** Held, then not sent: the compaction was stopped or failed; its text went back to the draft. */
   unsent?: boolean;
+  /** Given back by a reload (63): no process runs for it until Continue, or the owner's next message, which it goes ahead of. */
+  restored?: boolean;
   /** When it was sent, ms since the epoch (decision 68): the panel's clock, else the CLI's. */
   at?: number;
   /**
@@ -786,6 +788,7 @@ export function reduce(s: ChatState, o: WireMessage): ChatState {
         images: Number(o.images ?? 0),
         pending: true,
         ...(o.held ? { held: true } : {}),
+        ...(o.restored ? { restored: true } : {}),
         ...(at !== undefined ? { at } : {}),
         ...(typeof o.uuid === "string" ? { uuid: o.uuid } : {}),
         ...(Array.isArray(o.context) && o.context.length ? { context: o.context as ContextItem[] } : {}),
