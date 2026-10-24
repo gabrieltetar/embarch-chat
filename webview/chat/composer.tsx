@@ -68,6 +68,8 @@ interface Props {
   chips: Chip[];
   /** The pills beside the mode select (footer.tsx): the model pill, MCP. */
   footer?: preact.ComponentChildren;
+  /** The page's own commands — /copy, /export, /rewind (history.tsx), /mcp, /remote-control (footer.tsx) — answered here: true when taken. */
+  onCommand: (text: string) => boolean;
   onSend: (text: string, opts: SendOpts) => void;
   onChip: (chip: Chip) => void;
 }
@@ -545,17 +547,31 @@ export function Composer(p: Props) {
     setUsed([]);
   };
 
-  /** `/btw <question>` (57): asked beside the chat; the draft clears, images and pastes stay for the next message. */
-  const askAside = (q: string) => {
-    if (!q) return setNotice("/btw takes a question: /btw which port did it pick?");
-    if (!props.current.canAsk) return setNotice("A side question needs a conversation this window runs: send it a message first.");
-    post({ t: "btw", question: q });
+  /** A draft held for its cards (26) is not sent after all: written again, taken aside by the 💬, or asked aside. */
+  const endHold = () => {
+    const s = a.current;
+    clearTimeout(s.holdTimer);
+    s.hold = null;
+    setHolding(false);
+  };
+
+  /** The text went, but not to the conversation: the draft clears, what goes with a message (images, pastes, chips) stays for the next. */
+  const taken = () => {
     a.current.undo = [];
     clearText();
     doneTyping();
     setPop(null);
     setGhost(null);
     setNotice(null);
+  };
+
+  /** `/btw <question>` (57): asked beside the chat; the draft clears, images and pastes stay for the next message. */
+  const askAside = (q: string) => {
+    if (!q) return setNotice("/btw takes a question: /btw which port did it pick?");
+    if (!props.current.canAsk) return setNotice("A side question needs a conversation this window runs: send it a message first.");
+    endHold();
+    post({ t: "btw", question: q });
+    taken();
   };
 
   const send = () => {
@@ -574,6 +590,9 @@ export function Composer(p: Props) {
     const btw = /^\/btw(?:\s+([\s\S]*))?$/i.exec(t);
     if (btw) return askAside((btw[1] ?? "").trim());
     if (aside) return askAside(t);
+    // Answered by the page, as /btw is: nothing goes, and what goes with a
+    // message — a screenshot, a paste, the chips — stays for the next (56).
+    if (t.startsWith("/") && props.current.onCommand(t)) return taken();
     const s = a.current;
     if (s.hold !== null || !t) return doSend(t);
     // Just before send, the cards judge the whole prompt (26) — unless they already have.
@@ -686,7 +705,12 @@ export function Composer(p: Props) {
     }
   };
 
-  /** The 💬: into side-question mode and out, the draft kept, the input focused. */
+  /**
+   * The 💬: into side-question mode and out, the draft kept, the input
+   * focused. A draft held for its cards (26) becomes the side question: the
+   * hold is off, so it goes once, aside, on the next Enter — as a mode
+   * change in Claude Code's input keeps the text and sends nothing.
+   */
   const toggleAside = () => {
     const on = !aside;
     setAsideMode(on);
@@ -695,7 +719,9 @@ export function Composer(p: Props) {
       clearTimeout(a.current.ghostTimer);
       clearTimeout(a.current.cardsTimer);
       cancelStale();
+      endHold();
       setGhost(null);
+      if (menu === "bulb") setMenu(null);
     }
     ta.current?.focus();
   };
@@ -789,13 +815,8 @@ export function Composer(p: Props) {
             const el = e.target as HTMLTextAreaElement;
             const v = el.value;
             const end = el.selectionStart === v.length && el.selectionEnd === v.length;
-            const s = a.current;
-            if (s.hold !== null) {
-              // Writing again: the held send is off.
-              clearTimeout(s.holdTimer);
-              s.hold = null;
-              setHolding(false);
-            }
+            // Writing again: the held send is off.
+            if (a.current.hold !== null) endHold();
             setText(v);
             typed(v);
             setAtEnd(end);

@@ -2128,6 +2128,28 @@ await check("the 💬 beside the 📚 puts the input in side-question mode while
   assert.ok(!(await posts()).some((p) => p.t === "btw"));
 });
 
+await check("a draft held for its cards, then the 💬: the hold is off, the draft stays as the side question, and it goes once, aside (26, 57)", async () => {
+  await fresh();
+  await send([sentU(1, "first message")]);
+  const draft = "please also update the readme with the new flash steps";
+  await exec("const t=document.querySelector('.composer textarea'); t.value=arguments[0]; t.dispatchEvent(new Event('input', {bubbles:true}))", [draft]);
+  await type(ENTER);
+  const checking = () => exec("return document.querySelector('.bulb').classList.contains('checking')");
+  assert.equal(await checking(), true, "held for its cards");
+  await click(".composer .assist-slot button.btw");
+  await settle();
+  assert.equal(await checking(), false, "the 💬 ends the hold");
+  // Past the hold's 4.5 s: nothing went into the conversation, and the draft waits in side-question mode.
+  await sleep(5000);
+  await settle();
+  assert.deepEqual(await sends(), []);
+  assert.equal(await value(), draft);
+  assert.equal(await exec("return !!document.querySelector('.composer .aside-tag')"), true);
+  await type(ENTER);
+  assert.deepEqual((await posts()).filter((p) => p.t === "btw").map((p) => p.question), [draft]);
+  assert.deepEqual(await sends(), [], "aside only");
+});
+
 await check("the 💬 is off where /btw cannot run: no conversation yet, a chat this window does not run", async () => {
   await fresh({ process: "none" }, false);
   assert.equal(await exec("return document.querySelector('.composer .assist-slot button.btw').disabled"), true, "a new chat before its first message");
@@ -2213,6 +2235,28 @@ await check("a terminal picked from @ is a chip under the input, not text; its n
   await exec("document.activeElement && document.activeElement.blur()");
   await send([{ t: "focus" }]);
   assert.equal(await exec("return document.activeElement === document.querySelector('.composer textarea')"), true);
+});
+
+await check("the page's own commands leave what waits to go: a screenshot, the selection and a terminal stay for the next message (56, 58, 60)", async () => {
+  await fresh({}, false);
+  await pasteIn({ files: [{ name: "shot.png", type: "image/png", data: PNG }] });
+  await waitFor_(async () => (await exec("return document.querySelectorAll('.composer .thumb').length")) === 1);
+  await send([{ t: "editor", editor: { ...SEL, label: "src/main.c#L10-24" } }]);
+  await type("@term");
+  await send([{ t: "mentions", q: "term", items: [{ insert: "west build", label: "west build", detail: "terminal output", terminal: "west build" }] }]);
+  await type(ENTER);
+  for (const cmd of ["/copy", "/mcp"]) {
+    await type(`${cmd} ${ENTER}`);
+    assert.equal(await value(), "", `${cmd}: the draft clears`);
+    assert.equal(await exec("return document.querySelectorAll('.composer .thumb').length"), 1, `${cmd} keeps the screenshot`);
+    assert.equal((await text(".composer .ctx-chip")).length, 2, `${cmd} keeps the selection and the terminal`);
+    await exec("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))");
+    await settle();
+  }
+  assert.deepEqual(await sends(), [], "nothing went to Claude");
+  await type("why does this trace ring" + ENTER);
+  const [s] = await sends();
+  assert.deepEqual([s.text, s.images?.length, s.terminals, s.editor?.path], ["why does this trace ring", 1, ["west build"], SEL.path], "all of it goes with the message");
 });
 
 await check("Alt+Shift+K's @-mention lands at the caret, spaced from the word before, and the input takes focus (59)", async () => {

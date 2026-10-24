@@ -476,9 +476,8 @@ function App() {
               <RemotePill state={state} />
             </>
           }
+          onCommand={(text) => localCommand(text, live.current) || (view.ours && footerCommand(text))}
           onSend={(text, opts) => {
-            if (localCommand(text, live.current)) return;
-            if (view.ours && footerCommand(text)) return;
             stick.current = true;
             post({ t: "send", text, ...opts });
           }}
