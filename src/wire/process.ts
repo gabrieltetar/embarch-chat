@@ -72,6 +72,9 @@ export function chatEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEn
   return env;
 }
 
+/** How long the CLI may take to answer `initialize`, as the Agent SDK allows. */
+const INITIALIZE_MS = 60_000;
+
 interface Waiter {
   resolve: (v: Record<string, unknown>) => void;
   reject: (e: Error) => void;
@@ -97,7 +100,6 @@ export class ClaudeProcess extends EventEmitter {
   private stderrTail = "";
   private waiters = new Map<string, Waiter>();
   private nextId = 1;
-  readonly answered = new Set<string>();
   exited = false;
   /** Set before `start`: what answers the CLI's hook callbacks and MCP messages. */
   answerer: ControlAnswerer | undefined;
@@ -149,7 +151,10 @@ export class ClaudeProcess extends EventEmitter {
     // The first line, as Claude Code's panel sends it, and the only
     // initialize: the dialogs this panel renders, which the CLI sends only
     // once declared (decision 66), and the panel's hooks and MCP servers.
-    this.request("initialize", { supportedDialogKinds: DIALOG_KINDS, ...this.spec.initialize }).then(
+    // The CLI answers it after its own start and the panel's MCP server's
+    // own initialize: the SDK's 60 s, not the usual 15, or a slow start
+    // loses the models and the effort pill for the process's life.
+    this.request("initialize", { supportedDialogKinds: DIALOG_KINDS, ...this.spec.initialize }, INITIALIZE_MS).then(
       (r) => this.emit("initialized", r),
       () => {
         /* an old CLI, or one that died: the user message initializes with defaults */
@@ -251,13 +256,11 @@ export class ClaudeProcess extends EventEmitter {
 
   /** Answers one of the CLI's requests: a `can_use_tool` prompt, a dialog, an elicitation. */
   answer(requestId: string, response: Record<string, unknown>): boolean {
-    this.answered.add(requestId);
     return this.write({ type: "control_response", response: { subtype: "success", request_id: requestId, response } });
   }
 
   /** Refuses a request of the CLI's this panel does not handle, at once, so nothing waits on it (decision 66). */
   refuse(requestId: string, error: string): boolean {
-    this.answered.add(requestId);
     return this.write({ type: "control_response", response: { subtype: "error", request_id: requestId, error } });
   }
 
