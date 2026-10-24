@@ -838,6 +838,9 @@ export function reduce(s: ChatState, o: WireMessage): ChatState {
       return { ...s, pending: s.pending.map((p) => (p.requestId === o.requestId ? { ...p, comments: o.comments as PlanComment[] } : p)) };
     case "_unsent":
       return confirm(s, String(o.id), { held: false, unsent: true });
+    // The offer to continue a step, ended with no process: past Claude Code's limits when the owner clicked (63).
+    case "_offerEnd":
+      return { ...s, rerunOffer: null };
     case "_context":
       return { ...s, context: o.usage as ContextUsage };
     case "_mcp":

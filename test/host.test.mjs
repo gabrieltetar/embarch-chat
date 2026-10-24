@@ -885,6 +885,37 @@ test("a message waiting above the input when the window reloads comes back waiti
   }
 });
 
+test("Continue clicked once the step is past Claude Code's hour: nothing starts, the chat says no reply follows, the offer goes and the waiting message is back in the draft (decision 63; review r5 N4)", { skip }, async () => {
+  process.env.FAKE_CLAUDE_TRANSCRIPT = "prompt";
+  try {
+    const sid = await startUntracked("askqueued");
+    const n = chatView.webview.posted.length;
+    chatView.webview.fromPage({ t: "send", text: "Use the AskUserQuestion tool to ask me whether I prefer tea or coffee." });
+    await waitFor(() => chatView.webview.posted.slice(n).some((m) => m.t === "event" && m.e.type === "control_request"), 5000, "the question waits");
+    chatView.webview.fromPage({ t: "send", text: "Also end your reply with the word: kiwi" });
+    await waitFor(() => transcriptHas(sid, "kiwi"), 5000, "its queue line");
+    await reload(() => (process.env.FAKE_CLAUDE_FIXTURE = path.join(here, "fixtures", "wire", "reload.jsonl")));
+    await waitFor(() => posted((m) => m.t === "event" && m.e.type === "_sent" && m.e.restored), 15000, "the message back above the input");
+    await waitFor(() => posted((m) => m.t === "event" && m.e.type === "_note" && m.e.offer === "rerun"), 3000, "the offer to continue");
+    // The owner leaves it, and clicks two hours later: the step, as the transcript dates it, is past the CLI's hour.
+    const f = path.join(process.env.CLAUDE_CONFIG_DIR, "projects", folder.replace(/[^a-zA-Z0-9]/g, "-"), `${sid}.jsonl`);
+    const old = new Date(Date.now() - 2 * 3_600_000);
+    fs.utimesSync(f, old, old);
+    const spawnsBefore = calls().length;
+    const n1 = chatView.webview.posted.length;
+    chatView.webview.fromPage({ t: "continueStep" });
+    await waitFor(() => chatView.webview.posted.slice(n1).some((m) => m.t === "event" && m.e.type === "_note" && m.e.text === core.NO_REPLY_NOTE), 3000, "no reply follows");
+    assert.ok(chatView.webview.posted.slice(n1).some((m) => m.t === "event" && m.e.type === "_offerEnd"), "the offer goes");
+    const draft = await waitFor(() => chatView.webview.posted.slice(n1).find((m) => m.t === "draft" && m.sid === sid), 3000, "the message in the draft");
+    assert.equal(draft.text, "Also end your reply with the word: kiwi");
+    await new Promise((r) => setTimeout(r, 300));
+    assert.ok(!calls().slice(spawnsBefore).some((c) => c.argv.includes("--input-format")), "no CLI started to rerun nothing");
+    assert.ok(mock.state.output.some((l) => l.includes("the interrupted step is not continued: the step is over an hour old, by the owner's click")));
+  } finally {
+    delete process.env.FAKE_CLAUDE_TRANSCRIPT;
+  }
+});
+
 test("a new chat reloaded before the CLI took its first message comes back with it in the draft, and nothing runs (decision 63)", { skip }, async () => {
   const sid = await startUntracked("deny");
   // A slow start (MCP servers connecting): the CLI has read the message and written nothing yet.

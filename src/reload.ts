@@ -136,11 +136,23 @@ export class ReloadMemory implements vscode.Disposable {
   /**
    * "Continue the interrupted step" (63): the owner's click, never the
    * reload's own. The chat runs in the mode it was in, and what waited above
-   * the input goes after the step.
+   * the input goes after the step. Claude Code's limits are checked again at
+   * the click (review r5 N4): an offer left past the hour, or past two
+   * reruns, would start a CLI that reruns nothing — it says no reply follows
+   * instead, and the waiting messages go back to the draft.
    */
   continueStep(sid: string): void {
     const rec = this.manager.get(sid);
     if (!rec?.ours || !rec.chat.state.rerunOffer || rec.chat.running) return;
+    const age = stepAge(sid, rec.chat.opts.cwd);
+    const why = this.rerunsOf(sid) >= MAX_RERUNS ? `rerun ${this.rerunsOf(sid)} times already` : age >= RERUN_MAX_AGE_MS ? "the step is over an hour old" : null;
+    if (why) {
+      this.log(`[${sid.slice(0, 8)}] the interrupted step is not continued: ${why}, by the owner's click`);
+      const n = rec.chat.withdrawRerun();
+      if (n) rec.chat.note(`${n === 1 ? "A message" : `${n} messages`} Claude had not taken when the window reloaded ${n === 1 ? "is" : "are"} back in the draft.`);
+      void this.save();
+      return;
+    }
     const n = this.rerunsOf(sid) + 1;
     this.log(`[${sid.slice(0, 8)}] continuing the step the reload interrupted, on the owner's word (rerun ${n})`);
     this.noteRerun(sid, n);
@@ -275,9 +287,7 @@ async function bringBack(o: RestoreCtx, c: SavedChat, fresh: boolean): Promise<v
   const words = untakenOf(rec, c);
   // Nothing on record to continue: a new chat's words go back to the draft, and nothing runs.
   if (!c.running || fresh) return toDraft(o, rec, words);
-  const file = findTranscript(c.sid, c.cwd || undefined);
-  const stepAge = file ? Date.now() - (fs.statSync(file, { throwIfNoEntry: false })?.mtimeMs ?? 0) : Infinity;
-  const why = !o.enabled() ? "continueAfterReload is off" : c.reruns >= MAX_RERUNS ? `rerun ${c.reruns} times already` : stepAge >= RERUN_MAX_AGE_MS ? "the step is over an hour old" : null;
+  const why = !o.enabled() ? "continueAfterReload is off" : c.reruns >= MAX_RERUNS ? `rerun ${c.reruns} times already` : stepAge(c.sid, c.cwd) >= RERUN_MAX_AGE_MS ? "the step is over an hour old" : null;
   if (why) {
     o.log(`${tag} the interrupted step is not continued: ${why}`);
     rec.chat.note(NO_REPLY_NOTE);
@@ -289,6 +299,12 @@ async function bringBack(o: RestoreCtx, c: SavedChat, fresh: boolean): Promise<v
   // A held rest's compaction will not come now, and images were not written down: those go to the draft.
   if (words.some((w) => w.held || w.images)) toDraft(o, rec, words);
   else if (words.length) rec.chat.restoreQueued(words);
+}
+
+/** How long ago the chat's transcript was last written — the step a reload cut off, as Claude Code dates it. */
+function stepAge(sid: string, cwd: string): number {
+  const file = findTranscript(sid, cwd || undefined);
+  return file ? Date.now() - (fs.statSync(file, { throwIfNoEntry: false })?.mtimeMs ?? 0) : Infinity;
 }
 
 /** The saved messages the CLI did not take after all: none whose uuid is on record in the transcript. */

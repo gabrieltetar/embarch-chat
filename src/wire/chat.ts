@@ -484,6 +484,25 @@ export class Chat extends EventEmitter {
     this.dispatch({ type: "_note", text: RERUN_OFFER_NOTE, tone: "info", offer: "rerun" });
   }
 
+  /**
+   * That offer ended with no process (63; review r5 N4): by the owner's
+   * click the step was past Claude Code's limits, and the CLI would start
+   * and rerun nothing. The chat says no reply follows, and the messages that
+   * waited for the step go back to the draft, marked not sent. How many.
+   */
+  withdrawRerun(): number {
+    this.dispatch({ type: "_offerEnd" });
+    this.dispatch({ type: "_note", text: NO_REPLY_NOTE, tone: "info" });
+    const back = this.takeRestored();
+    for (const r of back) {
+      const e = Object.values(this.state.entries).find((x) => x.kind === "user" && x.id.startsWith("s:") && x.uuid === r.uuid);
+      if (e?.kind !== "user") continue;
+      this.dispatch({ type: "_unsent", id: e.id });
+      if (e.text.trim()) this.emit("unsent", e.text);
+    }
+    return back.length;
+  }
+
   private uuidOf(entryId: string | null): string | undefined {
     const e = entryId ? this.state.entries[entryId] : undefined;
     return e?.kind === "user" ? e.uuid : undefined;
