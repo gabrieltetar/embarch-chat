@@ -1101,6 +1101,41 @@ test("a terminal picked from @ goes with the message as its last 100 lines, read
   }
 });
 
+test("a message that waits behind another's terminal read goes to the chat it was written in, though the sidebar shows another by then", { skip }, async () => {
+  let release;
+  const gate = new Promise((r) => (release = r));
+  mock.vscode.window.terminals = [{ name: "slow build", show: () => {} }];
+  // A read that takes a while, as select-copy on a long scrollback does.
+  mock.state.commands.set("workbench.action.terminal.selectAll", () => gate);
+  mock.state.commands.set("workbench.action.terminal.copySelection", () => void (mock.state.clipboard = "build output"));
+  mock.state.commands.set("workbench.action.terminal.clearSelection", () => {});
+  try {
+    const b = await startUntracked("basic");
+    const a = await startUntracked("basic");
+    chatView.webview.fromPage({ t: "send", text: "why does the build fail?", terminals: ["slow build"] });
+    chatView.webview.fromPage({ t: "send", text: "and the second question" });
+    await new Promise((r) => setTimeout(r, 100));
+    // The owner clicks another chat in the list before the first has gone.
+    threadsView.webview.fromPage({ t: "open", sid: b });
+    await waitFor(() => lastSnapshot()?.state.sessionId === b, 3000, "the other chat on screen");
+    release();
+    await new Promise((r) => setTimeout(r, 1000));
+    assert.ok(!calls().some((c) => c.argv.includes("--input-format") && c.argv.includes(b)), "nothing started the chat on screen");
+    const users = async (sid) => {
+      threadsView.webview.fromPage({ t: "open", sid });
+      const s = await waitFor(() => lastSnapshot()?.state.sessionId === sid && lastSnapshot(), 3000, "the chat on screen");
+      return Object.values(s.state.entries).filter((e) => e.kind === "user").map((e) => e.text);
+    };
+    // The recording's own echo joins them: its text is not what was sent.
+    const mine = ["why does the build fail?", "and the second question"];
+    assert.deepEqual((await users(a)).filter((t) => mine.includes(t)), mine, "both in the chat they were written in");
+    assert.deepEqual(await users(b), []);
+  } finally {
+    mock.vscode.window.terminals = [];
+    for (const c of ["selectAll", "copySelection", "clearSelection"]) mock.state.commands.delete(`workbench.action.terminal.${c}`);
+  }
+});
+
 test("keys: focus the chat's input, an @-mention of the selection, reopen the last closed chat tab — on chords Claude Code's own leave free (decision 59)", { skip }, async () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
   const keys = Object.fromEntries(pkg.contributes.keybindings.map((k) => [`${k.command} ${k.when}`, k.key]));

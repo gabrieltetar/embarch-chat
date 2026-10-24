@@ -278,8 +278,9 @@ export class ChatHost implements vscode.Disposable {
         // One that waits nowhere goes at once, as it always did.
         if (!this.waiting && rec.ours && !m.terminals?.length) return this.deliver(rec, m, []);
         this.waiting++;
+        // To the chat it was written in, whichever this page shows when its turn comes.
         this.sending = this.sending
-          .then(() => this.send(m))
+          .then(() => this.send(m, rec))
           .catch((e) => this.ctx.log(`send: ${(e as Error).message}`))
           .finally(() => void this.waiting--);
         return;
@@ -513,9 +514,12 @@ export class ChatHost implements vscode.Disposable {
     }
   }
 
-  private async send(m: Extract<ChatToHost, { t: "send" }>): Promise<void> {
-    const rec = this.sid ? this.ctx.chats.get(this.sid) : undefined;
-    if (!rec) return;
+  private async send(m: Extract<ChatToHost, { t: "send" }>, rec: ChatRecord): Promise<void> {
+    if (this.ctx.chats.get(rec.chat.sessionId) !== rec) {
+      // A read-only view dropped since, as another thread opened: the message stays with it, to copy.
+      this.ctx.chats.keepNote(rec.chat.sessionId, { type: "_note", text: "This chat was closed before your message went. Your message was not sent:", tone: "error", kept: m.text });
+      return;
+    }
     if (!rec.ours) {
       if (!(await this.ctx.resume(rec.chat.sessionId, m.text))) {
         this.snapshot();
