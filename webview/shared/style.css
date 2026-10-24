@@ -503,7 +503,7 @@ button.link-button:focus-visible {
 .reply-copy {
   font-size: 0.85em;
   color: var(--muted);
-  opacity: 0.7;
+  opacity: 0.8;
 }
 .timeline > div:hover .reply-copy,
 .reply-copy:focus-visible {
@@ -960,7 +960,7 @@ details.thinking .md {
   color: var(--accent);
 }
 .qa .qa-opt.dim {
-  opacity: 0.55;
+  opacity: 0.85;
 }
 .qa .qa-opt .desc {
   color: var(--muted);

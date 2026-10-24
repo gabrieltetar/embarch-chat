@@ -157,8 +157,8 @@ function StatusLine({ state, warning, bg }: { state: ChatState; warning: string 
   if (state.process === "closed" && state.timeline.length) parts.push(<span key="cl">Closed when idle — the next message resumes it.</span>);
   if (state.process === "error") parts.push(<span key="e" class="err">{state.processError ?? "claude failed"}</span>);
   if (state.background.length) parts.push(<span key="bg">{bg}</span>);
-  // Between turns, whether a message now reads the conversation from the prompt cache (69).
-  const cache = st !== "busy" ? cacheClock(state.cache, now) : null;
+  // Between turns, whether a message now reads the conversation from the prompt cache (69); not mid-turn, a card waiting on the owner included.
+  const cache = st === "idle" || st === "closed" ? cacheClock(state.cache, now) : null;
   if (cache) parts.push(<span key="pc" class={`cache ${cache.kind}`} title={cache.detail}>{cache.text}</span>);
   return (
     <>

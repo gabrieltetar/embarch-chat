@@ -29,11 +29,13 @@ const SHOTS = process.env.SHOTS;
 const THEME = `:root{--vscode-font-family:sans-serif;--vscode-font-size:13px;--vscode-editor-font-family:monospace;
 --vscode-foreground:#ccc;--vscode-sideBar-background:#1f1f1f;--vscode-editor-background:#1e1e1e;--vscode-input-background:#2a2a2a;
 --vscode-button-background:#0e639c;--vscode-button-foreground:#fff;--vscode-button-secondaryBackground:#3a3d41;--vscode-button-secondaryForeground:#ddd;
---vscode-descriptionForeground:#999;--vscode-textLink-foreground:#4daafc;--vscode-textCodeBlock-background:#2b2b2b;--vscode-panel-border:#333}`;
+--vscode-descriptionForeground:#999;--vscode-textLink-foreground:#4daafc;--vscode-textCodeBlock-background:#2b2b2b;--vscode-panel-border:#333;
+--vscode-editorWidget-background:#202020;--vscode-editorSuggestWidget-background:#202020}`;
 const THEME_LIGHT = `:root{--vscode-font-family:sans-serif;--vscode-font-size:13px;--vscode-editor-font-family:monospace;
 --vscode-foreground:#3b3b3b;--vscode-sideBar-background:#f8f8f8;--vscode-editor-background:#fff;--vscode-input-background:#fff;--vscode-input-border:#cecece;
 --vscode-button-background:#005fb8;--vscode-button-foreground:#fff;--vscode-button-secondaryBackground:#e5e5e5;--vscode-button-secondaryForeground:#3b3b3b;
---vscode-descriptionForeground:#3b3b3b;--vscode-textLink-foreground:#005fb8;--vscode-textCodeBlock-background:#f8f8f8;--vscode-panel-border:#e5e5e5}`;
+--vscode-descriptionForeground:#3b3b3b;--vscode-textLink-foreground:#005fb8;--vscode-textCodeBlock-background:#f8f8f8;--vscode-panel-border:#e5e5e5;
+--vscode-editorWidget-background:#f8f8f8;--vscode-editorSuggestWidget-background:#f8f8f8}`;
 const KINDS = { dark: { vars: THEME, body: "vscode-dark" }, light: { vars: THEME_LIGHT, body: "vscode-light" } };
 
 // The page VS Code would get (src/views/page.ts): the same strict CSP —

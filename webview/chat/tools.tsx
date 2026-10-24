@@ -309,6 +309,7 @@ function RunViewInner({ steps, entries, ctx, render }: RunProps) {
   const tools = steps.filter((e): e is ToolEntry => e.kind === "tool");
   const from = tools.find((t) => t.at !== undefined)?.at;
   const to = n.running || n.awaiting ? undefined : Math.max(0, ...tools.map((t) => t.doneAt ?? 0)) || undefined;
+  const mover = [...tools].reverse().find(movable);
   return (
     <div class="tool run">
       <div
@@ -326,8 +327,8 @@ function RunViewInner({ steps, entries, ctx, render }: RunProps) {
         {!n.awaiting && <Elapsed from={from} to={to} live={!!ctx.live} />}
         {n.awaiting ? <span class="st awaiting">{STATUS.awaiting}</span> : n.running ? <span class="spinner" /> : null}
       </div>
-      {/* Reachable folded: the run's latest step is the running one (port item 70); open, the step's own row has it. */}
-      {ctx.runInBackground && !open && head && movable(head) && <RunInBackground toolUseId={head.id} onMove={ctx.runInBackground} />}
+      {/* Reachable folded: the run's latest step that runs in the foreground — parallel calls can leave an earlier one (port item 70); open, the step's own row has it. */}
+      {ctx.runInBackground && !open && mover && <RunInBackground toolUseId={mover.id} onMove={ctx.runInBackground} />}
       {open && (
         <div class="steps">
           {steps.map((e) => (
