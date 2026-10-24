@@ -2051,9 +2051,9 @@ const longState = (lines = LONG, sessionId = SID) => core.reduceAll({ ...core.in
 const REPLY = streamedReply();
 const asyncExec = (script, args = []) => wd("POST", `${S}/execute/async`, { script, args });
 const atBottom = () => exec("const t=document.querySelector('.timeline'); return t.scrollHeight - t.scrollTop - t.clientHeight < 40");
-const longChat = async (lines) => {
+const longChat = async (lines, view = OURS) => {
   await go("/chat.html");
-  await send([snapshot(longState(lines))]);
+  await send([snapshot(longState(lines), view)]);
   await send([sent("Why does the sensor read zero after a flash?")]);
 };
 
@@ -2135,6 +2135,55 @@ await check("in a long chat, a late result changes its old row in place, a run o
   assert.deepEqual((await posts()).filter((p) => p.t === "rewind"), [{ t: "rewind", uuid: LONG[1].uuid, restore: "conversation" }]);
   await send(events(REPLY.deltas.slice(80, 120)));
   assert.equal((await text(".live.cursor")).length, 1, "still streaming");
+});
+
+await check("in a long chat, what comes later to an old turn shows there: a Keep result on its reply, the answer in its Questions row, a running step's clock; a compaction's summary in its card; the times over every message (68, 76, 79, 84)", async () => {
+  // A question in the second turn, answered late; the first edit still running, its clock from a few seconds ago.
+  const t2 = LONG.findIndex((o, i) => o.type === "user" && typeof o.message.content === "string" && i > 1);
+  const q = { question: "Which board should the flash go to?", header: "Board", multiSelect: false, options: [{ label: "DK", description: "the dev kit" }, { label: "EVK", description: "the eval kit" }] };
+  const ask = { type: "assistant", message: { id: "msg_ask", content: [{ type: "tool_use", id: "toolu_ask", name: "AskUserQuestion", input: { questions: [q] } }] }, timestamp: LONG[t2 + 1].timestamp };
+  const editUse = LONG.find((o) => o.type === "assistant" && o.message.content[0].name === "Edit");
+  const edit = editUse.message.content[0].id;
+  const lines = LONG.filter((o) => !(o.type === "user" && Array.isArray(o.message.content) && o.message.content[0].tool_use_id === edit)).map((o) => (o === editUse ? { ...o, timestamp: new Date(Date.now() - 5000).toISOString() } : o));
+  lines.splice(t2 + 2, 0, ask);
+  await longChat(lines, { ...OURS, timestamps: true });
+  await stubClipboard();
+  await send(events(REPLY.deltas.slice(0, 40)));
+  const stamps = (await text(".timeline .stamp")).length;
+  assert.equal(stamps, 60 + 120, "the owner's 60 messages and Claude's 120 text blocks have their times");
+  assert.ok((await text(".day-line")).length >= 1);
+  const qLine = () => exec("return [...document.querySelectorAll('.timeline .tool > .line')].find(l => l.querySelector('.name')?.textContent === 'Question').querySelector('.summary').textContent");
+  assert.equal(await qLine(), "Asked · 1 question");
+  // Keep on the first turn's reply.
+  await clearPosts();
+  await exec("document.querySelectorAll('.reply-acts')[0].querySelector('.keep button').click()");
+  await settle();
+  await exec("[...document.querySelectorAll('.reply-acts')[0].querySelectorAll('.keep.open button')].find((b) => b.textContent === 'finding').click()");
+  await settle();
+  const keep = (await posts()).find((p) => p.t === "keep");
+  assert.ok(keep, "Keep asked the host");
+  // The running edit's clock, the Keep result and the answer, between deltas.
+  const clock = () => exec("return [...document.querySelectorAll('.timeline > div > .tool:not(.run)')].find(t => t.querySelector(':scope > .line .spinner') && t.querySelector(':scope > .line .name').textContent === 'Edit').querySelector('.elapsed').textContent");
+  const before = await clock();
+  await sleep(1200);
+  await send([{ t: "kept", entryId: keep.entryId, kind: "finding" }, ...events(REPLY.deltas.slice(40, 60))]);
+  assert.notEqual(await clock(), before, `the old step's clock ticks: ${before}`);
+  assert.deepEqual(await text(".kept-line"), ["✓ Kept on the work item as a finding"]);
+  const answer = { type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_ask", content: `User has answered your questions: "${q.question}"="DK". You can now continue with the user's answers in mind.` }] }, tool_use_result: { answers: { [q.question]: "DK" } } };
+  await send(events([answer, ...REPLY.deltas.slice(60, 100)]));
+  assert.equal(await qLine(), "Answered · 1 question");
+  assert.deepEqual(await text(".qa .qa-opt.picked > span:last-child > div:first-child"), ["DK"], "the row opened to the pick");
+  await send(events(REPLY.deltas.slice(100, 140)));
+  assert.deepEqual(await text(".kept-line"), ["✓ Kept on the work item as a finding"], "kept through more deltas");
+  assert.equal((await text(".timeline .stamp")).length, stamps, "and the times");
+  // The reply lands; a compaction's card, then its summary.
+  await send(events([...REPLY.deltas.slice(140), ...REPLY.done]));
+  await send([{ t: "event", e: { type: "_sent", n: 2, text: "/compact" } }, ...events([{ type: "system", subtype: "compact_boundary", compact_metadata: { trigger: "manual", pre_tokens: 120_000 } }])]);
+  assert.deepEqual(await text("details.compacted > summary"), ["Compacted chat · manual · 120k tokens freed"]);
+  await click("details.compacted > summary");
+  await send(events([{ type: "user", isCompactSummary: true, message: { role: "user", content: "This session is being continued from a previous conversation. The board is the DK." } }]));
+  assert.ok((await text("details.compacted .compact-summary"))[0].includes("The board is the DK."));
+  assert.equal(await exec("return document.querySelector('details.compacted').open"), true, "still open");
 });
 
 await check("a streaming reply is parsed in finished pieces and its last one: it shows as the whole reply does once it lands", async () => {
