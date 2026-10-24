@@ -291,6 +291,9 @@ export class Chat extends EventEmitter {
     proc.on("initialized", (r: Record<string, unknown>) => {
       if (this.proc !== proc) return;
       if (Array.isArray(r.models)) this.dispatch({ type: "_models", models: modelInfos(r.models) });
+      // Whether a bridge the CLI starts by itself is Claude Code's default's doing, not the owner's setting: its notice then says so (83; review r4 L6).
+      const byDefault = r.remote_control_auto_enable === true && r.remote_control_auto_on_by_default === true;
+      if (byDefault !== !!this.state.remoteByDefault) this.dispatch({ type: "_remoteDefault", on: byDefault });
       void this.readSettings();
     });
     // Their callbacks are answered in process.ts and never reach the refusal below (66).
@@ -986,12 +989,14 @@ export class Chat extends EventEmitter {
    * process if none runs — the bridge takes a chat before its first
    * message [measured] — and holds it open; off, or on a failure, dismiss.
    * A permission prompt still comes here too [measured]; one answered on
-   * the phone is withdrawn here by the CLI's `control_cancel_request`.
+   * the phone is withdrawn here by the CLI's `control_cancel_request`. A
+   * bridge the CLI started by itself turns off the same way.
    */
   async remoteControl(name?: string): Promise<void> {
     const was = this.state.remote;
     if (was) {
-      this.dispatch({ type: "_remote", remote: null });
+      // That bridge's own lines, still coming, must not turn it on again; with no epoch known, none of this process's.
+      this.dispatch({ type: "_remote", remote: null, off: was.epoch ?? Number.MAX_SAFE_INTEGER });
       if (!this.running) return;
       try {
         await this.proc!.request("remote_control", { enabled: false });

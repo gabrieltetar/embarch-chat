@@ -675,6 +675,10 @@ await check("the Remote Control pill, in Claude Code's words: connecting, then o
   assert.deepEqual(await exec("const p = document.querySelector('.composer .pill.remote.bad'); return [p.textContent, p.title]"), ["Remote Control ✗", "Remote Control error: the session expired · Run /remote-control to dismiss"]);
   await send([{ t: "event", e: { type: "_remote", remote: null } }]);
   assert.equal((await text(".composer .pill.remote")).length, 0, "dismissed");
+  // A bridge Claude Code started by itself, not /remote-control here: on all the same, with no link to open (review r4 L6).
+  await send([{ t: "event", e: { type: "system", subtype: "bridge_state", state: "connected", bridge_epoch: 7 } }]);
+  const auto = await exec("const p = document.querySelector('.composer .pill.remote.on'); return p && [p.tagName, p.textContent, p.title]");
+  assert.deepEqual(auto, ["SPAN", "Remote Control", "Remote Control is active: Claude Code started it for this session · Run /remote-control to turn off"]);
 });
 
 await check("Keep, on a block of Claude's reply, sends it to the work item as a finding or a decision: in one row with the turn's Copy under its last block, under the pointer on an earlier one; a subagent's text has none (decisions 40, 74)", async () => {

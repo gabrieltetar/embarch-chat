@@ -1298,9 +1298,41 @@ test("Remote Control's failures stay on the pill until dismissed; a bridge of an
   assert.deepEqual(s.remote, { status: "failed", url: "https://claude.ai/code/session_x", epoch: 2, error: "the bridge lost its session" });
   s = core.reduce(s, { type: "_process", state: "closed" });
   assert.equal(s.remote, null);
-  // Off, nothing the bridge says turns it on.
-  s = core.reduce(s, { type: "system", subtype: "bridge_state", state: "connected" });
-  assert.equal(s.remote, null);
+  // Turned off by the owner, the bridge that went says nothing more; one the CLI starts by itself is on (review r4 L6).
+  s = core.reduce(s, { type: "_remote", remote: { status: "connected", url: "https://claude.ai/code/session_y", epoch: 3 } });
+  s = core.reduce(s, { type: "_remote", remote: null, off: 3 });
+  s = core.reduce(s, { type: "system", subtype: "bridge_state", state: "connected", bridge_epoch: 3 });
+  assert.equal(s.remote, null, "the bridge just turned off");
+  s = core.reduce(s, { type: "system", subtype: "bridge_state", state: "connected", bridge_epoch: 4 });
+  assert.deepEqual(s.remote, { status: "connected", auto: true, epoch: 4 }, "a new one, started by the CLI");
+  assert.ok(!Object.values(s.entries).some((e) => e.kind === "note"), "the owner's own setting turned it on: no notice");
+});
+
+test("a bridge the CLI starts by itself is on: the pill, the process held open, and — when Claude Code's default turned it on — its notice, once; /remote-control turns it off (decision 83; review r4 L6)", async () => {
+  // The recorded session, as a CLI whose remoteControlAtStartup default bridges every session would send it: no remote_control from the panel, the bridge connecting on its own.
+  const lines = fs.readFileSync(fixture("remote"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  const rc1 = lines.find((e) => e.d === "in" && e.o.request?.subtype === "remote_control").o.request_id;
+  const auto = lines
+    .filter((e) => e.o.request_id !== rc1 && e.o.response?.request_id !== rc1)
+    .map((e) => (e.o.response?.request_id === "init-1" ? { ...e, o: { ...e.o, response: { ...e.o.response, response: { ...e.o.response.response, remote_control_auto_enable: true, remote_control_auto_on_by_default: true } } } } : e));
+  const file = path.join(tmp("rcauto-"), "remote-auto.jsonl");
+  fs.writeFileSync(file, auto.map((e) => JSON.stringify(e)).join("\n") + "\n");
+  const { chat, inputs, events } = makeChat("remote", { mode: "default", fixture: file });
+  chat.send("Reply with just: ok");
+  await turns(chat, 1);
+  await waitFor(() => chat.state.remote?.status === "connected");
+  assert.deepEqual(chat.state.remote, { status: "connected", auto: true, epoch: 1 });
+  assert.equal(chat.holdReason(), "Remote Control is on", "an idle close would end the phone's session");
+  const notices = () => Object.values(chat.state.entries).filter((e) => e.kind === "note" && e.text === core.REMOTE_DEFAULT_NOTICE);
+  assert.equal(notices().length, 1);
+  assert.match(core.REMOTE_DEFAULT_NOTICE, /To keep sessions in this IDE only, turn off "Enable Remote Control for all sessions" in Claude settings/, "Claude Code's words");
+  // The page folds the same lines to the same state.
+  assert.deepEqual(core.reduceAll(core.initialState(chat.sessionId, "default"), events).remote, chat.state.remote);
+  await chat.remoteControl();
+  assert.equal(chat.state.remote, null);
+  assert.deepEqual(inputs().filter((o) => o.request?.subtype === "remote_control").map((o) => o.request.enabled), [false], "the panel only turned it off");
+  assert.equal(chat.holdReason(), null);
+  chat.dispose();
 });
 
 test("the MCP server answers what it does not serve with an error, a notification with nothing, and a failing tool as a tool error", async () => {

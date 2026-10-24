@@ -131,7 +131,17 @@ export interface RemoteState {
   /** The bridge's epoch: a bridge_state of an older one says nothing of this. */
   epoch?: number;
   error?: string;
+  /** Started by the CLI itself (its `remoteControlAtStartup`), not by `/remote-control` here: no link to open. */
+  auto?: boolean;
 }
+
+/**
+ * Claude Code's notice for a bridge its default turned on (its
+ * `showRemoteControlAutoOnDisclosure`, 2.1.309), with where that setting
+ * lives for a reader of this panel.
+ */
+export const REMOTE_DEFAULT_NOTICE =
+  'Remote Control is on: Claude Code\'s default turned it on for this session. Keep working from anywhere: check progress or reply to this session from the mobile app, desktop app, or claude.ai. To keep sessions in this IDE only, turn off "Enable Remote Control for all sessions" in Claude settings (remoteControlAtStartup in ~/.claude/settings.json).';
 
 /** The prompt cache the next message would read (decision 69): written at `at` for `ttl` ms; a compaction since leaves it behind. */
 export interface CacheWindow {
@@ -209,6 +219,12 @@ export interface ChatState {
   applied: AppliedSettings | null;
   /** Remote Control while it is on or has failed; null when off. */
   remote: RemoteState | null;
+  /** The epoch of the bridge the owner turned off: its own lines do not turn it on again. Until the process goes. */
+  remoteOff?: number;
+  /** initialize said Claude Code's default, not the owner's setting, turns the bridge on at startup. */
+  remoteByDefault?: boolean;
+  /** Claude Code's notice for such a bridge was shown in this chat: once is enough. */
+  remoteDisclosed?: boolean;
   /** The note that offers to continue the step a reload interrupted (63), until a process starts. */
   rerunOffer: string | null;
   seq: number;
@@ -596,10 +612,21 @@ function foldSystem(s: ChatState, o: WireMessage): ChatState {
     }
     case "session_title_changed":
       return typeof o.title === "string" ? { ...s, title: o.title } : s;
-    // The bridge to claude.ai/code, while Remote Control is on: "ready" comes with every process and says nothing of it.
+    // The bridge to claude.ai/code: "ready" comes with every process and says nothing of it.
     case "bridge_state": {
       const r = s.remote;
-      if (!r || (typeof o.bridge_epoch === "number" && r.epoch !== undefined && o.bridge_epoch !== r.epoch)) return s;
+      // One the panel did not start — the CLI's own remoteControlAtStartup —
+      // is on all the same (review r4 L6): the pill shows it and the process
+      // stays up (83); when Claude Code's default turned it on, its notice
+      // says so, once. The bridge the owner just turned off is not.
+      if (!r) {
+        if (o.state !== "connected") return s;
+        const epoch = typeof o.bridge_epoch === "number" ? o.bridge_epoch : undefined;
+        if (s.remoteOff !== undefined && (epoch === undefined || epoch <= s.remoteOff)) return s;
+        const on: ChatState = { ...s, remote: { status: "connected", auto: true, ...(epoch !== undefined ? { epoch } : {}) } };
+        return s.remoteByDefault && !s.remoteDisclosed ? note({ ...on, remoteDisclosed: true }, REMOTE_DEFAULT_NOTICE, "info") : on;
+      }
+      if (typeof o.bridge_epoch === "number" && r.epoch !== undefined && o.bridge_epoch !== r.epoch) return s;
       if (o.state === "connected") return { ...s, remote: { ...r, status: "connected", ...(typeof o.bridge_epoch === "number" ? { epoch: o.bridge_epoch } : {}) } };
       if (o.state === "failed" || o.state === "policy_disabled") return { ...s, remote: { ...r, status: "failed", error: typeof o.detail === "string" && o.detail ? o.detail : String(o.state) } };
       return s;
@@ -785,7 +812,7 @@ export function reduce(s: ChatState, o: WireMessage): ChatState {
         ...s,
         process: o.state as ProcessState,
         processError: (o.error as string) ?? null,
-        ...(gone ? { busy: false, streaming: null, pending: [], compacting: false, applied: null, remote: null, background: [] } : {}),
+        ...(gone ? { busy: false, streaming: null, pending: [], compacting: false, applied: null, remote: null, remoteOff: undefined, background: [] } : {}),
         // Any process ends the offer to continue a step (63): the owner went on another way, or took it.
         ...(o.state === "starting" ? { rerunOffer: null } : {}),
       };
@@ -819,8 +846,13 @@ export function reduce(s: ChatState, o: WireMessage): ChatState {
       return { ...s, models: o.models as ModelInfo[] };
     case "_applied":
       return { ...s, applied: o.applied as AppliedSettings };
-    case "_remote":
-      return { ...s, remote: (o.remote as RemoteState | null) ?? null };
+    case "_remote": {
+      // Turned off by the owner: `off` is the epoch of the bridge that went.
+      const remote = (o.remote as RemoteState | null) ?? null;
+      return { ...s, remote, remoteOff: !remote && typeof o.off === "number" ? o.off : undefined };
+    }
+    case "_remoteDefault":
+      return { ...s, remoteByDefault: o.on === true };
     case "_effort":
       return { ...s, effort: typeof o.effort === "string" ? o.effort : null, ultracode: o.ultracode === true };
     case "_model":

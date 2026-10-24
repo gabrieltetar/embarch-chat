@@ -10,10 +10,10 @@
 // starts; the model list is the panel's (MODELS), as before.
 //
 // Remote Control is Claude Code's footer pill (its changelog L5709, L2097):
-// shown while `/remote-control` has it on or it has failed; on, a click
-// opens the chat's session on claude.ai/code, where a permission prompt can
-// be answered from the phone; failed, it says why until /remote-control
-// dismisses it.
+// shown while `/remote-control` has it on, or the CLI started the bridge
+// itself, or it has failed; on, a click opens the chat's session on
+// claude.ai/code, where a permission prompt can be answered from the phone;
+// failed, it says why until /remote-control dismisses it.
 //
 // MCP is Claude Code's `/mcp` dialog (its changelog L6014): every server of
 // the chat's CLI with its state, Reconnect, Disable and Enable. Reconnect
@@ -261,6 +261,15 @@ export function RemotePill({ state }: { state: ChatState }) {
       <button class="pill remote on" title="Remote Control is active · Click to open claude.ai/code · Run /remote-control to turn off" onClick={() => post({ t: "openLink", url })}>
         Remote Control
       </button>
+    );
+  }
+  // On, though not by /remote-control here: Claude Code started the bridge itself, and named no link (review r4 L6).
+  if (r.status === "connected") {
+    const tip = "Remote Control is active: Claude Code started it for this session · Run /remote-control to turn off";
+    return (
+      <span class="pill remote on" role="status" aria-label={tip} title={tip}>
+        Remote Control
+      </span>
     );
   }
   const tip = r.status === "failed" ? `Remote Control error: ${r.error ?? "unknown"} · Run /remote-control to dismiss` : "Connecting to claude.ai/code…";
