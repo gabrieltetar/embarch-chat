@@ -32,7 +32,7 @@ import { IMAGE_TYPES } from "../wire/message";
 import type { EditorContext, EditorItem } from "../editorContext";
 import { editorItem, editorLabel } from "../editorContext";
 import { terminalOutput } from "../terminals";
-import type { ChatToHost, Header, HostToChat } from "../../webview/shared/protocol";
+import type { ChatToHost, Header, HostToChat, TerminalRef } from "../../webview/shared/protocol";
 
 export interface HostCtx {
   chats: ChatManager;
@@ -111,6 +111,10 @@ export function assistInput(ctx: HostCtx, rec: ChatRecord, draft: string): Assis
 
 /** A pasted image as the page sent it: one of the API's types, base64. */
 const isImage = (i: Attachment) => !!i && IMAGE_TYPES.includes(i.mediaType) && typeof i.data === "string" && /^[A-Za-z0-9+/=]+$/.test(i.data);
+
+/** A terminal as the page sent it back: one the @ list named (58). */
+const isTerminalRef = (r: TerminalRef) =>
+  !!r && typeof r === "object" && typeof r.name === "string" && Number.isInteger(r.index) && r.index >= 0 && (r.pid === undefined || Number.isInteger(r.pid));
 
 /** The editor's file or selection as the page sent it back: one the host gave it (60). */
 function editorBack(e: EditorItem | undefined): ContextItem[] {
@@ -542,12 +546,12 @@ export class ChatHost implements vscode.Disposable {
     // A terminal's output is read now, as Claude Code reads it at send (58);
     // reading it shows the terminal, so the page gets focus back after.
     const terminals: ContextItem[] = [];
-    const names = (m.terminals ?? []).filter((n) => typeof n === "string");
-    for (const name of names) {
-      const text = await terminalOutput(name, this.ctx.log);
-      if (text !== null) terminals.push({ kind: "terminal", name, text });
+    const refs = (m.terminals ?? []).filter(isTerminalRef);
+    for (const ref of refs) {
+      const text = await terminalOutput(ref, this.ctx.log);
+      if (text !== null) terminals.push({ kind: "terminal", name: ref.name, text });
     }
-    if (names.length) this.focusInput();
+    if (refs.length) this.focusInput();
     this.deliver(rec, m, terminals);
   }
 

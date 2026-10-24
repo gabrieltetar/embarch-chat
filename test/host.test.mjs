@@ -1181,43 +1181,57 @@ test("the open file and the selection go with a message by default, as Claude Co
   }
 });
 
-test("a terminal picked from @ goes with the message as its last 100 lines, read at send; the clipboard is put back (decision 58)", { skip }, async () => {
+test("a terminal picked from @ goes with the message as its last 100 lines, read at send without taking focus; the clipboard is put back; two of one name are told apart by their process (decision 58; review r4 L2)", { skip }, async () => {
   const inputs = path.join(dir, "inputs-58.jsonl");
   process.env.FAKE_CLAUDE_INPUT_LOG = inputs;
   const buffer = Array.from({ length: 150 }, (_, i) => `[${i + 1}/150] Building C object`).join("\n") + "\nerror: 'x' undeclared\n\n\n";
   let selected = false;
-  let shown = 0;
-  const term = (name) => ({ name, show: () => void shown++ });
-  mock.vscode.window.terminals = [term("west build"), term("minicom")];
-  const copies = { "west build": buffer, minicom: null };
-  let active = "west build";
-  mock.vscode.window.terminals[1].show = () => ((active = "minicom"), shown++);
-  mock.vscode.window.terminals[0].show = () => ((active = "west build"), shown++);
+  const shows = [];
+  let active = null;
+  // A terminal with a process says its id; minicom here (an extension's pseudoterminal, say) has none.
+  const term = (name, pid) => {
+    const t = { name, processId: Promise.resolve(pid), show: (preserveFocus) => ((active = t), shows.push([name, preserveFocus])) };
+    return t;
+  };
+  mock.vscode.window.terminals = [term("west build", 4101), term("minicom", undefined), term("bash", 4103), term("bash", 4104)];
+  const [west, minicom, bash1, bash2] = mock.vscode.window.terminals;
+  const copies = new Map([[west, buffer], [minicom, null], [bash1, "the first bash"], [bash2, "the second bash"]]);
   mock.state.commands.set("workbench.action.terminal.selectAll", () => void (selected = true));
   // A terminal that copies nothing (minicom here) leaves the clipboard as it was.
-  mock.state.commands.set("workbench.action.terminal.copySelection", () => void (selected && copies[active] !== null && (mock.state.clipboard = copies[active])));
+  mock.state.commands.set("workbench.action.terminal.copySelection", () => void (selected && copies.get(active) !== null && (mock.state.clipboard = copies.get(active))));
   mock.state.commands.set("workbench.action.terminal.clearSelection", () => void (selected = false));
   mock.state.clipboard = "the owner's own clipboard";
   try {
     await startUntracked("basic");
     chatView.webview.fromPage({ t: "mention", q: "term" });
     const m = await waitFor(() => posted((x) => x.t === "mentions" && x.q === "term"), 3000, "the @ list");
-    assert.deepEqual(m.items.filter((i) => i.terminal).map((i) => [i.label, i.detail]), [["west build", "terminal output"], ["minicom", "terminal output"]]);
-    chatView.webview.fromPage({ t: "send", text: "why does the build fail?", terminals: ["west build", "minicom", "gone"] });
+    assert.deepEqual(
+      m.items.filter((i) => i.terminal).map((i) => [i.label, i.detail, i.terminal]),
+      [
+        ["west build", "terminal output", { name: "west build", index: 0, pid: 4101 }],
+        ["minicom", "terminal output", { name: "minicom", index: 1 }],
+        ["bash", "terminal output · pid 4103", { name: "bash", index: 2, pid: 4103 }],
+        ["bash", "terminal output · pid 4104", { name: "bash", index: 3, pid: 4104 }],
+      ],
+      "every terminal, two of one name told apart",
+    );
+    const picked = [m.items[0].terminal, m.items[1].terminal, m.items[3].terminal, { name: "gone", index: 7, pid: 9999 }];
+    chatView.webview.fromPage({ t: "send", text: "why does the build fail?", terminals: picked });
     await waitFor(() => fs.existsSync(inputs) && fs.readFileSync(inputs, "utf8").includes("why does the build fail?"), 5000, "the message");
     const line = fs.readFileSync(inputs, "utf8").trim().split("\n").map((l) => JSON.parse(l).o).find((o) => o.type === "user");
     const want = buffer.trimEnd().split("\n").slice(-100).join("\n");
     assert.deepEqual(line.message.content, [
       { type: "text", text: `<terminal name="west build">\n${want}\n</terminal>` },
+      { type: "text", text: `<terminal name="bash">\nthe second bash\n</terminal>` },
       { type: "text", text: "why does the build fail?" },
-    ], "only the terminal that copied: never the owner's clipboard as a terminal's output");
+    ], "only the terminals that copied, the second bash the one picked: never the owner's clipboard as a terminal's output");
     assert.ok(want.startsWith("[52/150]") && want.endsWith("error: 'x' undeclared"));
     assert.equal(mock.state.clipboard, "the owner's own clipboard", "put back");
-    assert.ok(shown >= 2);
+    assert.deepEqual(shows, [["west build", true], ["minicom", true], ["bash", true]], "each shown without taking focus: keys typed meanwhile stay out of the shell");
     assert.ok(posted((x) => x.t === "focus"), "the input gets focus back from the terminal");
     assert.ok(mock.state.executed.includes("embarchChat.chat.focus"), "and the view its");
     const sent = posted((x) => x.t === "event" && x.e.type === "_sent");
-    assert.deepEqual(sent.e.context, [{ kind: "terminal", name: "west build", text: want }]);
+    assert.deepEqual(sent.e.context, [{ kind: "terminal", name: "west build", text: want }, { kind: "terminal", name: "bash", text: "the second bash" }]);
   } finally {
     delete process.env.FAKE_CLAUDE_INPUT_LOG;
     mock.vscode.window.terminals = [];
@@ -1236,7 +1250,7 @@ test("a message that waits behind another's terminal read goes to the chat it wa
   try {
     const b = await startUntracked("basic");
     const a = await startUntracked("basic");
-    chatView.webview.fromPage({ t: "send", text: "why does the build fail?", terminals: ["slow build"] });
+    chatView.webview.fromPage({ t: "send", text: "why does the build fail?", terminals: [{ name: "slow build", index: 0 }] });
     chatView.webview.fromPage({ t: "send", text: "and the second question" });
     await new Promise((r) => setTimeout(r, 100));
     // The owner clicks another chat in the list before the first has gone.

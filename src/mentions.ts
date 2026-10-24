@@ -6,7 +6,7 @@
 import * as path from "path";
 import * as vscode from "vscode";
 import type { MentionItem } from "../webview/shared/protocol";
-import { terminalNames } from "./terminals";
+import { terminalRefs } from "./terminals";
 
 const EXCLUDE = "**/{node_modules,.git,target,build,dist,out,.venv,__pycache__}/**";
 let cache: { at: number; files: vscode.Uri[] } | null = null;
@@ -42,9 +42,14 @@ export async function mentionItems(q: string, cwd: string): Promise<MentionItem[
     if (!q || rel(cwd, ed.document.uri.fsPath).toLowerCase().includes(q.toLowerCase())) out.push({ insert, label: insert, detail: "selected lines" });
   }
   const needle = q.toLowerCase();
-  for (const name of terminalNames()) {
+  // Each terminal, two of one name told apart by their process (58).
+  const terms = await terminalRefs();
+  for (const t of terms) {
+    const name = t.name;
     if (needle && !name.toLowerCase().includes(needle) && !"terminal".startsWith(needle)) continue;
-    out.push({ insert: name, label: name, detail: "terminal output", terminal: name });
+    const twin = terms.filter((x) => x.name === name).length > 1;
+    const which = twin ? (t.pid !== undefined ? ` · pid ${t.pid}` : ` · #${t.index + 1}`) : "";
+    out.push({ insert: name, label: name, detail: `terminal output${which}`, terminal: t });
   }
   const scored: Array<{ s: number; p: string }> = [];
   for (const u of await files()) {

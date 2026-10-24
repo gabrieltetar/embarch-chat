@@ -84,19 +84,30 @@ export type KeepKind = "finding" | "decision";
 /** What a rewind restores (decision 73), as Claude Code's panel offers it: the conversation always as a fork. */
 export type Restore = "both" | "conversation" | "code";
 
+/**
+ * A terminal as the @ list offered it (58): by its process id, else by its
+ * place in the window's list — never by its name alone, which two terminals
+ * can share (review r4 L2).
+ */
+export interface TerminalRef {
+  name: string;
+  pid?: number;
+  index: number;
+}
+
 export interface MentionItem {
   /** What goes after the @. */
   insert: string;
   label: string;
   detail?: string;
-  /** A terminal, by name: picked, its output goes with the message as a chip, not as text (58). */
-  terminal?: string;
+  /** A terminal: picked, its output goes with the message as a chip, not as text (58). */
+  terminal?: TerminalRef;
 }
 
 export type ChatToHost =
   | { t: "ready" }
   /** A message: pasted images go with it, and the long pastes it holds, for the CLI to mark (56). */
-  | { t: "send"; text: string; handoff?: boolean; images?: Attachment[]; pastes?: string[]; editor?: EditorItem; terminals?: string[] }
+  | { t: "send"; text: string; handoff?: boolean; images?: Attachment[]; pastes?: string[]; editor?: EditorItem; terminals?: TerminalRef[] }
   /** `mode`: a plan approved into auto mode, or into ask mode (77); `always`: the suggestions kept (`picks`), saved to `destination` (78). */
   | { t: "allow"; requestId: string; always?: boolean; picks?: number[]; destination?: string; mode?: "auto" | "default" }
   /** Where the owner chose to save an "always allow", remembered (78). */

@@ -34,7 +34,7 @@ import { byCategory, invocation } from "../../src/library/entries";
 import type { Attachment } from "../../src/wire/message";
 import type { EditorItem } from "../../src/editorContext";
 import { IMAGE_TYPES, looksBinary, pasteToMark, pastesIn, rememberPaste, stripInvisible, strippedNotice } from "../../src/wire/message";
-import type { HostToChat, MentionItem } from "../shared/protocol";
+import type { HostToChat, MentionItem, TerminalRef } from "../shared/protocol";
 import { MODES } from "../shared/protocol";
 import { vscodeApi } from "../shared/vscode";
 import { CategoryMenu, MenuGroup } from "./menus";
@@ -82,7 +82,7 @@ export interface SendOpts {
   /** The editor's file or selection (60). */
   editor?: EditorItem;
   /** Terminals whose output goes with it, by name (58). */
-  terminals?: string[];
+  terminals?: TerminalRef[];
 }
 
 export type EditorChip = EditorItem & { label: string };
@@ -118,6 +118,19 @@ function saveDraft(sid: string, text: string): void {
 }
 
 const words = (s: string) => s.trim().split(/\s+/).filter(Boolean).length;
+
+/** One terminal of the window's, though two share a name (58). */
+const termKey = (t: TerminalRef) => (t.pid !== undefined ? `p${t.pid}` : `i${t.index}`);
+
+/**
+ * What a terminal chip tells before it goes (58, review r4 L2): VS Code lets
+ * no extension read a terminal, so its text is selected and copied — the
+ * clipboard holds it for a moment, and only text on the clipboard comes
+ * back.
+ */
+const terminalTip = (t: TerminalRef) =>
+  `${t.name}${t.pid !== undefined ? ` (pid ${t.pid})` : ""}: its last 100 lines go with the message, read when it goes.\n` +
+  "Read by selecting the terminal's text and copying it: the clipboard is used for a moment, then its text put back — an image or anything else on the clipboard that is not text is lost.";
 
 /**
  * Text the host gives back to a chat's draft (a held message not sent, a
@@ -163,7 +176,7 @@ export function Composer(p: Props) {
   asideNow.current = aside;
   const [images, setImages] = useState<Image[]>([]);
   /** Terminals picked from the @ list (58). */
-  const [terminals, setTerminals] = useState<string[]>([]);
+  const [terminals, setTerminals] = useState<TerminalRef[]>([]);
   const terminalsNow = useRef(terminals);
   terminalsNow.current = terminals;
   /** The editor chip whose × was clicked: kept out until the file or selection changes. */
@@ -419,8 +432,8 @@ export function Composer(p: Props) {
     const caret = el.selectionStart;
     if (it.terminal) {
       // Not text: a chip, its output read when the message goes (58).
-      const name = it.terminal;
-      setTerminals((cur) => (cur.includes(name) ? cur : [...cur, name]));
+      const term = it.terminal;
+      setTerminals((cur) => (cur.some((x) => termKey(x) === termKey(term)) ? cur : [...cur, term]));
       const next = text.slice(0, pop.start) + text.slice(caret);
       setText(next);
       typed(next);
@@ -785,7 +798,7 @@ export function Composer(p: Props) {
       {pop && pop.items.length > 0 && (
         <div class="popup">
           {pop.items.map((it, i) => (
-            <div key={`${it.terminal ? "t:" : ""}${it.insert}`} class={i === pop.on ? "on" : ""} onMouseDown={(e) => (e.preventDefault(), choose(it))}>
+            <div key={it.terminal ? `t:${termKey(it.terminal)}` : it.insert} class={i === pop.on ? "on" : ""} onMouseDown={(e) => (e.preventDefault(), choose(it))}>
               {it.label}
               {it.detail && <span class="detail">{it.detail}</span>}
             </div>
@@ -855,11 +868,11 @@ export function Composer(p: Props) {
       {notice && <div class="paste-notice muted">{notice}</div>}
       {(images.length > 0 || edChip || terminals.length > 0) && (
         <div class="attachments">
-          {terminals.map((name) => (
-            <span key={`t:${name}`} class="ctx-chip" title="Its last 100 lines go with the message, read when it goes">
+          {terminals.map((term) => (
+            <span key={`t:${termKey(term)}`} class="ctx-chip" title={terminalTip(term)}>
               <span class="ctx-kind">Terminal</span>
-              <span class="ctx-label">{name}</span>
-              <button class="icon remove" title="Don't send it" onClick={() => setTerminals((cur) => cur.filter((x) => x !== name))}>
+              <span class="ctx-label">{term.name}</span>
+              <button class="icon remove" title="Don't send it" onClick={() => setTerminals((cur) => cur.filter((x) => termKey(x) !== termKey(term)))}>
                 ×
               </button>
             </span>

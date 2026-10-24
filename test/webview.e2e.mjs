@@ -2512,11 +2512,15 @@ await check("a terminal picked from @ is a chip under the input, not text; its n
   await fresh({}, false);
   await type("see @term");
   await waitFor_(async () => (await posts()).some((p) => p.t === "mention" && p.q === "term"));
-  await send([{ t: "mentions", q: "term", items: [{ insert: "west build", label: "west build", detail: "terminal output", terminal: "west build" }, { insert: "terminal.c", label: "terminal.c" }] }]);
+  await send([{ t: "mentions", q: "term", items: [{ insert: "west build", label: "west build", detail: "terminal output", terminal: { name: "west build", index: 0, pid: 4101 } }, { insert: "terminal.c", label: "terminal.c" }] }]);
   assert.equal((await text(".popup div")).length, 2);
   await type(ENTER);
   assert.equal(await value(), "see ", "the @ text goes; nothing inserted");
   assert.equal(await chipText(), "Terminalwest build×");
+  // Before it goes, the chip says how it is read: through the clipboard, whose text comes back and nothing else does (review r4 L2).
+  const tip = await exec("return document.querySelector('.composer .ctx-chip').title");
+  assert.match(tip, /^west build \(pid 4101\): its last 100 lines go with the message/);
+  assert.match(tip, /the clipboard is used for a moment, then its text put back — an image or anything else on the clipboard that is not text is lost/);
   await shot("terminal-chip");
   const clear = () => exec("const t=document.querySelector('.composer textarea'); t.value=''; t.dispatchEvent(new Event('input', {bubbles:true}))");
   await clear();
@@ -2527,11 +2531,11 @@ await check("a terminal picked from @ is a chip under the input, not text; its n
   await clearPosts();
   await type("why does it fail?" + ENTER);
   const [m] = await sends();
-  assert.deepEqual([m.text, m.terminals], ["why does it fail?", ["west build"]]);
+  assert.deepEqual([m.text, m.terminals], ["why does it fail?", [{ name: "west build", index: 0, pid: 4101 }]], "the terminal the list offered, by its process");
   assert.equal(await chipText(), null, "sent: gone");
   // × takes one off.
   await type("@term");
-  await send([{ t: "mentions", q: "term", items: [{ insert: "minicom", label: "minicom", detail: "terminal output", terminal: "minicom" }] }]);
+  await send([{ t: "mentions", q: "term", items: [{ insert: "minicom", label: "minicom", detail: "terminal output", terminal: { name: "minicom", index: 1 } }] }]);
   await type(ENTER);
   await click(".composer .ctx-chip .remove");
   await settle();
@@ -2548,7 +2552,7 @@ await check("the page's own commands leave what waits to go: a screenshot, the s
   await waitFor_(async () => (await exec("return document.querySelectorAll('.composer .thumb').length")) === 1);
   await send([{ t: "editor", editor: { ...SEL, label: "src/main.c#L10-24" } }]);
   await type("@term");
-  await send([{ t: "mentions", q: "term", items: [{ insert: "west build", label: "west build", detail: "terminal output", terminal: "west build" }] }]);
+  await send([{ t: "mentions", q: "term", items: [{ insert: "west build", label: "west build", detail: "terminal output", terminal: { name: "west build", index: 0, pid: 4101 } }] }]);
   await type(ENTER);
   for (const cmd of ["/copy", "/mcp"]) {
     await type(`${cmd} ${ENTER}`);
@@ -2561,7 +2565,7 @@ await check("the page's own commands leave what waits to go: a screenshot, the s
   assert.deepEqual(await sends(), [], "nothing went to Claude");
   await type("why does this trace ring" + ENTER);
   const [s] = await sends();
-  assert.deepEqual([s.text, s.images?.length, s.terminals, s.editor?.path], ["why does this trace ring", 1, ["west build"], SEL.path], "all of it goes with the message");
+  assert.deepEqual([s.text, s.images?.length, s.terminals, s.editor?.path], ["why does this trace ring", 1, [{ name: "west build", index: 0, pid: 4101 }], SEL.path], "all of it goes with the message");
 });
 
 await check("Alt+Shift+K's @-mention lands at the caret, spaced from the word before, and the input takes focus (59)", async () => {
@@ -2649,7 +2653,7 @@ await check("above the input at once — a held card, side questions, a queued m
   await send([{ t: "editor", editor: { ...SEL, label: "src/main.c#L10-24" } }]);
   await pasteIn({ files: [{ name: "shot.png", type: "image/png", data: PNG }] });
   await type("@term");
-  await send([{ t: "mentions", q: "term", items: [{ insert: "west build", label: "west build", detail: "terminal output", terminal: "west build" }] }]);
+  await send([{ t: "mentions", q: "term", items: [{ insert: "west build", label: "west build", detail: "terminal output", terminal: { name: "west build", index: 0, pid: 4101 } }] }]);
   await type(ENTER);
   await click(".composer .assist-slot button.btw");
   // Typing when the card comes: it waits as one quiet line (55).
@@ -2681,7 +2685,7 @@ await check("a 300 px sidebar with everything above the input: the side answers,
     await send([taskOut(lines.find(isTaskStarted).task_id, "tick 1\ntick 2\ntick 3\n")]);
     await pasteIn({ files: [{ name: "shot.png", type: "image/png", data: PNG }] });
     await type("@term");
-    await send([{ t: "mentions", q: "term", items: [{ insert: "west build", label: "west build", detail: "terminal output", terminal: "west build" }] }]);
+    await send([{ t: "mentions", q: "term", items: [{ insert: "west build", label: "west build", detail: "terminal output", terminal: { name: "west build", index: 0, pid: 4101 } }] }]);
     await type(ENTER);
     await type("and the baud rate");
     // A permission card on top of it all, forward once the typing pauses (55).
