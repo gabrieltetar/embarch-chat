@@ -204,28 +204,33 @@ export function ModelPill({ state }: { state: ChatState }) {
       {open && (
         <Pop kind="model-pop" anchor={btn.current} onClose={() => setOpen(false)}>
           <div class="pop-head">Model</div>
-          {MODELS.map((m) => (
-            <div
-              key={m.id}
-              class={`pop-row ${entry?.id === m.id ? "on" : ""}`}
-              onMouseDown={(e) => {
-                e.preventDefault();
-                setOpen(false);
-                if (entry?.id !== m.id) post({ t: "model", model: m.id });
-              }}
-            >
-              {m.label}
-              {m.id === "default" && !entry && state.model ? <span class="muted"> · now {state.model}</span> : null}
-            </div>
-          ))}
+          {/* Buttons, so the keyboard reaches each model as it did the <select> before (82); a pick gives the keys back to the pill. */}
+          <div role="group" aria-label="Model">
+            {MODELS.map((m) => (
+              <button
+                key={m.id}
+                class={`pop-row ${entry?.id === m.id ? "on" : ""}`}
+                role="menuitemradio"
+                aria-checked={entry?.id === m.id}
+                onClick={() => {
+                  setOpen(false);
+                  btn.current?.focus();
+                  if (entry?.id !== m.id) post({ t: "model", model: m.id });
+                }}
+              >
+                {m.label}
+                {m.id === "default" && !entry && state.model ? <span class="muted"> · now {state.model}</span> : null}
+              </button>
+            ))}
+          </div>
           <div class="pop-head">Effort</div>
           {levels.length ? (
-            <div class="effort-row" role="radiogroup">
-              <button class={state.effort === null ? "on" : ""} title="The model's own default" onClick={() => pick(null, state.ultracode)}>
+            <div class="effort-row" role="radiogroup" aria-label="Effort">
+              <button class={state.effort === null ? "on" : ""} role="radio" aria-checked={state.effort === null} title="The model's own default" onClick={() => pick(null, state.ultracode)}>
                 Default
               </button>
               {levels.map((l) => (
-                <button key={l} class={state.effort === l ? "on" : ""} onClick={() => pick(l, state.ultracode)}>
+                <button key={l} class={state.effort === l ? "on" : ""} role="radio" aria-checked={state.effort === l} onClick={() => pick(l, state.ultracode)}>
                   {l}
                 </button>
               ))}

@@ -594,7 +594,7 @@ await check("mode and model switch, context meter and Compact", async () => {
   // The model is in Claude Code's model pill now: its list opens over the input.
   await click(".composer .pill.model");
   await settle();
-  await exec("[...document.querySelectorAll('.model-pop .pop-row')].find((e) => e.textContent.startsWith('Opus')).dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))");
+  await exec("[...document.querySelectorAll('.model-pop .pop-row')].find((e) => e.textContent.startsWith('Opus')).click()");
   await click(".meter button", "Compact");
   const ps = await posts();
   assert.ok(ps.some((p) => p.t === "mode" && p.mode === "plan"));
@@ -2391,6 +2391,30 @@ await check("Esc that closes the MCP or the model panel does only that: the turn
   assert.equal((await text(".dialog.rewind")).length, 0);
 });
 
+await check("the model pill by keyboard: Enter opens it, Tab reaches each model and Enter picks one, the keys back on the pill; the levels are radios (82)", async () => {
+  await fresh({}, false);
+  await exec("document.querySelector('.composer .pill.model').focus(); return true");
+  await keys(ENTER);
+  assert.equal((await text(".model-pop")).length, 1);
+  const rows = await exec("return [...document.querySelectorAll('.model-pop [role=menuitemradio]')].map((r) => [r.tagName, r.textContent, r.getAttribute('aria-checked')])");
+  assert.deepEqual(rows, [
+    ["BUTTON", "Default model", "true"],
+    ["BUTTON", "Opus", "false"],
+    ["BUTTON", "Sonnet", "false"],
+    ["BUTTON", "Haiku", "false"],
+  ]);
+  const levels = await exec("return [...document.querySelectorAll('.model-pop .effort-row button')].map((b) => [b.getAttribute('role'), b.getAttribute('aria-checked')])");
+  assert.ok(levels.length > 1 && levels.every(([role]) => role === "radio"), JSON.stringify(levels));
+  assert.equal(levels.filter(([, on]) => on === "true").length, 1, "one level checked");
+  await clearPosts();
+  await keys(TAB + TAB);
+  assert.equal(await exec("return document.activeElement.textContent"), "Opus");
+  await keys(ENTER);
+  assert.deepEqual((await posts()).filter((p) => p.t === "model"), [{ t: "model", model: "opus" }]);
+  assert.equal((await text(".model-pop")).length, 0);
+  assert.equal(await focused(), "BUTTON.pill.model");
+});
+
 // ------------------------------------------------------------ the list
 
 await go("/list.html");
@@ -2558,6 +2582,18 @@ await check("dark and light take EmbArch's accents and semantics; a high-contras
   await send([listMsg]);
   await shot("list-light");
   assert.deepEqual(await exec("return window.__violations"), []);
+});
+
+await check("high contrast: the chosen model and effort carry an outline, as VS Code marks a selection there (53)", async () => {
+  await go("/chat.html");
+  await fresh({}, false);
+  await exec("document.body.classList.replace('vscode-dark', 'vscode-high-contrast')");
+  await click(".composer .pill.model");
+  await settle();
+  assert.deepEqual(await exec("return [...document.querySelectorAll('.model-pop .on')].map((e) => [e.textContent, getComputedStyle(e).outlineStyle])"), [
+    ["Default model", "solid"],
+    ["Default", "solid"],
+  ]);
 });
 
 await check("a chat tab's mark at 16 px: plain, amber while it waits, green when a turn finished unread; the mark's red never moves", async () => {

@@ -1287,11 +1287,22 @@ span.pill {
   font-size: 0.86em;
 }
 .pop-row {
+  display: block;
+  width: 100%;
+  text-align: left;
   padding: 2px 8px;
+  color: inherit;
+  background: transparent;
+  border: none;
+  border-radius: 0;
   cursor: pointer;
 }
 .pop-row:hover {
   background: var(--vscode-list-hoverBackground);
+}
+.pop-row:focus-visible {
+  outline: 1px solid var(--focus);
+  outline-offset: -1px;
 }
 .pop-row.on {
   background: var(--active);
@@ -1309,6 +1320,13 @@ span.pill {
 .effort-row button.on {
   color: var(--on-accent);
   background: var(--accent);
+}
+/* High contrast: VS Code marks a selection there with an outline, its
+   selection backgrounds unset (53), and so does the panel. */
+body.vscode-high-contrast .on,
+body.vscode-high-contrast-light .on {
+  outline: 1px solid var(--vscode-contrastActiveBorder, var(--focus, currentColor));
+  outline-offset: -1px;
 }
 .ultracode {
   display: flex;
