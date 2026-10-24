@@ -14,7 +14,7 @@ import { render } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { ChatState, Entry, chatStatus, liveBlocks, reduce } from "../../src/wire/reducer";
 import { Link } from "../shared/link";
-import { Markdown } from "../shared/markdown";
+import { LiveMarkdown, Markdown } from "../shared/markdown";
 import type { ChatView, Header, HostToChat, MentionItem } from "../shared/protocol";
 import type { Chip, PastPrompt } from "../../src/assistant/edits";
 import type { LibraryEntry } from "../../src/library/entries";
@@ -378,7 +378,7 @@ function App() {
       renderEntry(e)
     ) : e.kind === "text" ? (
       <div class="live cursor">
-        <Markdown text={e.text} ctx={ctx} />
+        <LiveMarkdown text={e.text} ctx={ctx} />
       </div>
     ) : e.kind === "thinking" ? (
       <details class="thinking" open>

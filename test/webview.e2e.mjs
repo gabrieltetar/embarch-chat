@@ -2137,6 +2137,91 @@ await check("in a long chat, a late result changes its old row in place, a run o
   assert.equal((await text(".live.cursor")).length, 1, "still streaming");
 });
 
+await check("a streaming reply is parsed in finished pieces and its last one: it shows as the whole reply does once it lands", async () => {
+  const md = [
+    "Intro paragraph with `src/main.c` and **bold**.",
+    "",
+    "- one",
+    "",
+    "- two, loose",
+    "  continued",
+    "",
+    "  ```c",
+    "  int x;",
+    "",
+    "  int y;",
+    "  ```",
+    "- three",
+    "  - nested",
+    "",
+    "    more of nested",
+    "",
+    "After the list.",
+    "",
+    "1. first",
+    "2. second",
+    "",
+    "```",
+    "a fence",
+    "",
+    "",
+    "Not a paragraph: still the fence",
+    "- nor a list",
+    "```",
+    "",
+    "~~~",
+    "```",
+    "",
+    "inside tildes",
+    "~~~",
+    "",
+    "> quoted",
+    "> more",
+    "",
+    "> another quote",
+    "",
+    "| a | b |",
+    "| --- | --- |",
+    "| 1 | 2 |",
+    "",
+    "## Heading",
+    "",
+    "---",
+    "",
+    "    indented after a blank",
+    "",
+    "Last paragraph, no newline",
+  ].join("\n");
+  const id = "msg_pieces";
+  const ds = [];
+  for (let i = 0, n = 0; i < md.length; i += n) {
+    n = 1 + ((i * 7) % 5);
+    ds.push({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: md.slice(i, i + n) } }, parent_tool_use_id: null });
+  }
+  await fresh();
+  await send([sent("pieces"), ...events([{ type: "stream_event", event: { type: "message_start", message: { id } } }, { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } }])]);
+  // Every 40 deltas, and at the end: what streams is what the whole would be, so far.
+  const seen = [];
+  for (let i = 0; i < ds.length; i += 40) {
+    await send(events(ds.slice(i, i + 40)));
+    seen.push(await exec("return document.querySelector('.live .md').innerHTML"));
+  }
+  const live = seen.at(-1);
+  await send(events([{ type: "assistant", message: { id, content: [{ type: "text", text: md }] } }, { type: "result", subtype: "success", is_error: false, result: "" }]));
+  assert.equal((await text(".live")).length, 0);
+  const whole = await exec("const m=[...document.querySelectorAll('.timeline .md')]; return m[m.length-1].innerHTML");
+  assert.equal(live, whole);
+  assert.ok(whole.includes("<ul>") && whole.includes("<ol") && whole.includes("<table>") && whole.includes("<blockquote>") && whole.includes("<hr>"));
+  // A prefix streamed shows as the whole of that prefix would: parsed again in one go, through a snapshot.
+  for (let i = 0; i < seen.length - 1; i++) {
+    const cut = ds.slice(0, (i + 1) * 40).map((d) => d.event.delta.text).join("");
+    await fresh();
+    await send([sent("pieces"), ...events([{ type: "assistant", message: { id: `${id}${i}`, content: [{ type: "text", text: cut }] } }])]);
+    const prefix = await exec("const m=[...document.querySelectorAll('.timeline .md')]; return m[m.length-1].innerHTML");
+    assert.equal(seen[i], prefix, `after ${(i + 1) * 40} deltas`);
+  }
+});
+
 // ------------------------------------------------------------ what goes into a message (56–60)
 
 const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAEElEQVR42mP438MARwzEcQCSIhixoJoR1AAAAABJRU5ErkJggg==";

@@ -10,6 +10,8 @@
 // turn a run of plain text into nodes.
 
 import type { ComponentChildren, VNode } from "preact";
+import { memo } from "preact/compat";
+import { useRef } from "preact/hooks";
 import { Link, hasScheme, isWebLink } from "./link";
 
 export interface MdCtx {
@@ -311,4 +313,67 @@ function blocks(lines: string[], start: number, ctx: MdCtx, key: string, one = f
 
 export function Markdown({ text, ctx }: { text: string; ctx: MdCtx }) {
   return <div class="md">{blocks(text.replace(/\r\n/g, "\n").split("\n"), 0, ctx, "m").nodes}</div>;
+}
+
+// ------------------------------------------------------------ streaming
+
+/**
+ * A streaming reply's finished pieces (decision 85). A piece ends where a
+ * line starts at the margin after a blank line, outside a fence and not a
+ * list item (a list goes on across blank lines): nothing `blocks` reads
+ * looks across such a line, so each piece parsed alone gives the nodes the
+ * whole would. Only whole lines are read, each once; a call carries on from
+ * the last one while the text only grows.
+ */
+interface Pieces {
+  /** The text read so far, up to `read`. */
+  text: string;
+  read: number;
+  /** Where each piece starts; the last is still open. */
+  at: number[];
+  /** The finished pieces' text, one fewer than `at`. */
+  done: string[];
+  fence: string | null;
+  blank: boolean;
+}
+
+function pieces(text: string, last: Pieces | null): Pieces {
+  const p: Pieces = last && text.startsWith(last.text.slice(0, last.read)) ? last : { text, read: 0, at: [0], done: [], fence: null, blank: false };
+  p.text = text;
+  for (let nl; (nl = text.indexOf("\n", p.read)) >= 0; p.read = nl + 1) {
+    const i = p.read;
+    const line = text.slice(i, nl);
+    if (p.fence) {
+      const t = line.trim();
+      if (t.startsWith(p.fence) && t.replace(new RegExp(`^\\${p.fence[0]}+`), "") === "") p.fence = null;
+    } else if (!line.trim()) p.blank = true;
+    else {
+      if (p.blank && !/^\s/.test(line) && !ITEM.test(line)) {
+        p.done.push(text.slice(p.at[p.at.length - 1], i));
+        p.at.push(i);
+      }
+      p.blank = false;
+      const f = FENCE.exec(line);
+      if (f) p.fence = f[2];
+    }
+  }
+  return p;
+}
+
+const Piece = memo(
+  ({ text, ctx }: { text: string; ctx: MdCtx }) => <>{blocks(text.split("\n"), 0, ctx, "m").nodes}</>,
+  (a, b) => a.text === b.text && a.ctx === b.ctx,
+);
+
+/** A reply still streaming (decision 85): each finished piece is parsed once, and only the open one again on each delta. */
+export function LiveMarkdown({ text, ctx }: { text: string; ctx: MdCtx }) {
+  const last = useRef<Pieces | null>(null);
+  const p = (last.current = pieces(text.replace(/\r\n/g, "\n"), last.current));
+  return (
+    <div class="md">
+      {p.at.map((start, k) => (
+        <Piece key={start} text={k < p.done.length ? p.done[k] : p.text.slice(start)} ctx={ctx} />
+      ))}
+    </div>
+  );
 }
