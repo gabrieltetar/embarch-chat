@@ -44,7 +44,7 @@ export interface HostCtx {
   content: ContentDocs;
   /** A pending plan as a tab to comment on, line by line (decision 77). */
   plans: PlanDocs;
-  /** The extension's global state: where the owner last chose to save an "always allow" (78). */
+  /** The extension's global state: where the owner last chose to save an "always allow" (78), and an export (74). */
   remembered: vscode.Memento;
   log: (s: string) => void;
   claudePath: () => string;

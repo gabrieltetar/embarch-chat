@@ -983,13 +983,22 @@ test("Export: the conversation as plain text for the page; Save writes it where 
   const ex = await waitFor(() => chatView.webview.posted.slice(n).find((m) => m.t === "export"), 5000, "the export");
   assert.match(ex.text, /❯ Run the bash command `echo hello-from-bash`/);
   assert.match(ex.filename, /\.txt$/);
-  const target = path.join(dir, "exported.txt");
+  fs.mkdirSync(path.join(dir, "exports"), { recursive: true });
+  const target = path.join(dir, "exports", "exported.txt");
   let asked = null;
   mock.state.saveDialog = async (opts) => ((asked = opts), mock.vscode.Uri.file(target));
   chatView.webview.fromPage({ t: "exportSave", text: ex.text, filename: ex.filename });
   await waitFor(() => fs.existsSync(target), 3000, "the file");
   assert.equal(fs.readFileSync(target, "utf8"), ex.text);
   assert.equal(path.basename(asked.defaultUri.fsPath), ex.filename);
+  // Never the chat's folder, a repo's working tree (review r4 L3): the home folder the first time, then where the last export went.
+  assert.equal(path.dirname(asked.defaultUri.fsPath), os.homedir(), "the home folder, not the chat's");
+  await waitFor(() => context.globalState.get("embarchChat.exportFolder"), 3000, "the folder remembered");
+  asked = null;
+  mock.state.saveDialog = async (opts) => ((asked = opts), undefined);
+  chatView.webview.fromPage({ t: "exportSave", text: ex.text, filename: ex.filename });
+  await waitFor(() => asked, 3000, "the second dialog");
+  assert.equal(path.dirname(asked.defaultUri.fsPath), path.join(dir, "exports"), "where the last export went");
   mock.state.saveDialog = async () => undefined;
 });
 

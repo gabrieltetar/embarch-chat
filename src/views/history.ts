@@ -15,6 +15,9 @@ import type { HostCtx } from "./chatHost";
 
 export type HistoryMessage = Extract<ChatToHost, { t: "rewindCheck" | "rewind" | "export" | "exportSave" }>;
 
+/** Where the owner last saved an export, in the extension's global state: the next save dialog opens there (74). */
+const EXPORT_FOLDER_KEY = "embarchChat.exportFolder";
+
 /** The owner's message as a note quotes it: its first line, cut short. */
 function quote(text: string): string {
   const l = text.trim().split("\n")[0];
@@ -81,13 +84,18 @@ export async function historyMessage(ctx: HostCtx, rec: ChatRecord, m: HistoryMe
       return;
     }
     case "exportSave": {
-      const dir = chat.opts.cwd || chat.state.cwd || os.homedir();
+      // Where the last export went, else the home folder — never the chat's
+      // own: a repo's working tree is one `git add .` from a remote, and a
+      // conversation about a client's firmware stays local (review r4 L3).
+      const last = ctx.remembered.get<string>(EXPORT_FOLDER_KEY);
+      const dir = last && fs.existsSync(last) ? last : os.homedir();
       const name = path.basename(m.filename) || "conversation.txt";
       const uri = await vscode.window.showSaveDialog({ defaultUri: vscode.Uri.file(path.join(dir, name)), filters: { Text: ["txt"] }, title: "Export conversation" });
       if (!uri) return;
       try {
         fs.writeFileSync(uri.fsPath, m.text);
         ctx.log(`[${chat.sessionId.slice(0, 8)}] exported to ${uri.fsPath}`);
+        await ctx.remembered.update(EXPORT_FOLDER_KEY, path.dirname(uri.fsPath));
       } catch (err) {
         void vscode.window.showErrorMessage(`Conversation not saved: ${(err as Error).message}`);
       }
