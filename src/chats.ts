@@ -45,7 +45,9 @@ export interface ChatRecord {
    * editor tab's — nothing restores the panel, a new one is opened.
    */
   typed?: string;
-  /** That draft back after a reload, for each page that shows the chat (once), until the owner changes it: it fills an empty draft only. */
+  /** Which kind of page told it: the draft comes back to that kind only, never to both the tab and the sidebar (review r6 L3). */
+  typedFrom?: "tab" | "sidebar";
+  /** That draft back after a reload, for the page of that kind that shows the chat (once), until the owner changes it: it fills an empty draft only. */
   typedBack?: string | null;
   /** A turn ended while it was off screen, and the owner has not looked since (Claude Code's unread mark). */
   unread?: boolean;

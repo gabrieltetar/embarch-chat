@@ -249,12 +249,13 @@ export class ChatHost implements vscode.Disposable {
 
   /**
    * Text for the draft, once, to the page showing the chat. The owner's own
-   * from before a reload goes first, to each page that shows it — the
-   * sidebar and a tab may both — once; it fills an empty draft only.
+   * from before a reload goes first, once, to a page of the kind it was
+   * typed in — a tab's to a tab, the sidebar's to the sidebar, though both
+   * show the chat (review r6 L3); it fills an empty draft only.
    */
   private pushDraft(): void {
     const rec = this.sid ? this.ctx.chats.get(this.sid) : undefined;
-    if (rec?.typedBack && !this.typedGiven.has(rec.chat.sessionId)) {
+    if (rec?.typedBack && (rec.typedFrom === "tab") === this.inEditor && !this.typedGiven.has(rec.chat.sessionId)) {
       this.typedGiven.add(rec.chat.sessionId);
       this.post({ t: "draft", sid: rec.chat.sessionId, text: rec.typedBack, typed: true });
     }
@@ -291,6 +292,7 @@ export class ChatHost implements vscode.Disposable {
       const r = typeof m.sid === "string" ? this.ctx.chats.get(m.sid) : undefined;
       if (!r || typeof m.text !== "string") return;
       r.typed = m.text;
+      r.typedFrom = this.inEditor ? "tab" : "sidebar";
       // The owner changed the draft since the reload gave it back: no page is given the old one now.
       if (r.typedBack && m.text !== r.typedBack) r.typedBack = null;
       return;

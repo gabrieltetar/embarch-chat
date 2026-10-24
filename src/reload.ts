@@ -23,8 +23,9 @@
 // running it keeps it read-only (31).
 //
 // The owner's words never go with the window: a draft typed and not sent
-// comes back into the draft (an editor tab's page keeps no state across a
-// reload, the sidebar's does); what the CLI had not taken —
+// comes back into the draft of the kind of page it was typed in, and no
+// other (an editor tab's page keeps no state across a reload, the
+// sidebar's does; review r6 L3); what the CLI had not taken —
 // messages waiting above the input, a /compact's held rest, one written
 // while the process closed, a new chat's first message the CLI had not
 // written down — comes back waiting above the input again when Continue
@@ -79,6 +80,8 @@ interface SavedChat {
   draft?: string;
   /** The owner's own draft, typed and not sent, as the page last told it. */
   typed?: string;
+  /** Which kind of page told it (review r6 L3). */
+  typedFrom?: "tab" | "sidebar";
 }
 
 interface Saved {
@@ -186,7 +189,7 @@ export class ReloadMemory implements vscode.Disposable {
         ...(st.ultracode ? { ultracode: true } : {}),
         ...(untaken.length ? { untaken } : {}),
         ...(r.draft ? { draft: r.draft } : {}),
-        ...(r.typed?.trim() ? { typed: r.typed } : {}),
+        ...(r.typed?.trim() ? { typed: r.typed, ...(r.typedFrom ? { typedFrom: r.typedFrom } : {}) } : {}),
       });
     }
     const saved: Saved | undefined = chats.length ? { at: Date.now(), current: this.manager.current, chats } : undefined;
@@ -252,7 +255,11 @@ export async function restoreAfterReload(o: RestoreCtx): Promise<void> {
     rec.untracked = c.untracked;
     if (c.unread) rec.unread = true;
     // The owner's unsent draft, for the page that shows it — before its tab opens; kept again by a second reload.
-    if (c.typed) rec.typed = rec.typedBack = c.typed;
+    // A note from before the page was named: a chat with a tab had it there.
+    if (c.typed) {
+      rec.typed = rec.typedBack = c.typed;
+      rec.typedFrom = c.typedFrom ?? (c.tab ? "tab" : "sidebar");
+    }
     // No process runs it yet: the next one starts with them.
     if (c.model) void rec.chat.setModel(c.model);
     if (c.effort || c.ultracode) void rec.chat.setEffort(c.effort ?? null, !!c.ultracode);

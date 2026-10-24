@@ -983,11 +983,32 @@ test("a draft typed in an editor tab and not sent comes back after a reload: VS 
   back.webview.fromPage({ t: "ready" });
   const draft = await waitFor(() => back.webview.posted.find((m) => m.t === "draft" && m.sid === sid), 5000, "the draft");
   assert.deepEqual(draft, { t: "draft", sid, text: "half a thought about the flash", typed: true }, "the owner's words, to fill an empty draft");
-  // The sidebar shows it too, and gets it once: a draft it kept itself is not doubled (the page fills an empty draft only).
-  assert.equal(chatView.webview.posted.filter((m) => m.t === "draft" && m.sid === sid && m.typed).length, 1);
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal(back.webview.posted.filter((m) => m.t === "draft" && m.sid === sid && m.typed).length, 1, "once");
+  // The sidebar shows the chat too, and never held these words: it is not given them, or a Send there would send them again (review r6 L3).
+  assert.equal(lastSnapshot()?.state.sessionId, sid);
   chatView.webview.fromPage({ t: "ready" });
   await new Promise((r) => setTimeout(r, 200));
-  assert.equal(chatView.webview.posted.filter((m) => m.t === "draft" && m.sid === sid && m.typed).length, 1, "not again on the next snapshot");
+  assert.equal(chatView.webview.posted.filter((m) => m.t === "draft" && m.sid === sid && m.typed).length, 0, "the sidebar keeps its own");
+});
+
+test("a draft typed in the sidebar comes back to the sidebar alone after a reload: a tab of the same chat is not given it (review r6 L3)", { skip }, async () => {
+  const sid = await startUntracked("basic");
+  chatView.webview.fromPage({ t: "typed", sid, text: "the other half of the thought" });
+  await mock.state.commands.get("embarchChat.openInEditor")();
+  const tab = mock.state.panels.at(-1);
+  tab.webview.fromPage({ t: "ready" });
+  await waitFor(() => tab.webview.posted.find((m) => m.t === "snapshot" && m.state.sessionId === sid), 3000, "the tab");
+  const panelsBefore = mock.state.panels.length;
+  await reload();
+  const back = await waitFor(() => mock.state.panels.length > panelsBefore && mock.state.panels.at(-1), 15000, "the tab opened again");
+  back.webview.fromPage({ t: "ready" });
+  await waitFor(() => back.webview.posted.find((m) => m.t === "snapshot" && m.state.sessionId === sid), 3000, "the tab's chat");
+  chatView.webview.fromPage({ t: "ready" });
+  const draft = await waitFor(() => posted((m) => m.t === "draft" && m.sid === sid && m.typed), 5000, "the sidebar's draft");
+  assert.equal(draft.text, "the other half of the thought");
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal(back.webview.posted.filter((m) => m.t === "draft" && m.sid === sid && m.typed).length, 0, "the tab never held them");
 });
 
 test("a second reload while the first still waits for a chat's old process to go keeps that chat (decision 63)", { skip }, async () => {

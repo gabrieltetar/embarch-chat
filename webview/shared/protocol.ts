@@ -64,7 +64,8 @@ export type HostToChat =
   /**
    * Text back into a chat's draft: a held message not sent, a start the desk
    * refused. `typed`: the owner's own unsent draft from before a reload (63),
-   * which only fills a draft that is empty — the sidebar keeps its own.
+   * to the kind of page it was typed in only (review r6 L3), which only
+   * fills a draft that is empty — the sidebar keeps its own.
    */
   | { t: "draft"; sid: string; text: string; typed?: boolean }
   /**
