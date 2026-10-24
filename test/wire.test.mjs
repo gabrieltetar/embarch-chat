@@ -756,6 +756,33 @@ test("a held /compact that fails gives its rest back too", async () => {
   chat.dispose();
 });
 
+test("a model picked while a /compact waits behind a turn does not end the hold: the rest goes after the compaction's own result (decision 36)", async () => {
+  const { chat, sent } = compactChat({ FC_OK: "1" });
+  chat.send("slow: a long step");
+  chat.sendAfterCompact("/compact focus on: the widget", "now add the blink test");
+  // Its line ("Set model to …") is a local command's output too.
+  await chat.setModel("haiku");
+  await turns(chat, 1);
+  assert.deepEqual(sent(), ["slow: a long step", "/compact focus on: the widget"], "the running turn's end is not the compaction's");
+  const after = turns(chat, 1);
+  await waitFor(() => sent().includes("now add the blink test"));
+  await after;
+  assert.equal(chat.turns, 2, "the compaction's own result is no turn");
+  assert.ok(top(chat.state).some((e) => e.kind === "note" && e.tone === "compact"));
+  chat.dispose();
+});
+
+test("a message written while a /compact's rest waits goes after that rest, not before it (decision 36)", async () => {
+  const { chat, sent } = compactChat({ FC_OK: "1" });
+  chat.send("slow: a long step");
+  chat.sendAfterCompact("/compact focus on: the widget", "now add the blink test");
+  chat.send("and then the docs");
+  assert.deepEqual(held(chat).length, 0, "both wait above the input");
+  await waitFor(() => sent().length === 4);
+  assert.deepEqual(sent(), ["slow: a long step", "/compact focus on: the widget", "now add the blink test", "and then the docs"]);
+  chat.dispose();
+});
+
 // ---- what the CLI asks besides permission prompts (decision 66)
 
 /**

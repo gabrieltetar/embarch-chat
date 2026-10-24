@@ -524,12 +524,9 @@ function foldUser(s: ChatState, o: WireMessage): ChatState {
   if (raw.startsWith("[Request interrupted by user")) return note(s, "Interrupted", "interrupt");
   const stdout = /^<local-command-stdout>([\s\S]*)<\/local-command-stdout>$/.exec(raw.trim());
   if (stdout) {
-    // A local command (/compact, /cost, ...) echoes its output, not itself.
-    const cmd = (s.unconfirmed ?? []).find((id) => {
-      const e = s.entries[id];
-      return e?.kind === "user" && e.pending && e.text.startsWith("/");
-    });
-    if (cmd) s = confirm(s, cmd);
+    // A local command (/compact, /cost, ...) echoes its output, not itself —
+    // and `set_model` echoes one too: which message ran is its result's to
+    // say (`local_command`), never the output's.
     // /compact's own "Compacted" says again what its card says (76).
     if (stdout[1].trim() === "Compacted" && justCompacted(s)) return s;
     return stdout[1].trim() ? note(s, stdout[1].trim(), "info") : s;

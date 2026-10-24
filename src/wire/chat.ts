@@ -11,7 +11,7 @@ import { ClaudeProcess, SpawnSpec, chatEnv } from "./process";
 import { HostHooks, answererFor, initializeRequest } from "./host";
 import { findTranscript, holdsMessage, projectsRoot } from "./transcript";
 import { appendTitle } from "./history";
-import { ChatState, Pending, chatStatus, initialState, reduce, reduceAll, textOf } from "./reducer";
+import { ChatState, Pending, chatStatus, initialState, reduce, reduceAll } from "./reducer";
 import { anyMovable, soonMovable } from "./tasks";
 import { Attachment, ContextItem, Outgoing, outgoing } from "./message";
 import type { AppliedSettings, ContextUsage, ModelInfo, PermissionDecision, WireMessage } from "./types";
@@ -79,12 +79,9 @@ const SIDE_MS = 300_000;
 /** How many lines a followed transcript passes on to the page one by one; more go as a snapshot. */
 const FOLLOW_AS_EVENTS = 50;
 
-/** A line that says a /compact has run: its boundary, or its output (or error) as a local command. */
+/** A line that says a compaction has run: its boundary. Any local command's output (`set_model`'s "Set model to …") says nothing of it. */
 function isCompactEnd(o: WireMessage): boolean {
-  if (o.type === "system" && o.subtype === "compact_boundary") return true;
-  if (o.type !== "user") return false;
-  const t = textOf((o.message as { content?: unknown } | undefined)?.content).trim();
-  return t.startsWith("<local-command-stdout>") || t.startsWith("<local-command-stderr>");
+  return o.type === "system" && o.subtype === "compact_boundary";
 }
 
 /**
@@ -106,11 +103,14 @@ export class Chat extends EventEmitter {
   private idleTimer: NodeJS.Timeout | undefined;
   private closing = false;
   private lastStatus: string;
-  /** The rest of a draft that waits for its /compact line's compaction to finish (decision 36), and its text for the draft. */
-  private held: (Outgoing & { text: string }) | null = null;
-  /** The held rest's entry, shown as waiting for the compaction. */
-  private heldEntry: string | null = null;
-  /** The held /compact has run (its boundary or its output came): the next result is its own. */
+  /**
+   * The rest of a draft that waits for its /compact line's compaction to
+   * finish (decision 36), then what was written while it waited, which goes
+   * after it: each with its text for the draft and its entry, shown as
+   * waiting for the compaction.
+   */
+  private held: Array<{ out: Outgoing; text: string; entry: string }> = [];
+  /** A compaction ran since the last result: the /compact's own result then lets the held messages go. */
   private compactRan = false;
   private disposed = false;
   /** Turns ended in this window, compactions aside: naming runs after the first (decision 12). */
@@ -298,20 +298,23 @@ export class Chat extends EventEmitter {
         this.dispatch({ type: "_note", text: RERUN_NOTE, tone: "info" });
       }
       this.dispatch(o);
-      if (this.held !== null && isCompactEnd(o)) this.compactRan = true;
+      if (this.held.length && isCompactEnd(o)) this.compactRan = true;
       if (o.type === "result") {
         this.touch();
-        // A turn that failed or was stopped before the held /compact ran:
-        // the compaction will not finish, so its rest never goes on its own.
-        if (this.held !== null && !this.compactRan && (o.is_error || o.subtype !== "success")) this.releaseHeld();
-        if (this.held !== null && this.compactRan) {
-          // The compaction finished: now the rest of the draft.
-          const rest = this.held;
-          const heldId = this.heldEntry;
-          this.held = null;
-          this.heldEntry = null;
-          this.compactRan = false;
-          this.deliver(rest, this.uuidOf(heldId));
+        const ok = !o.is_error && o.subtype === "success";
+        // The /compact's own result names it (CLI 2.1.287); any other is a turn's, and a boundary in it an auto-compaction.
+        const own = o.local_command === "compact";
+        const ran = this.compactRan;
+        this.compactRan = false;
+        // A turn that failed or was stopped before the held /compact ran, or
+        // a compaction that ended without its boundary: it will not finish,
+        // so what waits on it never goes on its own.
+        if (this.held.length && (own ? !(ok && ran) : !ok)) this.releaseHeld();
+        if (this.held.length && own) {
+          // The compaction finished: now the rest of the draft, and what came after it, in order.
+          const held = this.held;
+          this.held = [];
+          for (const h of held) this.deliver(h.out, this.uuidOf(h.entry));
         } else {
           this.turns++;
           this.emit("turn", o, this.turns);
@@ -373,8 +376,13 @@ export class Chat extends EventEmitter {
     const context = extra.context ?? [];
     // Its own uuid: the CLI's queue knows it by it, to take it back or send it now (port item 72).
     const uuid = randomUUID();
-    this.dispatch({ type: "_sent", n: ++this.sent, text, images: images.length, at: Date.now(), uuid, ...(context.length ? { context } : {}) });
-    this.deliver(outgoing(text, images, context, extra.pastes), uuid);
+    const n = ++this.sent;
+    // Behind a /compact's held rest, it waits too: it must not overtake it (36).
+    const held = this.held.length > 0;
+    this.dispatch({ type: "_sent", n, text, images: images.length, at: Date.now(), uuid, ...(held ? { held: true } : {}), ...(context.length ? { context } : {}) });
+    const out = outgoing(text, images, context, extra.pastes);
+    if (held) this.held.push({ out, text, entry: `s:${n}` });
+    else this.deliver(out, uuid);
     this.touch();
   }
 
@@ -400,12 +408,13 @@ export class Chat extends EventEmitter {
    * once as a message waiting for it.
    */
   sendAfterCompact(compact: string, rest: string, images: Attachment[] = [], extra: SendExtra = {}): void {
+    const waiting = this.held.length > 0;
     this.send(compact);
     const context = extra.context ?? [];
-    this.held = { ...outgoing(rest, images, context, extra.pastes), text: rest };
-    this.compactRan = false;
+    // Behind another card's rest, this /compact and its rest wait in line after it.
+    if (!waiting) this.compactRan = false;
     const n = ++this.sent;
-    this.heldEntry = `s:${n}`;
+    this.held.push({ out: outgoing(rest, images, context, extra.pastes), text: rest, entry: `s:${n}` });
     this.dispatch({ type: "_sent", n, text: rest, images: images.length, held: true, at: Date.now(), uuid: randomUUID(), ...(context.length ? { context } : {}) });
   }
 
@@ -417,8 +426,7 @@ export class Chat extends EventEmitter {
    * crash is no idle close.
    */
   private releaseUntaken(): void {
-    this.held = null;
-    this.heldEntry = null;
+    this.held = [];
     this.compactRan = false;
     this.queued = [];
     const ids = [...(this.state.unconfirmed ?? [])];
@@ -431,20 +439,21 @@ export class Chat extends EventEmitter {
   }
 
   /**
-   * The held rest goes back to the owner: marked not sent, its text back in
-   * the draft (`unsent`) — a compaction that was stopped or failed must not
-   * let it go out later, in the middle of other work.
+   * The held rest, and what waited behind it, goes back to the owner: marked
+   * not sent, its text back in the draft (`unsent`) — a compaction that was
+   * stopped or failed must not let it go out later, in the middle of other
+   * work.
    */
   private releaseHeld(): void {
-    if (this.held === null) return;
-    const text = this.held.text;
-    const id = this.heldEntry;
-    this.held = null;
-    this.heldEntry = null;
+    if (!this.held.length) return;
+    const held = this.held;
+    this.held = [];
     this.compactRan = false;
-    if (id) this.dispatch({ type: "_unsent", id });
-    this.log("held message not sent: back in the draft");
-    this.emit("unsent", text);
+    for (const h of held) {
+      this.dispatch({ type: "_unsent", id: h.entry });
+      this.emit("unsent", h.text);
+    }
+    this.log(`${held.length} held message(s) not sent: back in the draft`);
   }
 
   answer(requestId: string, decision: PermissionDecision): void {
@@ -613,10 +622,8 @@ export class Chat extends EventEmitter {
     const e = this.state.entries[id];
     if (e?.kind !== "user" || !(this.state.queue ?? []).includes(id)) return;
     let gone = false;
-    if (id === this.heldEntry) {
-      this.held = null;
-      this.heldEntry = null;
-      this.compactRan = false;
+    if (this.held.some((h) => h.entry === id)) {
+      this.held = this.held.filter((h) => h.entry !== id);
       gone = true;
     } else if (this.queued.some((q) => q.uuid && q.uuid === e.uuid)) {
       // Written while the process was closing: not at the CLI yet.
@@ -644,7 +651,7 @@ export class Chat extends EventEmitter {
    */
   async sendNow(id: string): Promise<void> {
     const e = this.state.entries[id];
-    if (e?.kind !== "user" || !e.uuid || !this.running || !(this.state.queue ?? []).includes(id) || id === this.heldEntry) return;
+    if (e?.kind !== "user" || !e.uuid || !this.running || !(this.state.queue ?? []).includes(id) || this.held.some((h) => h.entry === id)) return;
     // A Bash call or a subagent just started: its task comes within a second, then it can move.
     for (let waited = 0; !anyMovable(this.state) && soonMovable(this.state) && waited < 3000; waited += 100) await new Promise((r) => setTimeout(r, 100));
     try {
