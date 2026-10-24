@@ -326,9 +326,9 @@ export class Chat extends EventEmitter {
       if (o.type === "result") {
         this.touch();
         const ok = !o.is_error && o.subtype === "success";
-        // The /compact's own result names it (CLI 2.1.287); any other is a turn's, and a boundary in it an auto-compaction.
-        const own = o.local_command === "compact";
+        // The /compact's own result names it (CLI 2.1.287) — or, unnamed, ran no turn after a boundary; any other is a turn's, and a boundary in it an auto-compaction.
         const ran = this.compactRan;
+        const own = o.local_command === "compact" || (o.local_command === undefined && ran && o.num_turns === 0);
         this.compactRan = false;
         // A turn that failed or was stopped before the held /compact ran, or
         // a compaction that ended without its boundary: it will not finish,

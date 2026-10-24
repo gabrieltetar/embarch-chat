@@ -830,6 +830,14 @@ test("a model picked while a /compact waits behind a turn does not end the hold:
   chat.dispose();
 });
 
+test("a compaction's result that names no command still lets the rest go: it ran no turn after its boundary (decision 36)", async () => {
+  const { chat, sent } = compactChat({ FC_OK: "1", FC_UNNAMED: "1" });
+  chat.sendAfterCompact("/compact focus on: the widget", "now add the blink test");
+  await waitFor(() => sent().includes("now add the blink test"));
+  assert.deepEqual(sent(), ["/compact focus on: the widget", "now add the blink test"]);
+  chat.dispose();
+});
+
 test("a message written while a /compact's rest waits goes after that rest, not before it (decision 36)", async () => {
   const { chat, sent } = compactChat({ FC_OK: "1" });
   chat.send("slow: a long step");

@@ -5,7 +5,8 @@
 // that turn without a boundary, as a stopped turn does. With FC_FAIL the
 // compaction ends at once in an error result instead; with FC_OK it
 // succeeds as CLI 2.1.287's does (boundary, "Compacted", a result naming
-// the command, compact.jsonl). `auto` is a normal turn that auto-compacts
+// the command, compact.jsonl), and with FC_UNNAMED too its result names
+// no command, as an older CLI's might. `auto` is a normal turn that auto-compacts
 // on the way; a message starting `slow` takes 300 ms. Messages are taken
 // one at a time, in order, as the CLI's queue takes them; `set_model`
 // echoes its line as the CLI does (effort.jsonl). FC_LOG: each line the
@@ -32,7 +33,7 @@ function turn(text) {
         out({ type: "system", subtype: "status", status: null, compact_result: "success" });
         out({ type: "system", subtype: "compact_boundary", compact_metadata: { trigger: "manual", pre_tokens: 1000 } });
         out({ type: "user", isReplay: true, message: { role: "user", content: "<local-command-stdout>Compacted </local-command-stdout>" } });
-        out({ type: "result", subtype: "success", is_error: false, num_turns: 0, local_command: "compact" });
+        out({ type: "result", subtype: "success", is_error: false, num_turns: 0, ...(process.env.FC_UNNAMED ? {} : { local_command: "compact" }) });
         return done();
       }
       stop = done;
