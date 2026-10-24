@@ -711,12 +711,26 @@ await check("Keep, on a block of Claude's reply, sends it to the work item as a 
   // A block of a turn still running has no Copy yet: Keep shows over it under the pointer.
   await send([snapshot(), sent("flash it"), { t: "event", e: { type: "assistant", message: { id: "m-running", content: [{ type: "text", text: "Flashing the board now." }] } } }]);
   assert.equal(await exec("return document.querySelectorAll('.reply-acts').length"), 0);
-  assert.equal(await exec("return getComputedStyle(document.querySelector('.reply .keep')).visibility"), "hidden", "only under the pointer");
-  const el = await wd("POST", `${S}/element`, { using: "css selector", value: ".timeline .reply" });
-  await wd("POST", `${S}/actions`, { actions: [{ type: "pointer", id: "mouse", actions: [{ type: "pointerMove", origin: el, x: 0, y: 0 }] }] });
-  await settle();
-  assert.equal(await exec("return getComputedStyle(document.querySelector('.reply .keep')).visibility"), "visible");
+  const keepShown = () => exec("return getComputedStyle(document.querySelector('.reply .keep')).opacity");
+  assert.equal(await keepShown(), "0", "only under the pointer");
+  const pointAt = async (sel) => {
+    const el = await wd("POST", `${S}/element`, { using: "css selector", value: sel });
+    await wd("POST", `${S}/actions`, { actions: [{ type: "pointer", id: "mouse", actions: [{ type: "pointerMove", origin: el, x: 0, y: 0 }] }] });
+    await settle();
+  };
+  await pointAt(".timeline .reply");
+  assert.equal(await keepShown(), "1");
   await shot("keep-hover");
+  await wd("POST", `${S}/actions`, { actions: [{ type: "pointer", id: "mouse", actions: [{ type: "pointerMove", origin: "viewport", x: 5, y: 5 }] }] });
+  await wd("DELETE", `${S}/actions`);
+  await settle();
+  // And to the keyboard: it takes focus, and shows while it has it.
+  assert.equal(await exec("const b = document.querySelector('.reply .keep button'); b.focus(); return document.activeElement === b"), true);
+  assert.equal(await keepShown(), "1");
+  // A block that opens with a code block: Keep and the code block's Copy each keep their own place.
+  await send([snapshot(), sent("flash it"), { t: "event", e: { type: "assistant", message: { id: "m-code", content: [{ type: "text", text: "```\nwest flash --runner nrfutil\n```\nThat is the command." }] } } }]);
+  await pointAt(".timeline .reply .codeblock");
+  assert.equal(await exec("const c = document.querySelector('.reply .codeblock .copy').getBoundingClientRect(); return document.elementFromPoint(c.left + c.width / 2, c.top + c.height / 2)?.className"), "copy");
   await wd("DELETE", `${S}/actions`);
   // A subagent's own text is a step of its call, not a reply.
   await send([snapshot(), sent("s"), ...events(outLines("subagent"))]);

@@ -1205,17 +1205,29 @@ details.thinking .md {
   color: var(--muted);
   background: var(--vscode-sideBar-background, var(--vscode-editor-background));
   border-radius: var(--radius);
-  visibility: hidden;
+  /* Hidden so that Tab still reaches it, as the ↶ beside a message. */
+  opacity: 0;
+  pointer-events: none;
 }
 .reply:hover > .keep,
 .keep.open,
 .keep:focus-within {
-  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+}
+/* In an editor tab it covers the block in the editor's background. */
+body.in-editor .keep:not(.in-row) {
+  background: var(--vscode-editor-background);
+}
+/* A block that opens with a code block: its Copy sits left of Keep. */
+.reply > .md > .codeblock:first-child .copy {
+  right: calc(2px + 5.2em);
 }
 /* In the turn's Copy row: inline, and as muted as Copy beside it. */
 .keep.in-row {
   position: static;
-  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
   padding: 0;
   background: none;
   font-size: 0.85em;
