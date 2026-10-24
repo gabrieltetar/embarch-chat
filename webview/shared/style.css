@@ -851,6 +851,12 @@ details.thinking .md {
 .card.dialog p {
   margin: 4px 0;
 }
+.card.dialog .url-host {
+  margin: 4px 0 2px;
+}
+.card.dialog .url-host b {
+  font-weight: 600;
+}
 .card.dialog .url {
   overflow-wrap: anywhere;
   font-family: var(--vscode-editor-font-family);

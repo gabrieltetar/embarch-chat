@@ -1387,9 +1387,10 @@ await check("an MCP server's link: shown, Open opens it and accepts; × cancels"
   await fresh({}, false);
   await send([
     sent("sign in"),
-    cliAsks("r-url", { subtype: "elicitation", mcp_server_name: "bench", message: "Sign in to the test bench to continue.", mode: "url", url: "https://example.com/bench/sign-in", elicitation_id: "bench-sign-in-1" }),
+    cliAsks("r-url", { subtype: "elicitation", mcp_server_name: "bench", display_name: "Your Bank", message: "Sign in to the test bench to continue.", mode: "url", url: "https://example.com/bench/sign-in", elicitation_id: "bench-sign-in-1" }),
   ]);
   assert.deepEqual(await text(".card .url"), ["https://example.com/bench/sign-in"]);
+  assert.deepEqual(await text(".card .url-host"), ["bench asks to open example.com"], "the server by the name the owner configured, and where the link goes");
   await click(".card button", "Open");
   const ps = await posts();
   assert.deepEqual(ps.find((p) => p.t === "openLink"), { t: "openLink", url: "https://example.com/bench/sign-in" });
@@ -1397,6 +1398,12 @@ await check("an MCP server's link: shown, Open opens it and accepts; × cancels"
   await clearPosts();
   await click(".card button.close");
   assert.deepEqual((await responded()).map((x) => x.response), [{ action: "cancel" }]);
+  // A link to this machine, or not over https: shown, never opened from the card.
+  for (const url of ["http://127.0.0.1:4890/login", "https://localhost/login", "https://[::1]/login", "http://example.com/bench/sign-in"]) {
+    await fresh({}, false);
+    await send([sent("sign in"), cliAsks("r-url", { subtype: "elicitation", mcp_server_name: "bench", message: "Sign in to continue.", mode: "url", url, elicitation_id: "bench-sign-in-2" })]);
+    assert.deepEqual(await text(".card .actions button"), ["Decline"], `${url}: no Open`);
+  }
 });
 
 await check("auto mode's billing notice: its title and words, Learn more, Continue or Stop as Claude Code answers", async () => {

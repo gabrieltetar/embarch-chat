@@ -132,21 +132,44 @@ function Field({ f, value, set }: { f: FormField; value: string | boolean | unde
 }
 
 /**
+ * Where an MCP server's link goes, and whether its card opens it: https to
+ * another machine only. A link to this one — embarch-ui, the desk — or over
+ * plain http is shown and never opened from the card: one click would be
+ * a GET's side effect, or a page passing for someone else's.
+ */
+function linkTarget(url: string): { host: string; open: boolean; why?: string } {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return { host: url, open: false, why: "it is not a link this panel can read" };
+  }
+  const h = u.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (h === "localhost" || h.endsWith(".localhost") || h === "::1" || h === "0.0.0.0" || /^(127\.|::ffff:(7f|127\.))/.test(h)) return { host: u.host, open: false, why: "it goes to this machine" };
+  if (u.protocol !== "https:") return { host: u.host, open: false, why: "it is not https" };
+  return { host: u.host, open: true };
+}
+
+/**
  * An MCP server's elicitation: a form of flat fields, or a link to open.
  * Accept sends the values, typed as the schema asks; Decline says no;
  * closing the card cancels. A schema with a field the panel cannot render
- * offers only Decline.
+ * offers only Decline. The server goes by the name it has in the owner's
+ * MCP config, not the display name it gives itself, and a link says where
+ * it goes.
  */
 function ElicitationCard({ p, ctx }: { p: Pending; ctx: ToolCtx }) {
-  const server = str(p.input.display_name) || p.toolName;
+  const server = p.toolName || str(p.input.display_name);
   const url = p.input.mode === "url" ? str(p.input.url) : "";
+  const target = url ? linkTarget(url) : null;
   const fields = url ? [] : formFields(p.input.requested_schema as Record<string, unknown> | undefined);
   const [values, setValues] = useState<Record<string, string | boolean>>(() =>
     Object.fromEntries((fields ?? []).filter((f) => f.default !== undefined).map((f) => [f.name, f.type === "boolean" ? f.default === true : String(f.default)])),
   );
   const [err, setErr] = useState<string | null>(null);
   const accept = () => {
-    if (url) {
+    if (target) {
+      if (!target.open) return;
       ctx.openLink(url);
       respond(p, { action: "accept" });
       return;
@@ -164,7 +187,13 @@ function ElicitationCard({ p, ctx }: { p: Pending; ctx: ToolCtx }) {
         </button>
       </div>
       <p>{str(p.input.message)}</p>
+      {target && (
+        <div class="url-host">
+          {server} asks to open <b>{target.host}</b>
+        </div>
+      )}
       {url && <div class="muted url">{url}</div>}
+      {target && !target.open && <div class="muted">Not opened from here: {target.why}. Decline it, or open it yourself if you trust it.</div>}
       {fields && fields.length > 0 && (
         <div class="fields">
           {fields.map((f) => (
@@ -174,7 +203,7 @@ function ElicitationCard({ p, ctx }: { p: Pending; ctx: ToolCtx }) {
       )}
       {!fields && <div class="muted">This form asks for something this panel cannot show; decline it, or answer it in a terminal.</div>}
       <div class="actions">
-        {fields && (
+        {fields && (!target || target.open) && (
           <button class="primary" onClick={accept}>
             {url ? "Open" : "Accept"}
           </button>
@@ -195,7 +224,7 @@ export function DialogCard({ p, ctx, recall }: { p: Pending; ctx: ToolCtx; recal
 
 /** A dialog's or an elicitation's one line, while it waits on the owner's typing (55). */
 export function dialogLine(p: Pending): string {
-  if (p.form === "elicitation") return `${str(p.input.display_name) || p.toolName} asks: ${str(p.input.message)}`;
+  if (p.form === "elicitation") return `${p.toolName || str(p.input.display_name)} asks: ${str(p.input.message)}`;
   if (p.toolName === "refusal_fallback_prompt") return `Session paused: ${modelName(str(p.input.originalModel))} flagged a message`;
   return "Auto mode: Continue or Stop?";
 }
