@@ -109,3 +109,22 @@ export function formContent(fields: FormField[], values: Record<string, string |
   }
   return { content };
 }
+
+/**
+ * A link an MCP server's elicitation may open (decision 66): https, to a
+ * host that is not this machine — a server must not get a click that
+ * reaches a local service (the desk, embarch-ui) or a plain-http page.
+ */
+export function elicitedUrl(raw: unknown): boolean {
+  if (typeof raw !== "string") return false;
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return false;
+  }
+  // The URL parser has already turned 127.1, 2130706433 and [::ffff:127.0.0.1] into their plain forms.
+  const host = u.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();
+  if (u.protocol !== "https:" || !host) return false;
+  return !(host === "localhost" || host.endsWith(".localhost") || /^127\./.test(host) || host === "0.0.0.0" || host === "::1" || host === "::" || /^::ffff:7f/.test(host));
+}

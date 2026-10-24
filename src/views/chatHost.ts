@@ -9,7 +9,8 @@ import type { DeskService } from "../deskService";
 import type { ContentDocs } from "../content";
 import type { DiffContent, Proposals } from "../diff";
 import type { PlanDocs } from "../plans";
-import { isDestination } from "../wire/cards";
+import { isDestination, ownersAlways } from "../wire/cards";
+import { elicitedUrl } from "../wire/dialogs";
 import { diffSides } from "../diff";
 import { atlasInfo, citationTarget } from "../atlas";
 import { DeskError } from "../desk/client";
@@ -325,14 +326,12 @@ export class ChatHost implements vscode.Disposable {
         // Every change rejected in the diff tab: Allow has nothing left to allow (64).
         if (p && this.ctx.proposals.rejectsAll(p.requestId)) chat.deny(p, "The user rejected every change of this edit.");
         // Always: the suggestions the owner kept, where the owner picked — one of Claude Code's four places, never anything else (78).
-        else if (p)
-          chat.allow(
-            p,
-            !!m.always && {
-              picks: Array.isArray(m.picks) ? m.picks.filter((i) => Number.isInteger(i)) : undefined,
-              destination: isDestination(m.destination) ? m.destination : undefined,
-            },
-          );
+        // A page that names no picks, or no place for one that needs it, gets a plain Allow: the CLI's own picks are never saved.
+        else if (p) {
+          const always = m.always ? ownersAlways(p.suggestions, m.picks, m.destination) : null;
+          if (m.always && !always) this.ctx.log(`[${chat.sessionId.slice(0, 8)}] always allow without the owner's picks or place: allowed once, nothing saved`);
+          chat.allow(p, always ?? false);
+        }
         this.ctx.proposals.done(m.requestId);
         return;
       }
@@ -363,6 +362,11 @@ export class ChatHost implements vscode.Disposable {
       }
       case "respond": {
         const p = chat.state.pending.find((x) => x.requestId === m.requestId);
+        // An MCP server's link opens only over https, and never to this machine (66): accepting one that does is declining it.
+        if (p?.form === "elicitation" && p.input.mode === "url" && m.response?.action === "accept" && !elicitedUrl(p.input.url)) {
+          chat.note(`Not opened: ${p.toolName} asked to open ${String(p.input.url).slice(0, 200)}, which is not an https address outside this machine.`, "error");
+          return chat.respond(p, { action: "decline" });
+        }
         if (p) chat.respond(p, m.response);
         return;
       }
@@ -480,7 +484,10 @@ export class ChatHost implements vscode.Disposable {
         return;
       }
       case "openLink":
-        if (/^https?:\/\//.test(m.url)) await vscode.env.openExternal(vscode.Uri.parse(m.url));
+        if (!/^https?:\/\//.test(m.url)) return;
+        // The link a pending elicitation names is the server's, not Claude's or the owner's: only an https one outside this machine (66).
+        if (chat.state.pending.some((p) => p.form === "elicitation" && p.input.url === m.url) && !elicitedUrl(m.url)) return;
+        await vscode.env.openExternal(vscode.Uri.parse(m.url));
         return;
       case "mention": {
         const items = await mentionItems(m.q, chat.opts.cwd || chat.state.cwd || "");

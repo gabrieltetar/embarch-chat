@@ -114,6 +114,22 @@ export function defaultDestination(suggestions: unknown[] | undefined, remembere
  * in the session that saved it [measured on 2.1.287; one saved to local
  * settings or the session applies at once].
  */
+/**
+ * What a page's "always allow" may save (decision 78): the suggestions it
+ * names by index, each one that is placed put where the owner picked — one
+ * of the four places. Null when it names no picks, or a placed one without
+ * a valid place: nothing is saved that the owner did not pick, so it is a
+ * plain Allow.
+ */
+export function ownersAlways(suggestions: unknown[] | undefined, picks: unknown, destination: unknown): { picks: number[]; destination?: Destination } | null {
+  if (!Array.isArray(picks)) return null;
+  const all = Array.isArray(suggestions) ? suggestions : [];
+  const kept = picks.filter((i): i is number => Number.isInteger(i) && i >= 0 && i < all.length);
+  const placed = kept.some((i) => grantOf(all[i]).placed);
+  if (placed && !isDestination(destination)) return null;
+  return { picks: kept, ...(isDestination(destination) ? { destination } : {}) };
+}
+
 export function alwaysPermissions(suggestions: unknown[] | undefined, picks: number[] | undefined, destination: Destination | undefined): unknown[] {
   const all = Array.isArray(suggestions) ? suggestions : [];
   const kept = picks ? all.filter((_, i) => picks.includes(i)) : all;

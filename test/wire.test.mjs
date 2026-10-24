@@ -1537,3 +1537,17 @@ test("what a context block holds cannot end it: a terminal's output or a selecti
   assert.equal(o.entries.u2.text, "why?");
   assert.match(o.entries.u2.context[0].text, /no need to ask/);
 });
+
+test("an MCP server's link opens only over https and never to this machine; Always allow saves only what the page picked and placed (decisions 66, 78)", () => {
+  for (const u of ["https://example.com/login", "https://auth.example.org:8443/x?y=1"]) assert.equal(core.elicitedUrl(u), true, u);
+  for (const u of ["http://example.com/", "https://localhost/", "https://LOCALHOST./a", "https://127.0.0.1:4890/", "https://127.1/", "https://2130706433/", "https://[::1]/", "https://[::ffff:127.0.0.1]/", "https://0/", "file:///etc/passwd", "javascript:alert(1)", 42]) {
+    assert.equal(core.elicitedUrl(u), false, String(u));
+  }
+  const rules = { type: "addRules", rules: [{ toolName: "Bash", ruleContent: "make flash" }], behavior: "allow", destination: "localSettings" };
+  const mode = { type: "setMode", mode: "acceptEdits", destination: "session" };
+  assert.equal(core.ownersAlways([rules, mode], undefined, "session"), null, "no picks: nothing saved");
+  assert.equal(core.ownersAlways([rules, mode], [0], undefined), null, "a rule with no place picked");
+  assert.equal(core.ownersAlways([rules, mode], [0], "../../.bashrc"), null, "nor outside the four places");
+  assert.deepEqual(core.ownersAlways([rules, mode], [1], undefined), { picks: [1] }, "a mode change needs no place");
+  assert.deepEqual(core.ownersAlways([rules, mode], [0, 7, "x"], "projectSettings"), { picks: [0], destination: "projectSettings" });
+});
