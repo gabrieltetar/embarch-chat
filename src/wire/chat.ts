@@ -150,6 +150,11 @@ export class Chat extends EventEmitter {
     return !!this.proc && !this.proc.exited;
   }
 
+  /** Running and not closing: a control request now reaches the CLI. */
+  private get live(): boolean {
+    return this.running && !this.closing && !this.proc!.closing;
+  }
+
   get pid(): number | undefined {
     return this.proc?.pid;
   }
@@ -325,6 +330,8 @@ export class Chat extends EventEmitter {
       if (this.proc !== proc) return;
       const msg = (err as NodeJS.ErrnoException).code === "ENOENT" ? `claude not found: ${this.opts.claudePath}` : err.message;
       this.log(`spawn failed: ${msg}`);
+      // It took nothing: what was sent to it goes back to the owner, as after a crash.
+      this.releaseUntaken();
       this.dispatch({ type: "_process", state: "error", error: msg, at: Date.now() });
       this.emit("closed");
     });
@@ -535,7 +542,7 @@ export class Chat extends EventEmitter {
 
   /** The mode as `setMode` sets it, without a note: null when set, else why not. */
   private async trySetMode(mode: string): Promise<string | null> {
-    if (this.running) {
+    if (this.live) {
       try {
         await this.proc!.request("set_permission_mode", { mode });
       } catch (e) {
@@ -648,8 +655,9 @@ export class Chat extends EventEmitter {
     }
   }
 
+  /** While a process closes (41), a choice is the next one's: it starts with the chat's mode, model and effort. */
   async setMode(mode: string): Promise<void> {
-    if (this.running) {
+    if (this.live) {
       try {
         await this.proc!.request("set_permission_mode", { mode });
       } catch (e) {
@@ -661,7 +669,7 @@ export class Chat extends EventEmitter {
   }
 
   async setModel(model: string): Promise<void> {
-    if (this.running) {
+    if (this.live) {
       try {
         await this.proc!.request("set_model", { model });
       } catch (e) {
@@ -684,7 +692,7 @@ export class Chat extends EventEmitter {
    * is written to the owner's own settings.
    */
   async setEffort(effort: string | null, ultracode: boolean): Promise<void> {
-    if (this.running) {
+    if (this.live) {
       try {
         await this.proc!.request("apply_flag_settings", { settings: { effortLevel: effort, ultracode } });
       } catch (e) {
@@ -698,7 +706,7 @@ export class Chat extends EventEmitter {
 
   /** What the running process runs at (`get_settings`'s `applied`): its effort, and whether Ultracode is on and offered. */
   async readSettings(): Promise<void> {
-    if (!this.running) return;
+    if (!this.live) return;
     try {
       const r = await this.proc!.request("get_settings", {}, 10000);
       const a = r.applied as Partial<AppliedSettings> | undefined;
@@ -898,6 +906,11 @@ export class Chat extends EventEmitter {
         this.log(`remote_control off: ${(e as Error).message}`);
       }
       this.touch();
+      return;
+    }
+    if (this.running && !this.live) {
+      // Closing (41): the bridge goes on the process that starts once this one has gone.
+      this.once("closed", () => void this.remoteControl(name));
       return;
     }
     const proc = this.ensureProcess();

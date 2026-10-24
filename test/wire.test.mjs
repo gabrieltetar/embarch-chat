@@ -278,6 +278,39 @@ test("an idle chat closes, and the next message resumes it with --resume", async
   chat.dispose();
 });
 
+test("a mode, model or effort picked while the idle close is under way is the next process's", async () => {
+  const { chat, spawns } = makeChat("resume", { idleMs: 600000 });
+  chat.send("What word did I ask you to remember? One word.");
+  await turns(chat, 1);
+  const closed = once(chat, "closed");
+  chat.closeProcess();
+  await chat.setMode("plan");
+  await chat.setModel("haiku");
+  await chat.setEffort("high", false);
+  await closed;
+  assert.ok(!entries(chat.state, "note").some((n) => /not changed/.test(n.text)), "nothing refused");
+  chat.send("again");
+  await turns(chat, 1);
+  const a = spawns()[1].argv;
+  assert.ok(a.includes("--permission-mode=plan"));
+  assert.equal(a[a.indexOf("--model") + 1], "haiku");
+  assert.deepEqual(JSON.parse(a[a.indexOf("--settings") + 1]), { effortLevel: "high" });
+  chat.dispose();
+});
+
+test("Remote Control asked for while the idle close is under way starts on the next process", async () => {
+  const { chat, spawns, inputs } = makeChat("resume", { idleMs: 600000 });
+  chat.send("What word did I ask you to remember? One word.");
+  await turns(chat, 1);
+  chat.closeProcess();
+  await chat.remoteControl();
+  await waitFor(() => inputs().some((o) => o.type === "control_request" && o.request.subtype === "remote_control"), 3000);
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(spawns().length, 2, "asked of a process started for it");
+  assert.notEqual(chat.state.remote?.status, "failed");
+  chat.dispose();
+});
+
 test("a pending prompt keeps the process past idle", async () => {
   const { chat } = makeChat("deny", { idleMs: 100 });
   chat.send("Run ...");
@@ -308,6 +341,18 @@ test("a missing claude is an error on the chat, not a crash", async () => {
   await once(chat, "closed");
   assert.equal(chat.state.process, "error");
   assert.match(chat.state.processError, /not found/);
+  chat.dispose();
+});
+
+test("a claude that cannot start gives the message back to the draft, marked not sent", async () => {
+  const chat = new core.Chat({ sessionId: "11111111-2222-4333-8444-555555555555", cwd: os.tmpdir(), claudePath: "/nonexistent/claude", existing: false, idleMs: 1000 });
+  const unsent = [];
+  chat.on("unsent", (t) => unsent.push(t));
+  chat.send("hello there");
+  await once(chat, "closed");
+  assert.deepEqual(unsent, ["hello there"]);
+  assert.deepEqual(chat.state.unconfirmed, []);
+  assert.equal(top(chat.state).find((e) => e.kind === "user").unsent, true);
   chat.dispose();
 });
 
