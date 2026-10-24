@@ -1,4 +1,4 @@
-// One Haiku call (embarch-chat-assistant-proposal.md decision 26): a
+// One Haiku call (decision 26): a
 // stripped, unsaved, streamed `claude -p` with thinking off, the prompt on
 // stdin — measured at about 0.86 s to the first token and 1.1 s in all.
 // `--tools ""` is variadic and would swallow a prompt given after it, hence

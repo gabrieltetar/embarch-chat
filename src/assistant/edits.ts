@@ -1,5 +1,5 @@
 // What the assistant does to the draft, as pure functions the host and the
-// chat webview share (embarch-chat-assistant-proposal.md): every card is an
+// chat webview share (decisions/assistant.md in embarch-doc/embarch-chat): every card is an
 // edit to the draft, previewed in place as a word diff (decision 37); the
 // compact card's first line is sent before the rest (36); the handoff card
 // turns the draft into a request for a handoff (36); the instant wave's

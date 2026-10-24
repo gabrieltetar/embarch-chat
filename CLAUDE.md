@@ -1,16 +1,14 @@
 # embarch-chat
 
 ## Docs
-**Not folded yet.** Until the fold creates `../embarch-doc/embarch-chat/` (spec.md,
-decisions.md, open.md), the design lives in three proposals at the doc repo's root:
-../embarch-doc/embarch-chat-proposal.md (the chat itself, decisions 1–39 and 41),
-../embarch-doc/embarch-chat-desk-proposal.md (the desk's side and the **Interface**
-table — the contract for every desk call this extension makes), and
-../embarch-doc/embarch-chat-assistant-proposal.md (the Haiku assistant). Decision
-numbers are shared across the three and permanent; cite them in code comments.
-Update them proactively per ../embarch-doc/DOC-PROTOCOL.md whenever a notable design
-decision, feature, or status change happens here — §4 says when, §5 says how, and
-history goes in a changelog.d/ fragment rather than into a doc.
+**Four files, not one.** Current truth: ../embarch-doc/embarch-chat/spec.md. Why it is
+that way: decisions.md — an index over decisions/, and a decision number addresses this
+sub-project, not a file; cite them in code comments. 32, 33, 40, 42–47 and 49 moved to
+embarch-desk as its decisions 46–55. Unresolved: open.md. Reference: interfaces.md (the
+desk's routes: ../embarch-doc/embarch-desk/interfaces.md). Update them proactively per
+../embarch-doc/DOC-PROTOCOL.md whenever a notable design decision, feature, or status
+change happens here — §4 says when, §5 says how, and history goes in a changelog.d/
+fragment (scope `chat`) rather than into a doc.
 
 ## Git
 Work directly on `main` — no feature branches, no PRs (2026-08-25). Overrides the

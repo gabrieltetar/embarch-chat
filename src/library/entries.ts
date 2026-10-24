@@ -1,5 +1,5 @@
-// A library entry and how the 📚 shows it (embarch-chat-proposal.md
-// decisions 7, 38) — pure, shared by the host and the chat webview.
+// A library entry and how the 📚 shows it (decisions 7,
+// 38) — pure, shared by the host and the chat webview.
 // files.ts reads the entries.
 
 export interface LibraryEntry {

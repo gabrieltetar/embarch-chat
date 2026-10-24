@@ -1,4 +1,4 @@
-// The library (embarch-chat-proposal.md decisions 7, 13, 38): an entry is a
+// The library (decisions 7, 13, 38): an entry is a
 // Claude Code command or skill, a `.md` file with frontmatter, so it works in
 // the terminal, Claude Code's own panel and the fleet as well as here. Two
 // folders: the generic entries in this repo's own plugin (shipped inside the

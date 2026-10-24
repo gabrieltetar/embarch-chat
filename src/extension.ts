@@ -1,5 +1,5 @@
 // EmbArch Chat: the owner's own Claude Code chat, beside the code
-// (embarch-chat-proposal.md decisions 1, 2). This file wires the pieces:
+// (decisions 1, 2). This file wires the pieces:
 // the chats this window runs (chats.ts), the desk (deskService.ts), the two
 // views and editor tabs (views/), and the embarch-ui launcher that moved in
 // (launcher/, decision 29).

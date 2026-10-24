@@ -6,11 +6,9 @@ every thread of the window's desk at a glance, waiting-on-you first. It also
 carries the [embarch-ui](../embarch-ui) launcher, which moved in from
 embarch-ui's own `vscode-extension/`.
 
-The design is in three proposals in `embarch-doc` —
-[the chat](../embarch-doc/embarch-chat-proposal.md),
-[the desk's side](../embarch-doc/embarch-chat-desk-proposal.md) and
-[the Haiku assistant](../embarch-doc/embarch-chat-assistant-proposal.md) —
-whose decision numbers the code cites.
+The design is in `embarch-doc`: [the spec](../embarch-doc/embarch-chat/spec.md)
+and [its decisions](../embarch-doc/embarch-chat/decisions.md), whose numbers the
+code cites.
 
 ## What it does
 

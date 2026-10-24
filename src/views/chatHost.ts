@@ -53,7 +53,7 @@ export interface HostCtx {
   warning: () => string | null;
   openInEditor: (sid: string) => void;
   newChat: (itemId?: string) => void;
-  /** The Haiku assistant (embarch-chat-assistant-proposal.md), on or off by setting. */
+  /** The Haiku assistant (decisions/assistant.md in embarch-doc/embarch-chat), on or off by setting. */
   assistant: HaikuAssistant;
   assistantOn: () => boolean;
   /** The owner's past prompts, for the instant wave (26). */

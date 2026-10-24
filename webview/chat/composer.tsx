@@ -3,7 +3,7 @@
 // and the CLI inlines it; `/` completes the library's entries and the
 // session's own commands.
 //
-// The Haiku assistant comes in three waves (embarch-chat-assistant-proposal.md
+// The Haiku assistant comes in three waves (decisions/assistant.md in embarch-doc/embarch-chat
 // decision 26): instantly, typing through the ghost text shown and a prefix
 // match over the owner's own past prompts; after a 300 ms pause, Haiku's
 // ghost text, streamed, Tab takes it; after a 2 s pause or just before send,

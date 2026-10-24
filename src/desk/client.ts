@@ -1,7 +1,7 @@
 // The desk, from the extension's Node side only (decision 20): loopback HTTP
 // with the desk's bearer token, which never reaches a webview — a webview is
 // a page (embarch-desk decision 28). Every call here is one route of the
-// desk's interface (embarch-chat-desk-proposal.md, "Interface").
+// desk's interface (embarch-doc/embarch-desk/interfaces.md).
 
 import * as fs from "fs";
 import * as http from "http";

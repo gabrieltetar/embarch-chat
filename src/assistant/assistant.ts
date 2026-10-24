@@ -1,4 +1,4 @@
-// The Haiku assistant at the input (embarch-chat-assistant-proposal.md):
+// The Haiku assistant at the input (decisions/assistant.md in embarch-doc/embarch-chat):
 // ghost text after a 300 ms pause, cards on a 2 s pause or just before send,
 // reply chips after each turn, and a name for each chat after its first
 // (decision 12). It runs only for the chat on screen (34): a background

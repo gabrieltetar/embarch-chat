@@ -1,5 +1,5 @@
-// The Haiku assistant (embarch-chat-assistant-proposal.md) and the library
-// (embarch-chat-proposal.md 7, 13, 38): the pure edits and the instant wave,
+// The Haiku assistant (decisions/assistant.md in embarch-doc/embarch-chat) and the library
+// (decisions 7, 13, 38): the pure edits and the instant wave,
 // real recorded Haiku calls replayed by fake-claude.mjs, the owner's prompt
 // history on synthetic transcripts (never the owner's own), and the plugin's
 // entries.
