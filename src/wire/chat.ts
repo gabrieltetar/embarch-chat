@@ -151,6 +151,11 @@ export class Chat extends EventEmitter {
     return this.pendingTitle;
   }
 
+  /** The model the owner picked for this chat, undefined for the default (22): a reload and a fork carry it (review r4 N1). */
+  get pickedModel(): string | undefined {
+    return this.model;
+  }
+
   /** A fork whose first process has not run yet (decision 73): where it starts from, for a reload to carry. */
   get pendingFork(): { from: string; at: string } | null {
     return this.hasSession ? null : (this.opts.fork ?? null);

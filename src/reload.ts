@@ -68,6 +68,8 @@ interface SavedChat {
   fork?: { from: string; at: string };
   /** A turn finished unseen: it comes back unread, as Claude Code keeps its marks. */
   unread?: boolean;
+  /** The model the owner picked for the chat: a step continued after the reload, and the next message, run on it (review r4 N1). */
+  model?: string;
   /** The chat's own effort and Ultracode: a step continued after the reload runs at them too. */
   effort?: string;
   ultracode?: boolean;
@@ -167,6 +169,7 @@ export class ReloadMemory implements vscode.Disposable {
         ...(r.chat.pendingName ? { title: r.chat.pendingName } : {}),
         ...(r.chat.pendingFork ? { fork: r.chat.pendingFork } : {}),
         ...(r.unread ? { unread: true } : {}),
+        ...(r.chat.pickedModel ? { model: r.chat.pickedModel } : {}),
         ...(st.effort ? { effort: st.effort } : {}),
         ...(st.ultracode ? { ultracode: true } : {}),
         ...(untaken.length ? { untaken } : {}),
@@ -239,6 +242,7 @@ export async function restoreAfterReload(o: RestoreCtx): Promise<void> {
     // The owner's unsent draft, for the page that shows it — before its tab opens; kept again by a second reload.
     if (c.typed) rec.typed = rec.typedBack = c.typed;
     // No process runs it yet: the next one starts with them.
+    if (c.model) void rec.chat.setModel(c.model);
     if (c.effort || c.ultracode) void rec.chat.setEffort(c.effort ?? null, !!c.ultracode);
     o.memory.noteRerun(c.sid, c.reruns);
     if (c.tab) o.openTab(c.sid);

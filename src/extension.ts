@@ -643,7 +643,8 @@ export function activate(context: vscode.ExtensionContext): void {
     const fresh = await startChat(body, cwd, rec.itemTitle, { fork, mode: rec.chat.state.mode });
     if (!fresh) return;
     log(`[${sid.slice(0, 8)}] forked before ${uuid.slice(0, 8)}: ${fresh.chat.sessionId}`);
-    // The fork runs at this chat's effort and Ultracode (82): its process starts with them.
+    // The fork runs on this chat's model, at its effort and Ultracode (82; review r4 N1): its process starts with them.
+    if (rec.chat.pickedModel) await fresh.chat.setModel(rec.chat.pickedModel);
     const { effort, ultracode } = rec.chat.state;
     if (effort || ultracode) await fresh.chat.setEffort(effort, ultracode);
     if (fork) {

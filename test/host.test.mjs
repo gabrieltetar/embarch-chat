@@ -768,6 +768,9 @@ test("a reload brings the window's chats back in their own mode; one cut off mid
     // Ask mode: what Claude asks to run waits on the owner, after the reload too.
     chatView.webview.fromPage({ t: "mode", mode: "default" });
     await waitFor(() => posted((m) => m.t === "event" && m.e.type === "_mode" && m.e.mode === "default"), 3000, "ask mode");
+    // On the model the owner picked, after the reload too (review r4 N1).
+    chatView.webview.fromPage({ t: "model", model: "sonnet" });
+    await waitFor(() => posted((m) => m.t === "event" && m.e.type === "_model" && m.e.model === "sonnet"), 3000, "the model");
     const n = chatView.webview.posted.length;
     chatView.webview.fromPage({ t: "send", text: "Run the bash command `touch should-not-exist.txt`. If it is refused, reply with just: refused" });
     await waitFor(() => chatView.webview.posted.slice(n).some((m) => m.t === "event" && m.e.type === "control_request"), 5000, "the chat mid-turn, waiting on the owner");
@@ -796,6 +799,7 @@ test("a reload brings the window's chats back in their own mode; one cut off mid
     assert.equal(rerun.argv.find((a) => a.startsWith("--resume")), `--resume=${sid}`);
     assert.equal(rerun.env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN, "1");
     assert.ok(rerun.argv.includes("--permission-mode=default"), "rerun in ask mode");
+    assert.equal(rerun.argv[rerun.argv.indexOf("--model") + 1], "sonnet", "on the owner's model");
     // The offer went with its process: a second click starts nothing.
     chatView.webview.fromPage({ t: "continueStep" });
     await new Promise((r) => setTimeout(r, 300));
@@ -1043,6 +1047,9 @@ test("Fork conversation from here: a new chat on the same item with the conversa
   // And in Accept edits: so will its fork, never a new chat's auto (22).
   chatView.webview.fromPage({ t: "mode", mode: "acceptEdits" });
   await waitFor(() => chatView.webview.posted.slice(n0).some((m) => m.t === "event" && m.e.type === "_mode" && m.e.mode === "acceptEdits"), 3000, "the parent's mode");
+  // On Sonnet, which the owner picked: so will its fork (review r4 N1).
+  chatView.webview.fromPage({ t: "model", model: "sonnet" });
+  await waitFor(() => chatView.webview.posted.slice(n0).some((m) => m.t === "event" && m.e.type === "_model" && m.e.model === "sonnet"), 3000, "the parent's model");
   // Claude's transcript of it, as the CLI wrote it for the recording.
   const text = fs.readFileSync(PARENT_FIXTURE, "utf8").replaceAll("6c563cde-6794-42ea-b651-dbbcb0946fdc", parent).replaceAll("/work/rec/fork", folder);
   const file = path.join(process.env.CLAUDE_CONFIG_DIR, "projects", folder.replace(/[^a-zA-Z0-9]/g, "-"), `${parent}.jsonl`);
@@ -1077,6 +1084,7 @@ test("Fork conversation from here: a new chat on the same item with the conversa
   assert.equal(run.env.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING, "true");
   assert.deepEqual(JSON.parse(run.argv[run.argv.indexOf("--settings") + 1]), { effortLevel: "high", ultracode: true }, "the parent's effort and Ultracode");
   assert.ok(run.argv.includes("--permission-mode=acceptEdits"), "the parent's mode");
+  assert.equal(run.argv[run.argv.indexOf("--model") + 1], "sonnet", "the parent's model");
   // A fork keeps its name: Haiku names no fork (12).
   await new Promise((r) => setTimeout(r, 300));
   const haikuName = core.parseTurn(haikuAnswer("turn")).name;
