@@ -13,7 +13,7 @@ import { findTranscript, holdsMessage, projectsRoot } from "./transcript";
 import { appendTitle } from "./history";
 import { ChatState, Pending, chatStatus, initialState, reduce, reduceAll } from "./reducer";
 import { anyMovable, soonMovable } from "./tasks";
-import { Attachment, ContextItem, Outgoing, outgoing } from "./message";
+import { Attachment, ContextItem, Outgoing, outgoing, stripInvisible } from "./message";
 import type { AppliedSettings, ContextUsage, ModelInfo, PermissionDecision, WireMessage } from "./types";
 import { DIALOG_CANCELLED, answerable, unansweredNote } from "./dialogs";
 import { Destination, PlanComment, alwaysPermissions, planFeedback } from "./cards";
@@ -396,7 +396,14 @@ export class Chat extends EventEmitter {
 
   // ------------------------------------------------------------- the owner
 
+  /**
+   * The owner's message. What shows nothing never goes as the owner's words
+   * (decision 56): the composer strips a draft and shows the owner; a reply
+   * chip, the handoff and Start work's prompt, which a model or the desk
+   * wrote, are stripped here, the one way every message goes.
+   */
   send(text: string, images: Attachment[] = [], extra: SendExtra = {}): void {
+    text = stripInvisible(text).text;
     const context = extra.context ?? [];
     // Its own uuid: the CLI's queue knows it by it, to take it back or send it now (port item 72).
     const uuid = randomUUID();
@@ -482,6 +489,7 @@ export class Chat extends EventEmitter {
   sendAfterCompact(compact: string, rest: string, images: Attachment[] = [], extra: SendExtra = {}): void {
     const waiting = this.held.length > 0;
     this.send(compact);
+    rest = stripInvisible(rest).text;
     const context = extra.context ?? [];
     // Behind another card's rest, this /compact and its rest wait in line after it.
     if (!waiting) this.compactRan = false;
