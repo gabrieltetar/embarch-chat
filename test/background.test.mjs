@@ -153,6 +153,25 @@ test("Stop on a turn ends only the turn: a background task runs on, with its own
   chat.dispose();
 });
 
+test("a CLI that dies with a task in the background leaves none behind: its row ends, and the next process closes when idle (decision 41)", async () => {
+  const { chat } = makeChat("bgstop", { idleMs: 300 });
+  chat.send("Run the bash command `for i in $(seq 1 30); do echo tick $i; sleep 2; done` with run_in_background set to true. Reply with just: started");
+  await turns(chat, 1);
+  assert.equal(chat.state.background.length, 1);
+  const bash = tools(chat.state).find((t) => t.background);
+  // An OOM kill, a crash: no background_tasks_changed comes after it.
+  process.kill(chat.pid, "SIGKILL");
+  await waitFor(() => !chat.running);
+  assert.deepEqual(chat.state.background, [], "no task outlives its process");
+  assert.equal(chat.state.entries[bash.id].taskEnd, "stopped", "its row says it ended");
+  chat.opts.env.FAKE_CLAUDE_FIXTURE = fixture("basic");
+  chat.send("Run the bash command `echo hello-from-bash` and then reply with just: done");
+  await turns(chat, 1);
+  await waitFor(() => !chat.running, 3000);
+  assert.equal(chat.state.process, "closed", "closed when idle, not held for a task that died");
+  chat.dispose();
+});
+
 test("a Monitor is a shell to get_task_output, and says so in its row (port item 71)", async () => {
   const { chat } = makeChat("monitor");
   chat.send("Use the Monitor tool ...");

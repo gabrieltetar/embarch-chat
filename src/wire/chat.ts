@@ -325,7 +325,7 @@ export class Chat extends EventEmitter {
       if (this.proc !== proc) return;
       const msg = (err as NodeJS.ErrnoException).code === "ENOENT" ? `claude not found: ${this.opts.claudePath}` : err.message;
       this.log(`spawn failed: ${msg}`);
-      this.dispatch({ type: "_process", state: "error", error: msg });
+      this.dispatch({ type: "_process", state: "error", error: msg, at: Date.now() });
       this.emit("closed");
     });
     proc.on("exit", (info: { code: number | null; signal: string | null; stderr: string }) => {
@@ -337,9 +337,9 @@ export class Chat extends EventEmitter {
       this.log(`exit ${info.code ?? info.signal}${expected ? " (idle close)" : ""}`);
       // A signal (killed, out of memory, a crash) is no idle close either.
       if (!expected && (info.code || info.signal)) {
-        this.dispatch({ type: "_process", state: "error", error: info.stderr.split("\n").slice(-3).join("\n") || `claude exited with ${info.code ?? info.signal}` });
+        this.dispatch({ type: "_process", state: "error", error: info.stderr.split("\n").slice(-3).join("\n") || `claude exited with ${info.code ?? info.signal}`, at: Date.now() });
       } else {
-        this.dispatch({ type: "_process", state: "closed" });
+        this.dispatch({ type: "_process", state: "closed", at: Date.now() });
       }
       this.clearIdle();
       this.emit("closed");

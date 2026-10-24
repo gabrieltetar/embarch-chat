@@ -766,13 +766,21 @@ export function reduce(s: ChatState, o: WireMessage): ChatState {
       delete entries[id];
       return { ...s, entries, queue: s.queue.filter((x) => x !== id), unconfirmed: (s.unconfirmed ?? []).filter((x) => x !== id) };
     }
-    case "_process":
-      return {
+    case "_process": {
+      const gone = o.state === "closed" || o.state === "error";
+      let n: ChatState = {
         ...s,
         process: o.state as ProcessState,
         processError: (o.error as string) ?? null,
-        ...(o.state === "closed" || o.state === "error" ? { busy: false, streaming: null, pending: [], compacting: false, applied: null, remote: null } : {}),
+        ...(gone ? { busy: false, streaming: null, pending: [], compacting: false, applied: null, remote: null, background: [] } : {}),
       };
+      // Its background tasks went with it (a crash sends no background_tasks_changed): their rows end, nothing holds the next process (41, 71).
+      if (gone) {
+        const at = typeof o.at === "number" ? o.at : undefined;
+        for (const e of Object.values(s.entries)) if (e.kind === "tool" && e.background && !e.taskEnd) n = patch(n, e.id, "tool", () => ({ taskEnd: "stopped", ...(at !== undefined ? { taskEndAt: at } : {}) }));
+      }
+      return n;
+    }
     case "_answered": {
       const p = s.pending.find((x) => x.requestId === o.requestId);
       let n: ChatState = { ...s, pending: s.pending.filter((x) => x.requestId !== o.requestId) };
