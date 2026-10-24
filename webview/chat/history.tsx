@@ -169,7 +169,7 @@ export function MessageActions({ e, view }: { e: UserEntry; view: ChatView }) {
     document.addEventListener("keydown", esc, true);
     return () => (document.removeEventListener("mousedown", away), document.removeEventListener("keydown", esc, true));
   }, [open]);
-  if (!e.uuid || e.pending || view.readOnly) return null;
+  if (!e.uuid || e.pending || e.unsent || view.readOnly) return null;
   const uuid = e.uuid;
   const pick = (f: () => void) => () => (setOpen(false), f());
   return (
@@ -226,7 +226,7 @@ function points(s: ChatState): UserEntry[] {
   const out: UserEntry[] = [];
   for (const id of s.timeline) {
     const e = s.entries[id];
-    if (e?.kind === "user" && e.uuid && !e.pending && e.text.trim()) out.push(e);
+    if (e?.kind === "user" && e.uuid && !e.pending && !e.unsent && e.text.trim()) out.push(e);
   }
   return out.reverse();
 }

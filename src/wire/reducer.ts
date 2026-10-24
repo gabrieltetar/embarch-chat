@@ -578,7 +578,8 @@ function foldUser(s: ChatState, o: WireMessage): ChatState {
       const e = s.entries[id];
       return e?.kind === "user" && e.pending && sameText(e.text, text);
     });
-  if (mine) return confirm(s, mine, uuid ? { uuid } : {});
+  // Taken: a /compact's rest held for after it is no longer held (review r6 L1).
+  if (mine) return confirm(s, mine, { held: false, ...(uuid ? { uuid } : {}) });
   return put(s, { kind: "user", id: uuid ?? `u:${s.seq}`, text, images, at: stamp(o), ...(uuid ? { uuid } : {}), ...(own.context.length ? { context: own.context } : {}) }, null);
 }
 

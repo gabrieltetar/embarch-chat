@@ -31,20 +31,23 @@ function quote(text: string): string {
   return l.length > 60 ? `${l.slice(0, 59)}…` : l;
 }
 
+/** Why a message of another chat, or none, is refused; one given back unsent, never sent. */
+const NOT_OURS = "That message is not one of this chat's.";
+const NOT_SENT = "That message was not sent.";
+
 /**
  * The owner's message `uuid` in this chat, as the page offers it — settled,
- * with its uuid on record — or undefined. A rewind or a fork names one of
- * the chat this page serves, never another's (review r4 UI M3): the page's
- * dialog is its chat's, and the host checks it again.
+ * with its uuid on record — or why it is refused. A rewind or a fork names
+ * one of the chat this page serves, never another's (review r4 UI M3): the
+ * page's dialog is its chat's, and the host checks it again. One given back
+ * unsent is in no transcript (review r6 L1).
  */
-function ownerMessage(chat: Chat, uuid: string): UserEntry | undefined {
-  if (typeof uuid !== "string" || !uuid) return undefined;
+function ownerMessage(chat: Chat, uuid: string): UserEntry | string {
+  if (typeof uuid !== "string" || !uuid) return NOT_OURS;
   const e = Object.values(chat.state.entries).find((x): x is UserEntry => x.kind === "user" && x.uuid === uuid);
-  return e && !e.pending && !e.held && !e.unsent ? e : undefined;
+  if (e?.unsent) return NOT_SENT;
+  return e && !e.pending && !e.held ? e : NOT_OURS;
 }
-
-/** Why a message of another chat, or none, is refused. */
-const NOT_OURS = "That message is not one of this chat's.";
 
 /** Why the files of this chat cannot be rewound now, or null. Only a chat this window runs has the process that holds its checkpoints. */
 function noFileRewind(rec: ChatRecord): string | null {
@@ -73,7 +76,8 @@ export async function historyMessage(ctx: HostCtx, rec: ChatRecord, m: HistoryMe
   const chat = rec.chat;
   switch (m.t) {
     case "rewindCheck": {
-      const no = ownerMessage(chat, m.uuid) ? noFileRewind(rec) : NOT_OURS;
+      const own = ownerMessage(chat, m.uuid);
+      const no = typeof own === "string" ? own : noFileRewind(rec);
       let result: RewindResult;
       if (no) result = { canRewind: false, error: no };
       else {
@@ -89,9 +93,9 @@ export async function historyMessage(ctx: HostCtx, rec: ChatRecord, m: HistoryMe
     }
     case "rewind": {
       const e = ownerMessage(chat, m.uuid);
-      if (!e) {
-        ctx.log(`[${chat.sessionId.slice(0, 8)}] rewind to ${String(m.uuid).slice(0, 8)} refused: not a message of this chat's`);
-        return chat.note(`Not rewound or forked: ${NOT_OURS}`, "error");
+      if (typeof e === "string") {
+        ctx.log(`[${chat.sessionId.slice(0, 8)}] rewind to ${String(m.uuid).slice(0, 8)} refused: ${e === NOT_SENT ? "never sent" : "not a message of this chat's"}`);
+        return chat.note(`Not rewound or forked: ${e}`, "error");
       }
       const what = `“${quote(e.text)}”`;
       if (m.restore !== "conversation") {

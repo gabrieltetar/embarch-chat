@@ -838,6 +838,16 @@ test("a compaction's result that names no command still lets the rest go: it ran
   chat.dispose();
 });
 
+test("a /compact's rest the CLI took is held no more: a rewind or a fork may name it (review r6 L1)", async () => {
+  const { chat, sent } = compactChat({ FC_OK: "1" });
+  chat.sendAfterCompact("/compact focus on: the widget", "now add the blink test");
+  await waitFor(() => sent().includes("now add the blink test"));
+  const rest = () => Object.values(chat.state.entries).find((e) => e.kind === "user" && e.text === "now add the blink test");
+  await waitFor(() => rest() && !rest().pending);
+  assert.deepEqual([!!rest().held, !!rest().unsent, typeof rest().uuid], [false, false, "string"], "taken, under the uuid it went with");
+  chat.dispose();
+});
+
 test("a message written while a /compact's rest waits goes after that rest, not before it (decision 36)", async () => {
   const { chat, sent } = compactChat({ FC_OK: "1" });
   chat.send("slow: a long step");

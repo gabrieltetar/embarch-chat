@@ -333,6 +333,34 @@ test("the compact card's draft: the host sends its /compact line, then the rest 
   assert.ok(chatView.webview.posted.slice(n).some((m) => m.t === "event" && m.e.subtype === "compact_boundary"));
 });
 
+test("a /compact's rest the CLI took is one of the chat's messages: its dry run reaches the CLI, and a fork from it is no refusal (review r6 L1)", { skip }, async () => {
+  const dry = { canRewind: true, filesChanged: [], insertions: 0, deletions: 0 };
+  process.env.FAKE_CLAUDE_DRY_RUN = JSON.stringify(dry);
+  try {
+    await startUntracked("compact");
+    const m0 = chatView.webview.posted.length;
+    chatView.webview.fromPage({ t: "send", text: "@note.txt what is the secret? One word." });
+    await waitFor(() => chatView.webview.posted.slice(m0).some((m) => m.t === "event" && m.e.type === "result"), 5000, "the first turn");
+    const n = chatView.webview.posted.length;
+    chatView.webview.fromPage({ t: "send", text: "/compact focus on: the secret word in note.txt\nWhat was the secret word? One word." });
+    await waitFor(() => chatView.webview.posted.slice(n).filter((m) => m.t === "event" && m.e.type === "result").length >= 2, 8000, "the compaction and the turn after it");
+    // The rest as the chat holds it: under the uuid the CLI's echo gave it.
+    const n0 = chatView.webview.posted.length;
+    chatView.webview.fromPage({ t: "ready" });
+    const snap = await waitFor(() => chatView.webview.posted.slice(n0).find((m) => m.t === "snapshot"), 3000, "a snapshot");
+    const rest = Object.values(snap.state.entries).find((e) => e.kind === "user" && e.text === "What was the secret word? One word.");
+    chatView.webview.fromPage({ t: "rewindCheck", uuid: rest.uuid });
+    const check = await waitFor(() => posted((m) => m.t === "rewindCheck" && m.uuid === rest.uuid), 5000, "the dry run's answer");
+    assert.deepEqual(check.result, dry, "the CLI's dry run, not a refusal");
+    const n1 = chatView.webview.posted.length;
+    chatView.webview.fromPage({ t: "rewind", uuid: rest.uuid, restore: "conversation" });
+    await new Promise((r) => setTimeout(r, 500));
+    assert.deepEqual(chatView.webview.posted.slice(n1).filter((m) => m.t === "event" && m.e.type === "_note" && /^Not rewound or forked/.test(m.e.text)), [], "not refused");
+  } finally {
+    delete process.env.FAKE_CLAUDE_DRY_RUN;
+  }
+});
+
 test("a turn that wrote a handoff offers a fresh chat; the chip starts one on the same item with it", { skip }, async () => {
   const { id: item } = await client.call("POST", "/items", { title: "ABC-125 hand it over", desk: "none" });
   await mock.state.commands.get("embarchChat.refresh")();
@@ -895,7 +923,7 @@ test("Continue clicked once the step is past Claude Code's hour: nothing starts,
     chatView.webview.fromPage({ t: "send", text: "Also end your reply with the word: kiwi" });
     await waitFor(() => transcriptHas(sid, "kiwi"), 5000, "its queue line");
     await reload(() => (process.env.FAKE_CLAUDE_FIXTURE = path.join(here, "fixtures", "wire", "reload.jsonl")));
-    await waitFor(() => posted((m) => m.t === "event" && m.e.type === "_sent" && m.e.restored), 15000, "the message back above the input");
+    const back = await waitFor(() => posted((m) => m.t === "event" && m.e.type === "_sent" && m.e.restored), 15000, "the message back above the input");
     await waitFor(() => posted((m) => m.t === "event" && m.e.type === "_note" && m.e.offer === "rerun"), 3000, "the offer to continue");
     // The owner leaves it, and clicks two hours later: the step, as the transcript dates it, is past the CLI's hour.
     const f = path.join(process.env.CLAUDE_CONFIG_DIR, "projects", folder.replace(/[^a-zA-Z0-9]/g, "-"), `${sid}.jsonl`);
@@ -911,6 +939,12 @@ test("Continue clicked once the step is past Claude Code's hour: nothing starts,
     await new Promise((r) => setTimeout(r, 300));
     assert.ok(!calls().slice(spawnsBefore).some((c) => c.argv.includes("--input-format")), "no CLI started to rerun nothing");
     assert.ok(mock.state.output.some((l) => l.includes("the interrupted step is not continued: the step is over an hour old, by the owner's click")));
+    // Given back unsent, it is in no transcript: a rewind or a fork from it says so (review r6 L1).
+    chatView.webview.fromPage({ t: "rewindCheck", uuid: back.e.uuid });
+    const check = await waitFor(() => chatView.webview.posted.slice(n1).find((m) => m.t === "rewindCheck" && m.uuid === back.e.uuid), 3000, "the answer");
+    assert.deepEqual(check.result, { canRewind: false, error: "That message was not sent." });
+    chatView.webview.fromPage({ t: "rewind", uuid: back.e.uuid, restore: "conversation" });
+    await waitFor(() => chatView.webview.posted.slice(n1).some((m) => m.t === "event" && m.e.type === "_note" && m.e.text === "Not rewound or forked: That message was not sent."), 3000, "the note");
   } finally {
     delete process.env.FAKE_CLAUDE_TRANSCRIPT;
   }

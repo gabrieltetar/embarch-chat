@@ -1971,6 +1971,28 @@ await check("a past chat nothing runs offers the fork alone; a thread run elsewh
   assert.equal((await text(".user .msg-act")).length, 0);
 });
 
+await check("a message given back unsent offers no ↶ and is no point to rewind to; a /compact's rest the CLI took is both (review r6 L1)", async () => {
+  await basicChat();
+  await send([
+    { t: "event", e: { type: "_sent", n: 20, text: "/compact focus on the flash", uuid: U(20) } },
+    { t: "event", e: { type: "_sent", n: 21, text: "What was the secret word? One word.", held: true, uuid: U(21) } },
+    { t: "event", e: { type: "user", isReplay: true, uuid: U(20), message: { role: "user", content: "/compact focus on the flash" } } },
+    { t: "event", e: { type: "result", subtype: "success", is_error: false, num_turns: 0, local_command: "compact" } },
+    { t: "event", e: { type: "user", isReplay: true, uuid: U(21), message: { role: "user", content: "What was the secret word? One word." } } },
+    { t: "event", e: { type: "assistant", message: { id: "m-sw", content: [{ type: "text", text: "kiwi" }] } } },
+    { t: "event", e: { type: "result", subtype: "success", is_error: false, num_turns: 1 } },
+    // Given back unsent: Continue refused at the click, or a compaction stopped.
+    { t: "event", e: { type: "_sent", n: 22, text: "Also end your reply with the word: mango", restored: true, uuid: U(22) } },
+    { t: "event", e: { type: "_unsent", id: "s:22" } },
+  ]);
+  // Each message's first 40 characters, the unsent one's label after them left out.
+  const acts = await exec("return [...document.querySelectorAll('.timeline .user')].map((u) => [u.textContent.replace('↶', '').trim().slice(0, 40), !!u.querySelector('.msg-act')])");
+  assert.deepEqual(acts.slice(-2), [["What was the secret word? One word.", true], ["Also end your reply with the word: mango", false]]);
+  await type("/rewind " + ENTER);
+  assert.deepEqual((await text(".rewind-list li")).slice(0, 2), ["What was the secret word? One word.", "/compact focus on the flash"]);
+  await click(".dialog.rewind button", "Close");
+});
+
 await check("Rewind code to here: a dry run's files and lines first; the files change only on the owner's click", async () => {
   await basicChat();
   await messageMenu("Reply with just: ok");
