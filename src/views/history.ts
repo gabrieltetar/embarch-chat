@@ -19,6 +19,9 @@ import type { HostCtx } from "./chatHost";
 
 export type HistoryMessage = Extract<ChatToHost, { t: "rewindCheck" | "rewind" | "export" | "exportSave" }>;
 
+/** The export each chat's dialog was given: Save writes it, as Keep takes its text from host state (84) — never the page's. */
+const exported = new WeakMap<Chat, { text: string; filename: string }>();
+
 /** Where the owner last saved an export, in the extension's global state: the next save dialog opens there (74). */
 const EXPORT_FOLDER_KEY = "embarchChat.exportFolder";
 
@@ -123,26 +126,31 @@ export async function historyMessage(ctx: HostCtx, rec: ChatRecord, m: HistoryMe
       if (rec.ours && chat.started) {
         try {
           const r = await chat.exportConversation();
+          exported.set(chat, { text: r.text, filename: r.filename });
           post({ t: "export", text: r.text, filename: r.filename });
           return;
         } catch (err) {
           ctx.log(`[${chat.sessionId.slice(0, 8)}] export: ${(err as Error).message}; the panel's own text instead`);
         }
       }
-      post({ t: "export", text: conversationText(chat.state), filename: exportFileName(chat.state) });
+      const own = { text: conversationText(chat.state), filename: exportFileName(chat.state) };
+      exported.set(chat, own);
+      post({ t: "export", ...own });
       return;
     }
     case "exportSave": {
       // Where the last export went, else the home folder — never the chat's
       // own: a repo's working tree is one `git add .` from a remote, and a
       // conversation about a client's firmware stays local (review r4 L3).
+      const ex = exported.get(chat);
+      if (!ex) return;
       const last = ctx.remembered.get<string>(EXPORT_FOLDER_KEY);
       const dir = last && fs.existsSync(last) ? last : os.homedir();
-      const name = path.basename(m.filename) || "conversation.txt";
+      const name = path.basename(ex.filename) || "conversation.txt";
       const uri = await vscode.window.showSaveDialog({ defaultUri: vscode.Uri.file(path.join(dir, name)), filters: { Text: ["txt"] }, title: "Export conversation" });
       if (!uri) return;
       try {
-        fs.writeFileSync(uri.fsPath, m.text);
+        fs.writeFileSync(uri.fsPath, ex.text);
         ctx.log(`[${chat.sessionId.slice(0, 8)}] exported to ${uri.fsPath}`);
         await ctx.remembered.update(EXPORT_FOLDER_KEY, path.dirname(uri.fsPath));
       } catch (err) {

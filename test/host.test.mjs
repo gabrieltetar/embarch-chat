@@ -1011,7 +1011,8 @@ test("Export: the conversation as plain text for the page; Save writes it where 
   const target = path.join(dir, "exports", "exported.txt");
   let asked = null;
   mock.state.saveDialog = async (opts) => ((asked = opts), mock.vscode.Uri.file(target));
-  chatView.webview.fromPage({ t: "exportSave", text: ex.text, filename: ex.filename });
+  // What the page says goes in the file does not: the host writes the text it gave the dialog (review r4 N2).
+  chatView.webview.fromPage({ t: "exportSave", text: "not what the export said", filename: "../elsewhere.txt" });
   await waitFor(() => fs.existsSync(target), 3000, "the file");
   assert.equal(fs.readFileSync(target, "utf8"), ex.text);
   assert.equal(path.basename(asked.defaultUri.fsPath), ex.filename);
@@ -1020,7 +1021,7 @@ test("Export: the conversation as plain text for the page; Save writes it where 
   await waitFor(() => context.globalState.get("embarchChat.exportFolder"), 3000, "the folder remembered");
   asked = null;
   mock.state.saveDialog = async (opts) => ((asked = opts), undefined);
-  chatView.webview.fromPage({ t: "exportSave", text: ex.text, filename: ex.filename });
+  chatView.webview.fromPage({ t: "exportSave" });
   await waitFor(() => asked, 3000, "the second dialog");
   assert.equal(path.dirname(asked.defaultUri.fsPath), path.join(dir, "exports"), "where the last export went");
   mock.state.saveDialog = async () => undefined;

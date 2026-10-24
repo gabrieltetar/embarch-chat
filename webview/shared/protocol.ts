@@ -161,8 +161,8 @@ export type ChatToHost =
   | { t: "rewind"; uuid: string; restore: Restore }
   /** The conversation as plain text, for the export dialog (decision 74). */
   | { t: "export" }
-  /** Saves the export through VS Code's save dialog. */
-  | { t: "exportSave"; text: string; filename: string }
+  /** Saves the export through VS Code's save dialog: the text the host gave the dialog, never the page's (review r4 N2). */
+  | { t: "exportSave" }
   /** The owner names the chat (decision 75). */
   | { t: "rename" }
   /** A step in the foreground goes on in the background (port item 70). */

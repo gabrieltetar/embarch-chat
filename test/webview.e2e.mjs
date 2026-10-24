@@ -1893,7 +1893,7 @@ await check("/export: the whole conversation as plain text, copied or saved thro
   assert.deepEqual(await clip(), [t]);
   await click(".dialog.export button", "Save to file");
   const save = (await posts()).find((p) => p.t === "exportSave");
-  assert.deepEqual(save, { t: "exportSave", text: t, filename: "2026-10-23-140509-run-the-bash-command-echo-hello-from-bash-and-th.txt" });
+  assert.deepEqual(save, { t: "exportSave" }, "the host saves the text it gave the dialog (review r4 N2)");
   assert.equal((await text(".dialog")).length, 0, "closed");
   assert.ok(!(await posts()).some((p) => p.t === "send"));
   // The dialog takes the keys: Escape closes it.

@@ -434,7 +434,7 @@ export function ExportDialog() {
             disabled={st.kind !== "ready"}
             onClick={() => {
               if (st.kind !== "ready") return;
-              post({ t: "exportSave", text: st.text, filename: st.filename });
+              post({ t: "exportSave" });
               close();
             }}
           >
