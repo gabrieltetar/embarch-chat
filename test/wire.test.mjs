@@ -613,6 +613,26 @@ test("a background subagent's permission prompt outlives the main turn's end", (
   assert.deepEqual(s.pending, []);
 });
 
+test("an elicitation that comes while a background task runs outlives the main turn's end: it names no tool call to tell whose it is", () => {
+  let s = core.initialState("x");
+  const fold = (es) => es.forEach((e) => (s = core.reduce(s, e)));
+  fold([
+    { type: "assistant", message: { id: "m1", content: [{ type: "tool_use", id: "toolu_agent", name: "Agent", input: { description: "bg", run_in_background: true } }] } },
+    { type: "system", subtype: "task_started", tool_use_id: "toolu_agent", is_backgrounded: true },
+    { type: "system", subtype: "background_tasks_changed", tasks: [{ task_id: "a1", task_type: "local_agent", description: "bg" }] },
+    { type: "control_request", request_id: "e1", request: { subtype: "elicitation", mcp_server_name: "bench", message: "Which board?", requested_schema: { type: "object", properties: {} } } },
+    { type: "result", subtype: "success" },
+  ]);
+  assert.deepEqual(s.pending.map((p) => p.requestId), ["e1"], "the CLI still waits on it, with no timeout (66)");
+  // With nothing in the background, the turn's end takes it, as before.
+  s = core.initialState("x");
+  fold([
+    { type: "control_request", request_id: "e2", request: { subtype: "elicitation", mcp_server_name: "bench", message: "Which board?", requested_schema: { type: "object", properties: {} } } },
+    { type: "result", subtype: "success" },
+  ]);
+  assert.deepEqual(s.pending, []);
+});
+
 test("a transcript folds in linear time, to the same state as line by line", () => {
   const lines = [];
   const pad = "x".repeat(200);

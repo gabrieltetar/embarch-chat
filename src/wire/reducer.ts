@@ -713,8 +713,11 @@ export function reduce(s: ChatState, o: WireMessage): ChatState {
       const ok = !o.is_error && o.subtype === "success";
       const interrupted = s.timeline.length > 0 && s.entries[s.timeline[s.timeline.length - 1]]?.kind === "note" && (s.entries[s.timeline[s.timeline.length - 1]] as NoteEntry).tone === "interrupt";
       // The turn's own prompts end with it; a background task's go on asking
-      // after the main turn ends, and wait until answered or cancelled.
-      const pending = s.pending.some((p) => inBackground(s, p.toolUseId)) ? s.pending.filter((p) => inBackground(s, p.toolUseId)) : [];
+      // after the main turn ends, and wait until answered or cancelled. An
+      // elicitation or a dialog names no tool call: while a task runs in the
+      // background it may be that task's, which the CLI keeps waiting on (66).
+      const keep = (p: Pending) => inBackground(s, p.toolUseId) || (!p.toolUseId && (p.form === "elicitation" || p.form === "dialog") && s.background.length > 0);
+      const pending = s.pending.some(keep) ? s.pending.filter(keep) : [];
       let n: ChatState = { ...s, busy: false, compacting: false, streaming: null, pending, lastTurn: { ok, subtype: String(o.subtype ?? "") } };
       // A local command (/context, /cost, /model …) echoes nothing back: its
       // result, which names it, is what says the CLI took it — else it would
