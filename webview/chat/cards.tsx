@@ -131,7 +131,13 @@ function QuestionCard({ p, ctx }: { p: Pending; ctx: ToolCtx }) {
   const [picked, setPicked] = useState<Record<number, string[]>>({});
   const [other, setOther] = useState<Record<number, string>>({});
   const [hover, setHover] = useState<Record<number, number>>({});
-  const answerOf = (i: number) => (other[i]?.trim() ? other[i].trim() : (picked[i] ?? []).join(", "));
+  // What the card shows is what goes, as Claude Code answers (review r4 P1): several picks and Other's text,
+  // joined by ", "; one pick or Other — Other's text clears the pick (onInput below).
+  const answerOf = (i: number) => {
+    const typed = other[i]?.trim() ?? "";
+    if (qs[i]?.multiSelect) return [...(picked[i] ?? []), ...(typed ? [typed] : [])].join(", ");
+    return typed || (picked[i] ?? []).join(", ");
+  };
   const done = qs.every((_, i) => answerOf(i));
   // From the state as it is by then: two clicks between renders both count.
   const toggle = (i: number, label: string, multi: boolean) => {
@@ -185,6 +191,8 @@ function QuestionCard({ p, ctx }: { p: Pending; ctx: ToolCtx }) {
               onInput={(e) => {
                 const el = e.target as HTMLTextAreaElement;
                 setOther({ ...other, [i]: el.value });
+                // One answer only: text in Other takes the place of the option picked.
+                if (!q.multiSelect && el.value.trim()) setPicked((all) => ({ ...all, [i]: [] }));
                 fit(el);
               }}
               onKeyDown={(e) => {

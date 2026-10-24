@@ -376,6 +376,28 @@ await check("Other takes several lines — Shift+Enter breaks the line, Enter an
   await shot("chat-questions-row");
 });
 
+await check("Other with picks: several picks go with Other's text; one pick gives way to it — the card shows what goes (review r4 P1)", async () => {
+  const lines = outLines("questionmulti");
+  const ask = lines.findIndex((o) => o.type === "control_request");
+  await send([snapshot(), sent("q"), ...events(lines.slice(0, ask + 1))]);
+  await exec("for (const o of document.querySelectorAll('.card .opt')) if (/Apple|DK/.test(o.textContent)) o.querySelector('input').click();");
+  await settle();
+  const other = async (n, text) => {
+    await exec(`document.querySelectorAll('.card textarea.other')[${n}].setAttribute('data-p1', '${n}')`);
+    const el = Object.values(await wd("POST", `${S}/element`, { using: "css selector", value: `textarea[data-p1='${n}']` }))[0];
+    await wd("POST", `${S}/element/${el}/value`, { text });
+    await settle();
+  };
+  await other(0, "Kiwi");
+  await other(1, "my own board");
+  const ticked = await exec("return [...document.querySelectorAll('.card .opt')].filter((o) => o.querySelector('input').checked).map((o) => o.querySelector('span > div').textContent)");
+  assert.deepEqual(ticked, ["Apple"], "the board's DK gave way to Other's text; the fruit's Apple stays");
+  await clearPosts();
+  await click(".card button", "Answer");
+  const a = (await posts()).find((p) => p.t === "answer");
+  assert.deepEqual(a.answers, { "Which fruits do you like?": "Apple, Kiwi", "Which board should you use?": "my own board" });
+});
+
 await check("a plan: Claude Code's three answers, auto mode first; Open to comment asks for its tab (decision 77)", async () => {
   const lines = outLines("plan");
   await send([snapshot({ mode: "plan" }), sent("p"), ...events(upTo(lines, (o) => o.type === "control_request"))]);
