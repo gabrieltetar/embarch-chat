@@ -1494,7 +1494,7 @@ await check("a dialog that comes while the owner types waits as a quiet line, as
   await send([cliAsks("r-auto-2", AUTO)]);
   assert.deepEqual(await text(".card.held .held-what"), ["Auto mode: Continue or Stop?"]);
   await click(".card.held button", "Show");
-  assert.equal((await text(".card.dialog")).length, 1);
+  assert.equal((await text(".card.dialog-card")).length, 1);
 });
 
 await check("a request the panel cannot show leaves one line in the timeline, and no card", async () => {
@@ -2787,8 +2787,15 @@ await check("a 300 px sidebar with everything above the input: the side answers,
 
 // A short panel — a sidebar split with the Explorer, the chat dragged into the bottom panel — with all of that on screen:
 // the input and Send stay on screen, then the card's Allow and Deny, then the timeline's floor (55, 50; review r5 N1).
+// The CLI's dialogs and an MCP server's form, each in its place, keep their buttons on screen too: a dialog card scrolls in no box of its own (review r6 M1).
+const cardOf = (name) => upTo(outLines(name), (o) => o.type === "control_request").filter((o) => o.type === "control_request");
+const OTHER_CARDS = [
+  ["auto mode's notice", [cliAsks("r-auto-short", AUTO)]],
+  ["a flagged message", [cliAsks("r-refusal-short", REFUSAL)]],
+  ["an MCP server's form", events(elicitUpTo.filter((o) => o.type === "control_request"))],
+];
 for (const h of [520, 420]) {
-  await check(`a ${h} px tall window with everything above the input and a card: the input and Send on screen, then the card's Allow and Deny, then some of the timeline (50, 55; review r5 N1)`, async () => {
+  await check(`a ${h} px tall window with everything above the input and a card: the input and Send on screen, then the card's Allow and Deny, then some of the timeline; a dialog card's buttons on screen (50, 55; review r5 N1, r6 M1)`, async () => {
     await wd("POST", `${S}/window/rect`, { width: 460, height: h });
     try {
       await fresh({ model: "opus", effort: "xhigh", ultracode: true, mcp: [{ name: "embarch-api", status: "failed", error: "MCP error -32000: Connection closed" }], remote: { status: "connected", url: "https://claude.ai/code/session_x" }, capabilities: ["interrupt_send_now_v1"] }, false);
@@ -2814,6 +2821,16 @@ for (const h of [520, 420]) {
       assert.ok(m.composer.bottom <= m.vh + 1 && m.send <= m.vh + 1, `the input and Send on screen: ${JSON.stringify(m)}`);
       for (const k of ["allow", "deny"]) assert.ok(m[k] && m[k].top >= m.cards.top - 1 && m[k].bottom <= m.cards.bottom + 1 && m[k].bottom <= m.vh, `the card's ${k} on screen: ${JSON.stringify(m)}`);
       assert.ok(m.timeline.h >= 40, `some of the timeline: ${JSON.stringify(m)}`);
+      let was = cardOf("deny")[0].request_id;
+      for (const [kind, ask] of OTHER_CARDS) {
+        await send([{ t: "event", e: { type: "_answered", requestId: was, behavior: "allow" } }, ...ask]);
+        was = ask.at(-1).e.request_id;
+        await settle();
+        const b = await exec(`const box = document.querySelector('.cards').getBoundingClientRect();
+          return [...document.querySelectorAll('.cards .card .actions button')].map((x) => { const q = x.getBoundingClientRect(); return [x.textContent.trim(), q.top >= box.top - 1 && q.bottom <= box.bottom + 1 && q.bottom <= window.innerHeight + 1]; });`);
+        await shot(`short-${h}-${kind.replace(/\W+/g, "-")}`);
+        assert.ok(b.length && b.every(([, seen]) => seen), `${kind}: its buttons on screen: ${JSON.stringify(b)}`);
+      }
     } finally {
       await wd("POST", `${S}/window/rect`, { width: 460, height: 900 });
       await settle();

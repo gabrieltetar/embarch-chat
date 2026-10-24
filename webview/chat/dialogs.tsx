@@ -42,7 +42,7 @@ function AutoModeCard({ p, ctx }: { p: Pending; ctx: ToolCtx }) {
   const paras = Array.isArray(p.input.paragraphs) ? (p.input.paragraphs as unknown[]).filter((x): x is string => typeof x === "string" && !!x.trim()) : [];
   const help = helpUrl(p.input.helpUrl);
   return (
-    <div class="card dialog">
+    <div class="card dialog-card">
       {title && <div class="card-title">{title}</div>}
       {paras.length ? paras.map((t, i) => <Para key={i} text={t} url={help} ctx={ctx} />) : <p>{AUTO_MODE_FALLBACK_TEXT}</p>}
       {help && !paras.some((t) => t.includes(help)) && (
@@ -65,7 +65,7 @@ function RefusalCard({ p, recall }: { p: Pending; recall: () => void }) {
   const from = modelName(str(p.input.originalModel));
   const to = modelName(str(p.input.fallbackModel));
   return (
-    <div class="card dialog">
+    <div class="card dialog-card">
       <div class="card-title row">
         <span>Session paused</span>
         <button class="icon close" title="Close" onClick={() => respond(p, DIALOG_CANCELLED)}>
@@ -179,7 +179,7 @@ function ElicitationCard({ p, ctx }: { p: Pending; ctx: ToolCtx }) {
     else respond(p, { action: "accept", content: r.content });
   };
   return (
-    <div class="card dialog elicitation">
+    <div class="card dialog-card elicitation">
       <div class="card-title row">
         <span>{str(p.input.title) || `${server} asks`}</span>
         <button class="icon close" title="Close: cancel" onClick={() => respond(p, { action: "cancel" })}>
