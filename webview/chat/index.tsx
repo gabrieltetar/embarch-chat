@@ -401,6 +401,9 @@ function App() {
     stamps.set(r.key, { at, day: day !== lastDay });
     lastDay = day;
   }
+  // Whether a reload's note still offers to continue its step (63): a process starting ends the offer and leaves the note
+  // as it was, so both memos below name it — else the button outlives the offer (review r5 N2).
+  const offering = (e: Entry | undefined) => e?.kind === "note" && e.offer === "rerun" && state.rerunOffer === e.id;
   const row = (r: Fold, first: boolean) => {
     const e = get(r.ids[0])!;
     const stamp = stamps.get(r.key);
@@ -415,7 +418,7 @@ function App() {
         ) : (
           // A settled row is drawn once (decision 85): of ctx these rows read only its links and cwd, so a turn
           // starting or ending draws none of them again. A tool's row has its own memo, which also follows its subagent's steps.
-          <Settled deps={[e, view, reply.get(e.id), cwd]} render={() => renderRow(e)} />
+          <Settled deps={[e, view, reply.get(e.id), cwd, offering(e)]} render={() => renderRow(e)} />
         )}
       </div>
     );
@@ -439,10 +442,10 @@ function App() {
         )}
         {turns(rows, get, entries).map((t, k) => (
           // A turn none of whose entries changed is not drawn again (decision 85): its rows read only these and the page's ctx,
-          // view, cwd, each reply's whole text and the stamps' date lines.
+          // view, cwd, each reply's whole text, the stamps' date lines and a reload's offer to continue.
           <Settled
             key={t.key}
-            deps={[ctx, view, cwd, ...t.deps, ...t.rows.map((r) => reply.get(r.key)), ...t.rows.map((r) => stamps.get(r.key)?.day)]}
+            deps={[ctx, view, cwd, ...t.deps, ...t.rows.map((r) => reply.get(r.key)), ...t.rows.map((r) => stamps.get(r.key)?.day), ...t.rows.map((r) => offering(get(r.ids[0])))]}
             render={() => t.rows.map((r, i) => row(r, k === 0 && i === 0))}
           />
         ))}

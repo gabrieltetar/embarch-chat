@@ -2196,7 +2196,7 @@ await check("in a long chat, a late result changes its old row in place, a run o
   assert.equal((await text(".live.cursor")).length, 1, "still streaming");
 });
 
-await check("in a long chat, what comes later to an old turn shows there: a Keep result on its reply, the answer in its Questions row, a running step's clock; a compaction's summary in its card; the times over every message (68, 76, 79, 84)", async () => {
+await check("in a long chat, what comes later to an old turn shows there: a Keep result on its reply, the answer in its Questions row, a running step's clock; a compaction's summary in its card; the times over every message; a reload's offer to continue, gone once a process starts (63, 68, 76, 79, 84)", async () => {
   // A question in the second turn, answered late; the first edit still running, its clock from a few seconds ago.
   const t2 = LONG.findIndex((o, i) => o.type === "user" && typeof o.message.content === "string" && i > 1);
   const q = { question: "Which board should the flash go to?", header: "Board", multiSelect: false, options: [{ label: "DK", description: "the dev kit" }, { label: "EVK", description: "the eval kit" }] };
@@ -2243,6 +2243,16 @@ await check("in a long chat, what comes later to an old turn shows there: a Keep
   await send(events([{ type: "user", isCompactSummary: true, message: { role: "user", content: "This session is being continued from a previous conversation. The board is the DK." } }]));
   assert.ok((await text("details.compacted .compact-summary"))[0].includes("The board is the DK."));
   assert.equal(await exec("return document.querySelector('details.compacted').open"), true, "still open");
+  // A reload's offer to continue the step (63) goes once a process starts — the owner continued, or went on another way —
+  // though its note stays as it was (review r5 N2).
+  for (const how of ["continue", "message"]) {
+    await send([{ t: "event", e: { type: "_note", text: core.RERUN_OFFER_NOTE, tone: "info", offer: "rerun" } }]);
+    assert.equal((await text(".note .offer button")).length, 1, `${how}: offered`);
+    if (how === "continue") await click(".note .offer button");
+    else await send([sentU(9, "never mind, check the log instead")]);
+    await send([{ t: "event", e: { type: "_process", state: "starting" } }, { t: "event", e: { type: "_process", state: "running" } }]);
+    assert.equal((await text(".note .offer button")).length, 0, `${how}: the offer went with the process`);
+  }
 });
 
 await check("a streaming reply is parsed in finished pieces and its last one: it shows as the whole reply does once it lands", async () => {
