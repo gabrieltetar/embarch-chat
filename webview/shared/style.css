@@ -389,13 +389,13 @@ button.link-button:focus-visible {
 
 /* Between the header and the input: all that gives way in a short panel
    (review r5 N1). The input and Send are always on screen; then a waiting
-   card's Allow and Deny; then the conversation's floor — a share of what is
-   left here, up to a quarter of the panel: the steps the owner watches to
-   stop an agent heading the wrong way (50). The layers between give way
-   first, each to about a line it scrolls — the side answers, then the
-   background tasks, then the queue, by their flex-shrink — and to less
-   only where the panel has no room for those lines. Percentages below are
-   of this box. */
+   card's Allow and Deny, and what they answer above them (review r6 L2);
+   then the conversation's floor — a share of what is left here, up to a
+   quarter of the panel: the steps the owner watches to stop an agent
+   heading the wrong way (50). The layers between give way first, each to
+   about a line it scrolls — the side answers, then the background tasks,
+   then the queue, by their flex-shrink — and to less only where the panel
+   has no room for those lines. Percentages below are of this box. */
 .middle {
   flex: 1 1 0;
   min-height: 0;
@@ -411,6 +411,23 @@ button.link-button:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+/* Its floor gives way to a waiting card's, and to a held card's line —
+   down to nothing: its padding moves onto its rows, which scroll. */
+.middle:has(.card.held) .timeline {
+  min-height: min(25vh, 40%, max(0px, 100% - 2.4em));
+}
+.middle:has(.card .actions) .timeline {
+  min-height: min(25vh, 40%, max(0px, 100% - 11em));
+}
+.middle:has(.cards) .timeline {
+  padding-block: 0;
+}
+.middle:has(.cards) .timeline > :first-child {
+  margin-top: var(--gap);
+}
+.middle:has(.cards) .timeline > :last-child {
+  margin-bottom: var(--gap);
 }
 /* A turn begins at each of the owner's messages: 28 px between turns, a
    rule halfway, none above the first; 12 px between blocks in a turn
@@ -758,7 +775,9 @@ details.thinking .md {
 
 /* The cards scroll rather than push the input down in a short panel (55);
    a card that asks keeps room for its buttons, ahead of the timeline's
-   floor, and they stay at the bottom of what shows (review r5 N1). */
+   floor, and they stay at the bottom of what shows (review r5 N1) — room
+   for its title and the command it asks about above them too, where the
+   panel has it (review r6 L2). A held card keeps its one line. */
 .cards {
   padding: 0 var(--gap);
   display: flex;
@@ -767,8 +786,11 @@ details.thinking .md {
   min-height: 0;
   overflow-y: auto;
 }
+.cards:has(.card.held) {
+  min-height: min(2.4em, 100%);
+}
 .cards:has(.card .actions) {
-  min-height: min(7em, 40%);
+  min-height: min(11em, 100%);
 }
 .card {
   border: 1px solid var(--waiting);

@@ -2787,15 +2787,20 @@ await check("a 300 px sidebar with everything above the input: the side answers,
 
 // A short panel — a sidebar split with the Explorer, the chat dragged into the bottom panel — with all of that on screen:
 // the input and Send stay on screen, then the card's Allow and Deny, then the timeline's floor (55, 50; review r5 N1).
-// The CLI's dialogs and an MCP server's form, each in its place, keep their buttons on screen too: a dialog card scrolls in no box of its own (review r6 M1).
+// The command Allow answers shows above them where the panel has room for it, ahead of the timeline (review r6 L2).
+// Every other kind of card, each in its place, keeps its buttons on screen too: a dialog card scrolls in no box of its own (review r6 M1).
+// A card held while the owner types keeps its line (review r6 L2).
+// Window heights 520, 420, 340 and 324 are pages 446, 346, 266 and 250 px tall.
 const cardOf = (name) => upTo(outLines(name), (o) => o.type === "control_request").filter((o) => o.type === "control_request");
 const OTHER_CARDS = [
+  ["a question", events(cardOf("question"))],
+  ["a plan", events(cardOf("plan"))],
   ["auto mode's notice", [cliAsks("r-auto-short", AUTO)]],
   ["a flagged message", [cliAsks("r-refusal-short", REFUSAL)]],
   ["an MCP server's form", events(elicitUpTo.filter((o) => o.type === "control_request"))],
 ];
-for (const h of [520, 420]) {
-  await check(`a ${h} px tall window with everything above the input and a card: the input and Send on screen, then the card's Allow and Deny, then some of the timeline; a dialog card's buttons on screen (50, 55; review r5 N1, r6 M1)`, async () => {
+for (const h of [520, 420, 340, 324]) {
+  await check(`a ${h} px tall window with everything above the input and a card: the input and Send on screen, then the card's Allow and Deny, then what they answer, then some of the timeline; each kind of card's buttons on screen; a held card's line (50, 55; review r5 N1, r6 M1, L2)`, async () => {
     await wd("POST", `${S}/window/rect`, { width: 460, height: h });
     try {
       await fresh({ model: "opus", effort: "xhigh", ultracode: true, mcp: [{ name: "embarch-api", status: "failed", error: "MCP error -32000: Connection closed" }], remote: { status: "connected", url: "https://claude.ai/code/session_x" }, capabilities: ["interrupt_send_now_v1"] }, false);
@@ -2816,21 +2821,32 @@ for (const h of [520, 420]) {
       const m = await exec(`const r = (s) => { const e = document.querySelector(s); if (!e) return null; const b = e.getBoundingClientRect(); return { top: Math.round(b.top), bottom: Math.round(b.bottom), h: Math.round(b.height) }; };
         const at = (re) => { const b = [...document.querySelectorAll('.card .actions button')].find((x) => re.test(x.textContent)); if (!b) return null; const q = b.getBoundingClientRect(); return { top: Math.round(q.top), bottom: Math.round(q.bottom) }; };
         const send = [...document.querySelectorAll('.composer .bar button')].find((b) => /Send|Queue/.test(b.textContent)).getBoundingClientRect();
-        return { vh: window.innerHeight, timeline: r('.timeline'), cards: r('.cards'), allow: at(/^Allow$/), deny: at(/^Deny$/), composer: r('.composer'), textarea: r('.composer textarea'), send: Math.round(send.bottom) };`);
+        // What the owner reads of the card: not under its sticky buttons, nor out of the cards' box or the box that clips it.
+        const box = document.querySelector('.cards').getBoundingClientRect(), bar = document.querySelector('.card .actions').getBoundingClientRect(), mid = document.querySelector('.middle').getBoundingClientRect();
+        const seen = (s) => { const e = document.querySelector(s); if (!e) return false; const q = e.getBoundingClientRect(); return q.top >= box.top - 1 && q.bottom <= Math.min(box.bottom, bar.top, mid.bottom) + 1; };
+        return { vh: window.innerHeight, timeline: r('.timeline'), cards: r('.cards'), middle: r('.middle'), allow: at(/^Allow$/), deny: at(/^Deny$/), composer: r('.composer'), textarea: r('.composer textarea'), send: Math.round(send.bottom), title: seen('.card .card-title'), command: seen('.card .md code') };`);
       await shot(`short-${h}-everything`);
       assert.ok(m.composer.bottom <= m.vh + 1 && m.send <= m.vh + 1, `the input and Send on screen: ${JSON.stringify(m)}`);
-      for (const k of ["allow", "deny"]) assert.ok(m[k] && m[k].top >= m.cards.top - 1 && m[k].bottom <= m.cards.bottom + 1 && m[k].bottom <= m.vh, `the card's ${k} on screen: ${JSON.stringify(m)}`);
-      assert.ok(m.timeline.h >= 40, `some of the timeline: ${JSON.stringify(m)}`);
+      for (const k of ["allow", "deny"]) assert.ok(m[k] && m[k].top >= m.cards.top - 1 && m[k].bottom <= Math.min(m.cards.bottom, m.middle.bottom) + 1 && m[k].bottom <= m.vh, `the card's ${k} on screen: ${JSON.stringify(m)}`);
+      // At 266 and 250 px the input and the layers above it leave the card 66 and 50 px: its buttons, and not what they answer.
+      if (h >= 420) assert.ok(m.title && m.command, `the card's title and command above Allow: ${JSON.stringify(m)}`);
+      if (h >= 520) assert.ok(m.timeline.h >= 40, `some of the timeline: ${JSON.stringify(m)}`);
       let was = cardOf("deny")[0].request_id;
       for (const [kind, ask] of OTHER_CARDS) {
         await send([{ t: "event", e: { type: "_answered", requestId: was, behavior: "allow" } }, ...ask]);
         was = ask.at(-1).e.request_id;
         await settle();
-        const b = await exec(`const box = document.querySelector('.cards').getBoundingClientRect();
-          return [...document.querySelectorAll('.cards .card .actions button')].map((x) => { const q = x.getBoundingClientRect(); return [x.textContent.trim(), q.top >= box.top - 1 && q.bottom <= box.bottom + 1 && q.bottom <= window.innerHeight + 1]; });`);
+        // At 250 px a row of buttons is what the card has room for: the first, with the card's primary answer.
+        const b = await exec(`const box = document.querySelector('.cards').getBoundingClientRect(), end = Math.min(box.bottom, document.querySelector('.middle').getBoundingClientRect().bottom, window.innerHeight);
+          return [...document.querySelectorAll('.cards .card .actions button' + (arguments[0] ? '.primary' : ''))].map((x) => { const q = x.getBoundingClientRect(); return [x.textContent.trim(), q.top >= box.top - 1 && q.bottom <= end + 1]; });`, [h < 340]);
         await shot(`short-${h}-${kind.replace(/\W+/g, "-")}`);
         assert.ok(b.length && b.every(([, seen]) => seen), `${kind}: its buttons on screen: ${JSON.stringify(b)}`);
       }
+      await type(" and parity");
+      await send([{ t: "event", e: { type: "_answered", requestId: was, behavior: "allow" } }, ...events(cardOf("deny"))]);
+      const held = await exec(`const box = document.querySelector('.cards').getBoundingClientRect(), q = document.querySelector('.card.held').getBoundingClientRect();
+        return [Math.round(box.top), Math.round(Math.min(box.bottom, document.querySelector('.middle').getBoundingClientRect().bottom)), Math.round(q.top), Math.round(q.bottom)];`);
+      assert.ok(held[2] >= held[0] - 1 && held[3] <= held[1] + 1, `the held card's line on screen: ${JSON.stringify(held)}`);
     } finally {
       await wd("POST", `${S}/window/rect`, { width: 460, height: 900 });
       await settle();
