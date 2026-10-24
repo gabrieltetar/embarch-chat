@@ -387,14 +387,25 @@ button.link-button:focus-visible {
   background: var(--waiting);
 }
 
-/* However much waits above the input, the conversation keeps a quarter of
-   the panel: the steps the owner watches to stop an agent heading the wrong
-   way (50). The layers between give way first, each to about a line it
-   scrolls — the side answers, then the background tasks, then the queue,
-   by their flex-shrink — and a card last, which scrolls already (55). */
+/* Between the header and the input: all that gives way in a short panel
+   (review r5 N1). The input and Send are always on screen; then a waiting
+   card's Allow and Deny; then the conversation's floor — a share of what is
+   left here, up to a quarter of the panel: the steps the owner watches to
+   stop an agent heading the wrong way (50). The layers between give way
+   first, each to about a line it scrolls — the side answers, then the
+   background tasks, then the queue, by their flex-shrink — and to less
+   only where the panel has no room for those lines. Percentages below are
+   of this box. */
+.middle {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
 .timeline {
   flex: 1;
-  min-height: 25vh;
+  min-height: min(25vh, 40%);
   overflow-y: auto;
   padding: var(--gap);
   display: flex;
@@ -745,7 +756,9 @@ details.thinking .md {
 
 /* ------------------------------------------------------------ cards */
 
-/* The cards scroll rather than push the input down in a short panel (55). */
+/* The cards scroll rather than push the input down in a short panel (55);
+   a card that asks keeps room for its buttons, ahead of the timeline's
+   floor, and they stay at the bottom of what shows (review r5 N1). */
 .cards {
   padding: 0 var(--gap);
   display: flex;
@@ -753,6 +766,9 @@ details.thinking .md {
   gap: 6px;
   min-height: 0;
   overflow-y: auto;
+}
+.cards:has(.card .actions) {
+  min-height: min(7em, 40%);
 }
 .card {
   border: 1px solid var(--waiting);
@@ -804,6 +820,9 @@ details.thinking .md {
   flex-wrap: wrap;
   margin-top: 6px;
   align-items: center;
+  position: sticky;
+  bottom: 0;
+  background: var(--vscode-editorWidget-background, var(--bubble));
 }
 .card .actions input {
   flex: 1;
@@ -1476,7 +1495,7 @@ body.vscode-high-contrast-light .on {
   flex-direction: column;
   gap: 6px;
   flex-shrink: 100;
-  min-height: 2.4em;
+  min-height: min(2.4em, 5%);
   max-height: 40vh;
   overflow-y: auto;
 }
@@ -1528,7 +1547,7 @@ body.vscode-high-contrast-light .on {
   align-items: flex-end;
   gap: 4px;
   flex-shrink: 10;
-  min-height: 2.4em;
+  min-height: min(2.4em, 5%);
   max-height: 30vh;
   overflow-y: auto;
 }
@@ -1981,7 +2000,7 @@ a.cite:hover {
   border-radius: var(--radius);
   padding: 4px 8px;
   flex-shrink: 1000;
-  min-height: 2.4em;
+  min-height: min(2.4em, 5%);
   max-height: 30vh;
   overflow: auto;
   font-size: 0.95em;

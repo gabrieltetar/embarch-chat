@@ -429,52 +429,55 @@ function App() {
     // A chat of this window's gets Mark as Unread on right-click (package.json, webview/context).
     <div class="chat" data-vscode-context={view.ours ? JSON.stringify({ webviewSection: "embarchChat", sid: state.sessionId }) : undefined}>
       <HeaderBar h={model.header} state={state} view={view} />
-      <div
-        class="timeline"
-        ref={scroller}
-        onScroll={(e) => {
-          const el = e.currentTarget as HTMLDivElement;
-          stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-        }}
-      >
-        {!state.timeline.length && !liveB.length && (
-          <div class="empty-note">{view.ours ? "A new chat. The first message starts Claude, in this window's folder." : "Nothing in this chat's transcript yet."}</div>
-        )}
-        {turns(rows, get, entries).map((t, k) => (
-          // A turn none of whose entries changed is not drawn again (decision 85): its rows read only these and the page's ctx,
-          // view, cwd, each reply's whole text, the stamps' date lines and a reload's offer to continue.
-          <Settled
-            key={t.key}
-            deps={[ctx, view, cwd, ...t.deps, ...t.rows.map((r) => reply.get(r.key)), ...t.rows.map((r) => stamps.get(r.key)?.day), ...t.rows.map((r) => offering(get(r.ids[0])))]}
-            render={() => t.rows.map((r, i) => row(r, k === 0 && i === 0))}
-          />
-        ))}
+      {/* What gives way in a short panel, so the input and Send never leave it (style.css; review r5 N1). */}
+      <div class="middle">
+        <div
+          class="timeline"
+          ref={scroller}
+          onScroll={(e) => {
+            const el = e.currentTarget as HTMLDivElement;
+            stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+          }}
+        >
+          {!state.timeline.length && !liveB.length && (
+            <div class="empty-note">{view.ours ? "A new chat. The first message starts Claude, in this window's folder." : "Nothing in this chat's transcript yet."}</div>
+          )}
+          {turns(rows, get, entries).map((t, k) => (
+            // A turn none of whose entries changed is not drawn again (decision 85): its rows read only these and the page's ctx,
+            // view, cwd, each reply's whole text, the stamps' date lines and a reload's offer to continue.
+            <Settled
+              key={t.key}
+              deps={[ctx, view, cwd, ...t.deps, ...t.rows.map((r) => reply.get(r.key)), ...t.rows.map((r) => stamps.get(r.key)?.day), ...t.rows.map((r) => offering(get(r.ids[0])))]}
+              render={() => t.rows.map((r, i) => row(r, k === 0 && i === 0))}
+            />
+          ))}
+        </div>
+        {/* Each chat's own: another chat put in this view closes them, so a rewind never acts on a message of the chat before (73, 74). */}
+        <RewindDialog key={`rewind:${state.sessionId}`} state={state} view={view} />
+        <ExportDialog key={`export:${state.sessionId}`} />
+        <Toast />
+        <PendingCards
+          pending={state.pending}
+          ctx={ctx}
+          readOnly={view.readOnly}
+          permDestination={view.permDestination}
+          recall={() => {
+            // A flagged message back into the draft, to edit and retry (66).
+            const last = [...state.timeline].reverse().find((id) => entries[id]?.kind === "user");
+            const u = last ? entries[last] : undefined;
+            if (u?.kind === "user" && u.text.trim()) returnToDraft(state.sessionId, u.text);
+          }}
+        />
+        <LimitBannerView info={state.rateLimit} busy={busy} />
+        {bgOpen[sid] && <BackgroundPanel state={state} readOnly={view.readOnly} />}
+        <StatusLine
+          state={state}
+          warning={model.warning}
+          bg={<BackgroundToggle n={state.background.length} open={!!bgOpen[sid]} onToggle={() => setBgOpen((o) => ({ ...o, [sid]: !o[sid] }))} />}
+        />
+        <SideQuestions items={state.side ?? []} ctx={ctx} />
+        <Queued state={state} readOnly={view.readOnly} />
       </div>
-      {/* Each chat's own: another chat put in this view closes them, so a rewind never acts on a message of the chat before (73, 74). */}
-      <RewindDialog key={`rewind:${state.sessionId}`} state={state} view={view} />
-      <ExportDialog key={`export:${state.sessionId}`} />
-      <Toast />
-      <PendingCards
-        pending={state.pending}
-        ctx={ctx}
-        readOnly={view.readOnly}
-        permDestination={view.permDestination}
-        recall={() => {
-          // A flagged message back into the draft, to edit and retry (66).
-          const last = [...state.timeline].reverse().find((id) => entries[id]?.kind === "user");
-          const u = last ? entries[last] : undefined;
-          if (u?.kind === "user" && u.text.trim()) returnToDraft(state.sessionId, u.text);
-        }}
-      />
-      <LimitBannerView info={state.rateLimit} busy={busy} />
-      {bgOpen[sid] && <BackgroundPanel state={state} readOnly={view.readOnly} />}
-      <StatusLine
-        state={state}
-        warning={model.warning}
-        bg={<BackgroundToggle n={state.background.length} open={!!bgOpen[sid]} onToggle={() => setBgOpen((o) => ({ ...o, [sid]: !o[sid] }))} />}
-      />
-      <SideQuestions items={state.side ?? []} ctx={ctx} />
-      <Queued state={state} readOnly={view.readOnly} />
       {view.readOnly ? (
         <div class="readonly">
           <span style="flex:1">{view.where ? `Runs in ${view.where}` : "Not run by this window"} — read-only here.</span>
