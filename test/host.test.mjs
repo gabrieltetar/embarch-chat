@@ -1185,6 +1185,24 @@ test("a rewind or a fork names one of the owner's messages in the chat the page 
   }
 });
 
+test("a past chat opened from the list takes the mode its transcript last ran in, else Ask — never a new chat's auto (review r5 N3)", { skip }, async () => {
+  const projects = path.join(process.env.CLAUDE_CONFIG_DIR, "projects", folder.replace(/[^a-zA-Z0-9]/g, "-"));
+  fs.mkdirSync(projects, { recursive: true });
+  /** Yesterday's chat in this folder, as the CLI wrote it, its owner's lines in `mode` (none: no mode written). */
+  const past = (mode) => {
+    const sid = globalThis.crypto.randomUUID();
+    const lines = fs.readFileSync(PARENT_FIXTURE, "utf8").replaceAll("6c563cde-6794-42ea-b651-dbbcb0946fdc", sid).replaceAll("/work/rec/fork", folder).trim().split("\n").map((l) => JSON.parse(l));
+    for (const o of lines) if (o.type === "user") mode ? (o.permissionMode = mode) : delete o.permissionMode;
+    fs.writeFileSync(path.join(projects, `${sid}.jsonl`), lines.map((o) => JSON.stringify(o)).join("\n") + "\n");
+    return sid;
+  };
+  for (const [sid, want] of [[past("plan"), "plan"], [past(null), "default"], [past("bypassPermissions"), "default"]]) {
+    threadsView.webview.fromPage({ t: "open", sid });
+    const s = await waitFor(() => lastSnapshot()?.state.sessionId === sid && lastSnapshot(), 3000, "the past chat on screen");
+    assert.equal(s.state.mode, want, `${want}: what a resume or a fork of it runs in`);
+  }
+});
+
 test("a fork no message was sent to comes back after a reload still a fork: what it starts from, its name, and its first message copies the parent (decisions 63, 73)", { skip }, async () => {
   const { id: item } = await client.call("POST", "/items", { title: "ABC-132 fork, then reload", desk: "none" });
   await mock.state.commands.get("embarchChat.refresh")();

@@ -10,7 +10,8 @@ import * as fs from "fs";
 import { Chat } from "./wire/chat";
 import type { HostHooks } from "./wire/host";
 import { chatStatus } from "./wire/reducer";
-import { FileMark, findTranscript, isSessionId, markFile, readLines, readTranscript, remark, sameFile, transcriptEvents } from "./wire/transcript";
+import { FileMark, findTranscript, isSessionId, markFile, readLines, readTranscript, remark, sameFile, transcriptEvents, transcriptMode } from "./wire/transcript";
+import { PERMISSION_MODES } from "./wire/types";
 import type { WireMessage } from "./wire/types";
 import type { OwnChat } from "./desk/threads";
 import type { AssignBody } from "./desk/client";
@@ -153,7 +154,10 @@ export class ChatManager extends EventEmitter {
   /**
    * Opens a thread this window does not run, from its transcript. `resumable`
    * when nothing runs it and it worked in this window's folder; `mode`: the
-   * one a process started for it takes (a reload's, 63).
+   * one a process started for it takes (a reload's, 63) — else the mode the
+   * transcript last ran in, one of the panel's own, else Ask: a resume or a
+   * fork of yesterday's chat in Plan never runs in a new chat's auto (22;
+   * review r5 N3).
    */
   openViewer(sessionId: string, cwd: string | null, itemId: string | null, itemTitle: string | null, resumable: boolean, mode?: string): ChatRecord | null {
     if (!isSessionId(sessionId)) return null;
@@ -167,7 +171,9 @@ export class ChatManager extends EventEmitter {
     }
     const file = findTranscript(sessionId, cwd ?? undefined);
     const s = this.settings();
-    const chat = new Chat({ sessionId, cwd: cwd ?? "", claudePath: s.claudePath, existing: true, idleMs: s.idleMs, log: s.log, hooks: s.hooks, mode });
+    const ran = file ? transcriptMode(file) : null;
+    const m = mode ?? (ran && (PERMISSION_MODES as string[]).includes(ran) ? ran : "default");
+    const chat = new Chat({ sessionId, cwd: cwd ?? "", claudePath: s.claudePath, existing: true, idleMs: s.idleMs, log: s.log, hooks: s.hooks, mode: m });
     const rec: ChatRecord = { chat, ours: false, viewer: true, resumable, itemId, itemTitle, untracked: false, deskDue: null, createdMs: Date.now(), lastMs: Date.now() };
     this.records.set(sessionId, rec);
     this.wire(sessionId, rec);
