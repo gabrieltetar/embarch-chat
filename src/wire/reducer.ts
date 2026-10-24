@@ -265,12 +265,14 @@ function hash(s: string): string {
 }
 
 export function textOf(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content
-    .map((b) => (b && typeof b === "object" && (b as { type?: string }).type === "text" ? String((b as { text?: string }).text ?? "") : ""))
-    .filter(Boolean)
-    .join("\n");
+  return textBlocks(content).join("\n");
+}
+
+/** A line's text blocks, the empty ones left out: what `textOf` joins. */
+function textBlocks(content: unknown): string[] {
+  if (typeof content === "string") return [content];
+  if (!Array.isArray(content)) return [];
+  return content.map((b) => (b && typeof b === "object" && (b as { type?: string }).type === "text" ? String((b as { text?: string }).text ?? "") : "")).filter(Boolean);
 }
 
 function imagesOf(content: unknown): number {
@@ -532,8 +534,8 @@ function foldUser(s: ChatState, o: WireMessage): ChatState {
     return stdout[1].trim() ? note(s, stdout[1].trim(), "info") : s;
   }
   if (/^<local-command-stderr>/.test(raw.trim())) return note(s, raw.replace(/<\/?local-command-stderr>/g, "").trim(), "error");
-  // The context blocks before the owner's words, and a marked paste unwrapped (decisions 56, 58, 60).
-  const own = readMessage(raw);
+  // The context blocks before the owner's words, each read whole, and a marked paste unwrapped (decisions 56, 58, 60).
+  const own = readMessage(raw, Array.isArray(content) ? textBlocks(content) : undefined);
   const text = commandText(own.text) ?? own.text;
   const images = imagesOf(content);
   if (!text.trim() && !images && !own.context.length) return s;

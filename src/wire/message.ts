@@ -31,15 +31,30 @@ export interface Outgoing {
 
 const TAIL = "This may or may not be related to the current task.";
 
+/**
+ * What a block holds can never end it: a terminal's output, a selected
+ * file's lines or a path naming the block's closing tag would otherwise
+ * close it early, and what follows would reach Claude as the owner's own
+ * words. One backslash goes after the `<` of any closing tag of the
+ * block's name (and of one already escaped, so reading back is exact):
+ * `</terminal>` is sent as `<\/terminal>`.
+ */
+function fence(text: string, tag: string): string {
+  return text.replace(new RegExp(`<(\\\\*)/${tag}`, "gi"), (m) => `<\\${m.slice(1)}`);
+}
+function unfence(text: string, tag: string): string {
+  return text.replace(new RegExp(`<\\\\(\\\\*)/${tag}`, "gi"), (m) => `<${m.slice(2)}`);
+}
+
 /** Claude Code's own wording for each block: Claude has seen these from the IDE integration. */
 export function ideBlock(c: ContextItem): string {
   switch (c.kind) {
     case "selection":
-      return `<ide_selection>The user selected the lines ${c.startLine} to ${c.endLine} from ${c.path}:\n${c.text}\n\n${TAIL}</ide_selection>`;
+      return `<ide_selection>The user selected the lines ${c.startLine} to ${c.endLine} from ${fence(c.path, "ide_selection")}:\n${fence(c.text, "ide_selection")}\n\n${TAIL}</ide_selection>`;
     case "file":
-      return `<ide_opened_file>The user opened the file ${c.path} in the IDE. ${TAIL}</ide_opened_file>`;
+      return `<ide_opened_file>The user opened the file ${fence(c.path, "ide_opened_file")} in the IDE. ${TAIL}</ide_opened_file>`;
     case "terminal":
-      return `<terminal name="${c.name.replace(/["\n]/g, "_")}">\n${c.text}\n</terminal>`;
+      return `<terminal name="${c.name.replace(/["\n]/g, "_")}">\n${fence(c.text, "terminal")}\n</terminal>`;
   }
 }
 
@@ -61,33 +76,55 @@ export function outgoing(text: string, images: Attachment[] = [], context: Conte
 const LEAD = [
   {
     re: /^<ide_selection>The user selected the lines (\d+) to (\d+) from ([^\n]*?):\n([\s\S]*?)\n\nThis may or may not be related to the current task\.<\/ide_selection>\n?/,
-    item: (m: RegExpExecArray): ContextItem => ({ kind: "selection", path: m[3], startLine: Number(m[1]), endLine: Number(m[2]), text: m[4] }),
+    item: (m: RegExpExecArray): ContextItem => ({
+      kind: "selection",
+      path: unfence(m[3], "ide_selection"),
+      startLine: Number(m[1]),
+      endLine: Number(m[2]),
+      text: unfence(m[4], "ide_selection"),
+    }),
   },
   {
-    re: /^<ide_opened_file>The user opened the file ([^\n]*?) in the IDE\. This may or may not be related to the current task\.<\/ide_opened_file>\n?/,
-    item: (m: RegExpExecArray): ContextItem => ({ kind: "file", path: m[1] }),
+    re: /^<ide_opened_file>The user opened the file ([\s\S]*?) in the IDE\. This may or may not be related to the current task\.<\/ide_opened_file>\n?/,
+    item: (m: RegExpExecArray): ContextItem => ({ kind: "file", path: unfence(m[1], "ide_opened_file") }),
   },
   {
     re: /^<terminal name="([^"\n]*)">\n([\s\S]*?)\n<\/terminal>\n?/,
-    item: (m: RegExpExecArray): ContextItem => ({ kind: "terminal", name: m[1], text: m[2] }),
+    item: (m: RegExpExecArray): ContextItem => ({ kind: "terminal", name: m[1], text: unfence(m[2], "terminal") }),
   },
 ];
+/** The same, for one whole text block: it runs to the block's end, as Claude Code's panel reads one. */
+const WHOLE = LEAD.map((l) => ({ re: new RegExp(`${l.re.source}$`), item: l.item }));
 
 /**
  * A user message read back (an echo, a transcript): the context blocks it
  * starts with, and the owner's own text with each marked paste unwrapped.
+ * `blocks`: its text blocks, when it came as several — each context block
+ * is one, read whole, so nothing inside it (one sent before blocks were
+ * fenced) passes for the owner's words.
  */
-export function readMessage(raw: string): { text: string; context: ContextItem[] } {
+export function readMessage(raw: string, blocks?: string[]): { text: string; context: ContextItem[] } {
   const context: ContextItem[] = [];
   let rest = raw;
-  for (let found = true; found; ) {
-    found = false;
-    for (const l of LEAD) {
-      const m = l.re.exec(rest);
-      if (!m) continue;
-      context.push(l.item(m));
-      rest = rest.slice(m[0].length);
-      found = true;
+  if (blocks && blocks.length > 1) {
+    let i = 0;
+    for (; i < blocks.length; i++) {
+      const b = blocks[i];
+      const hit = WHOLE.map((l) => ({ m: l.re.exec(b), l })).find((x) => x.m);
+      if (!hit) break;
+      context.push(hit.l.item(hit.m!));
+    }
+    rest = blocks.slice(i).join("\n");
+  } else {
+    for (let found = true; found; ) {
+      found = false;
+      for (const l of LEAD) {
+        const m = l.re.exec(rest);
+        if (!m) continue;
+        context.push(l.item(m));
+        rest = rest.slice(m[0].length);
+        found = true;
+      }
     }
   }
   const text = rest.includes("<pasted_content id=") ? rest.replace(/\n{0,2}<pasted_content id="([0-9a-f]{4})">\n([\s\S]*?)\n<\/pasted_content id="\1">\n{0,2}/g, "\n$2\n").trim() : rest;
