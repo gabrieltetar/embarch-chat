@@ -422,8 +422,9 @@ function App() {
           );
         })}
       </div>
-      <RewindDialog state={state} view={view} />
-      <ExportDialog />
+      {/* Each chat's own: another chat put in this view closes them, so a rewind never acts on a message of the chat before (73, 74). */}
+      <RewindDialog key={`rewind:${state.sessionId}`} state={state} view={view} />
+      <ExportDialog key={`export:${state.sessionId}`} />
       <Toast />
       <PendingCards
         pending={state.pending}

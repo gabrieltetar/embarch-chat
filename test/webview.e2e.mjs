@@ -1995,6 +1995,21 @@ await check("closing the rewind picker or the export dialog gives the keys back 
   assert.equal(await focused(), "TEXTAREA");
 });
 
+await check("the rewind and export dialogs are their chat's: another chat put in the view closes them (73, 74)", async () => {
+  await basicChat();
+  await type("/rewind " + ENTER);
+  await keyOn(".rewind-list", "Enter");
+  await send([{ t: "rewindCheck", uuid: BASIC_UUIDS[1], result: { canRewind: true, filesChanged: ["/work/rec/basic/a.txt"], insertions: 3, deletions: 1 } }]);
+  assert.deepEqual(await text(".dialog.rewind .rewind-to"), ["To before Reply with just: ok"]);
+  // The list (or the status bar's EmbArch, 54) puts another chat in this view.
+  await send([snapshot({ sessionId: "33333333-0000-4000-8000-000000000001", title: "Another chat" })]);
+  assert.equal((await text(".dialog.rewind")).length, 0, "no rewind of the first chat's message offered over the second");
+  await type("/export " + ENTER);
+  assert.equal((await text(".dialog.export")).length, 1);
+  await send([snapshot({ sessionId: "33333333-0000-4000-8000-000000000002" })]);
+  assert.equal((await text(".dialog.export")).length, 0);
+});
+
 await check("the header's ✎ asks the host to rename the chat; a thread run elsewhere has none", async () => {
   await basicChat();
   await click(".header .rename");
