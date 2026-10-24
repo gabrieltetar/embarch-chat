@@ -1958,6 +1958,24 @@ await check("Esc twice at an idle, empty input opens the picker; once, or with a
   assert.equal((await text(".dialog.rewind")).length, 0);
 });
 
+await check("closing the rewind picker or the export dialog gives the keys back to the input (73, 74)", async () => {
+  await basicChat();
+  await type(ESC + ESC);
+  assert.equal(await focused(), "UL.rewind-list", "the picker takes the keys");
+  await keys(ESC);
+  assert.equal((await text(".dialog.rewind")).length, 0);
+  assert.equal(await focused(), "TEXTAREA");
+  await keys("also check the uart");
+  assert.equal(await value(), "also check the uart", "what the owner types next goes into the draft");
+  await exec("const t = document.querySelector('.composer textarea'); t.value = ''; t.dispatchEvent(new Event('input', { bubbles: true }))");
+  await type("/export " + ENTER);
+  await send([{ t: "export", text: "x", filename: "c.txt" }]);
+  assert.equal(await focused(), "DIV.dialog.export");
+  await click(".dialog.export button", "Close");
+  await settle();
+  assert.equal(await focused(), "TEXTAREA");
+});
+
 await check("the header's ✎ asks the host to rename the chat; a thread run elsewhere has none", async () => {
   await basicChat();
   await click(".header .rename");

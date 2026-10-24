@@ -55,6 +55,23 @@ async function copy(text: string): Promise<boolean> {
 
 const lines = (n: number, what = "line") => `${n} ${what}${n === 1 ? "" : "s"}`;
 
+/**
+ * A dialog that takes the keys gives them back when it closes, as Claude
+ * Code's panel does: to what had them when it opened — the input, the ↶ —
+ * else to the input. Called ahead of the effect that moves focus in.
+ */
+function useFocusBack(open: boolean): void {
+  useEffect(() => {
+    if (!open) return;
+    const from = document.activeElement;
+    return () =>
+      void requestAnimationFrame(() => {
+        const back = from instanceof HTMLElement && from !== document.body && from.isConnected ? from : document.querySelector<HTMLElement>(".composer textarea");
+        back?.focus();
+      });
+  }, [open]);
+}
+
 /** The owner's message as a list shows it: its first line. */
 const firstLine = (t: string) => t.trim().split("\n")[0];
 
@@ -242,7 +259,8 @@ export function RewindDialog({ state, view }: { state: ChatState; view: ChatView
     return () => (window.removeEventListener("embarch-rewind", onOpen), window.removeEventListener("message", onHost));
   }, [view.ours]);
 
-  // The list, or the confirmation, takes the keys.
+  // The list, or the confirmation, takes the keys, and gives them back.
+  useFocusBack(!!phase);
   useEffect(() => {
     if (phase?.kind === "list") requestAnimationFrame(() => list.current?.focus());
     else if (phase?.kind === "check") requestAnimationFrame(() => box.current?.focus());
@@ -380,7 +398,8 @@ export function ExportDialog() {
     window.addEventListener("message", onHost);
     return () => (window.removeEventListener("embarch-export", onOpen), window.removeEventListener("message", onHost));
   }, []);
-  // The dialog takes the keys: Escape closes it.
+  // The dialog takes the keys: Escape closes it, and gives them back.
+  useFocusBack(!!st);
   useEffect(() => {
     if (st) box.current?.focus();
   }, [!!st]);
