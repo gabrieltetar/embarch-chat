@@ -844,7 +844,8 @@ details.thinking .md {
   align-items: center;
   position: sticky;
   bottom: 0;
-  background: var(--vscode-editorWidget-background, var(--bubble));
+  /* The card's, tint and all as it comes forward. */
+  background: inherit;
 }
 .card .actions input {
   flex: 1;

@@ -158,7 +158,8 @@ const returned: Record<string, string> = {};
 /** The owner's own unsent draft from before a reload (63): it fills an empty draft only, so a sidebar that kept it holds it once. */
 const typedBack: Record<string, string> = {};
 export function returnToDraft(sid: string, text: string, typed = false): void {
-  if (typed) typedBack[sid] = text;
+  // The host's copy is that text: a Send before the next telling still tells it gone.
+  if (typed) typedBack[sid] = told[sid] = text;
   else returned[sid] = returned[sid] ? `${returned[sid]}\n\n${text}` : text;
   window.dispatchEvent(new CustomEvent("embarch-draft", { detail: sid }));
 }

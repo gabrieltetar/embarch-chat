@@ -1241,6 +1241,16 @@ await check("an unsent draft is told to the host a moment after the last key; gi
   assert.equal(await value(), "the tab's unsent words");
 });
 
+await check("a draft given back after a reload and sent at once is told to the host as gone: the next reload does not bring it back (63; review r6 nit)", async () => {
+  const sid = await fresh({}, false);
+  await send([{ t: "draft", sid, text: "the words from before the reload", typed: true }]);
+  await type(ENTER);
+  await sleep(450);
+  const ps = await posts();
+  assert.equal(ps.filter((p) => p.t === "send").length, 1, "sent");
+  assert.deepEqual(ps.filter((p) => p.t === "typed" && p.sid === sid), [{ t: "typed", sid, text: "" }]);
+});
+
 await check("just before send: a long draft typed fast waits for its cards; the 💡 opens; Enter again sends it as it is", async () => {
   await fresh();
   const draft = "please also update the readme with the new flash steps";
@@ -2875,6 +2885,13 @@ for (const h of [520, 420, 340, 324]) {
     }
   });
 }
+
+await check("a card comes forward tinted, its sticky buttons with it: no band of the resting colour across it (55; review r6 nit)", async () => {
+  await fresh({}, false);
+  await send([sent("touch it"), ...events(cardOf("deny"))]);
+  const [card, bar] = await exec("const c = document.querySelector('.card'); return [getComputedStyle(c).backgroundColor, getComputedStyle(c.querySelector('.actions')).backgroundColor]");
+  assert.equal(bar, card);
+});
 
 await check("the MCP pill: each server with Claude Code's mark and words, a ✗ when one failed, Reconnect and Disable on this chat's process; /mcp opens it (its changelog L6014)", async () => {
   // The servers as the recording's mcp_status answered, and one whose rebuilt binary did not start.
