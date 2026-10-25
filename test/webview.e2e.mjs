@@ -1005,6 +1005,33 @@ await check("a key or PR in Claude's prose is a link once the desk's index knows
   assert.equal((await text(".md a.ref")).length, 0);
 });
 
+await check("a gh naming no repo after an earlier step cd'd elsewhere is not the chat's folder's PR: shown, not linked, until a step cds back to the folder (87)", async () => {
+  // Claude Code's Bash keeps its cwd between steps: the merge ran in the other clone, whatever the folder's remote says.
+  const steps = [
+    toolCall("toolu_cd1", "Bash", { command: "cd ../other-clone && git pull", description: "Pull the other clone" }),
+    toolResult("toolu_cd1", "Already up to date."),
+    toolCall("toolu_cd2", "Bash", { command: "gh pr merge 36 --squash", description: "Merge it" }),
+    toolResult("toolu_cd2", ""),
+  ];
+  await send([{ t: "refs", refs: { issues: INDEX.issues, prs: INDEX.prs } }, snapshot({}, { ...OURS, githubRepo: "owner/repo" }), ...steps]);
+  assert.deepEqual(await text(".tool .subject-link"), [], "not owner/repo's #36");
+  assert.deepEqual(await text(".tool .subject-text"), ["#36"]);
+  // A cd in a subshell moves nothing after it: the folder's repo's #36, its title from the index.
+  await send([snapshot({}, { ...OURS, githubRepo: "owner/repo" }), toolCall("toolu_cd1", "Bash", { command: "(cd ../other-clone && git pull)" }), toolResult("toolu_cd1", ""), ...steps.slice(2)]);
+  assert.deepEqual(await text(".tool .subject-link"), ["#36Widget↗"]);
+  // Back in the folder, by its path: the next merge is the folder's repo's again, live as it arrives.
+  await send([snapshot({}, { ...OURS, githubRepo: "owner/repo" }), ...steps]);
+  assert.deepEqual(await text(".tool .subject-link"), []);
+  await send([
+    toolCall("toolu_cd3", "Bash", { command: "cd /work/rec/x && npm test", description: "Test" }),
+    toolResult("toolu_cd3", "ok"),
+    toolCall("toolu_cd4", "Bash", { command: "gh pr merge 36 --squash", description: "Merge it" }),
+    toolResult("toolu_cd4", ""),
+  ]);
+  assert.deepEqual(await text(".tool .subject-link"), ["#36Widget↗"]);
+  await send([{ t: "refs", refs: null }]);
+});
+
 await check("no link has an href: VS Code's own handler never opens one, each opens once, and vscode:, mailto: and command: links are refused", async () => {
   const say = {
     t: "event",

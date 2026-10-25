@@ -29,6 +29,7 @@ import { Queued } from "./queue";
 import { setAtlas } from "./atlas";
 import "./reflinks";
 import { setChatRepo, setRefs } from "./refs";
+import { awaySteps } from "./subjects";
 import { LimitBannerView } from "./limits";
 import { FOOTER_COMMANDS, McpPill, ModelPill, RemotePill, footerCommand } from "./footer";
 import { KeepReply } from "./keep";
@@ -267,6 +268,10 @@ function App() {
   const repo = model.view?.githubRepo ?? null;
   const h = model.header;
   const [ownId, ownTitle, ownKey, ownUrl] = [h?.itemId ?? null, h?.title ?? "", h?.issueKey, h?.issueUrl];
+  // A `cd` in one step moves every later step's `gh` (Claude Code's shell keeps its cwd): those steps, by id. Kept by
+  // their ids joined, so the ctx — and every settled row with it — changes only when one more is away (decision 87).
+  const awayIds = useMemo(() => (state ? [...awaySteps(state.timeline, state.entries, state.cwd)].join("\u0000") : ""), [state?.timeline, state?.entries, state?.cwd]);
+  const away = useMemo(() => new Set(awayIds ? awayIds.split("\u0000") : []), [awayIds]);
   const ctx: ToolCtx = useMemo(
     () => ({
       openLink: (url: string) => post({ t: "openLink", url }),
@@ -281,11 +286,11 @@ function App() {
             post({ t: "runInBackground", toolUseId });
           }
         : undefined,
-      subjects: { uiUrl: ui, repo, own: h ? { itemId: ownId, title: ownTitle, issueKey: ownKey, issueUrl: ownUrl } : null },
+      subjects: { uiUrl: ui, repo, away, own: h ? { itemId: ownId, title: ownTitle, issueKey: ownKey, issueUrl: ownUrl } : null },
     }),
     // The card's fields, not the header object a desk poll replaces; and the desk's index, which a step's
     // title and link and a key in prose read (decisions 87, 88): rows already drawn take it when it arrives.
-    [cwd, turnRuns, sid, acts, ui, repo, !!h, ownId, ownTitle, ownKey, ownUrl, refsV],
+    [cwd, turnRuns, sid, acts, ui, repo, away, !!h, ownId, ownTitle, ownKey, ownUrl, refsV],
   );
 
   if (empty || !state || !model.view) {

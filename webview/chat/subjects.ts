@@ -19,7 +19,9 @@
 //   close|reopen` a line naming it, `✓ Merged pull request owner/repo#36
 //   (Blink)` (gh 2.92's own strings); a `gh` that names no repo acts on the
 //   chat's folder's, which the host reads from its git remote — unless the
-//   command `cd`s elsewhere first, and then the repo is not known;
+//   command `cd`s elsewhere first, or an earlier step did (Claude Code's
+//   shell keeps its cwd from one Bash step to the next), and then the repo
+//   is not known;
 // - a `slack_*` read: "Channel: name (ID)" and "Permalink: [link](…)";
 // - the desk's `desk_*`: `{item_id, title}`, `{id}`, `{work_item: {id,
 //   title}}`, `{tile: "<item>@<day>"}`, and the brief's first line
@@ -67,9 +69,11 @@ export interface SubjectEnv {
   own?: OwnItem | null;
   /** The chat's folder's GitHub repo, `owner/repo` (refs.ts' `setChatRepo`): what a `gh` naming none acts on. */
   repo?: string | null;
+  /** The steps, by id, whose `gh` ran after an earlier step's `cd` took the shell elsewhere (`awaySteps`): not the folder's repo's. */
+  away?: ReadonlySet<string>;
 }
 
-type Step = Pick<ToolEntry, "name" | "input" | "result">;
+type Step = Pick<ToolEntry, "name" | "input" | "result"> & { id?: string };
 type Obj = Record<string, unknown>;
 
 const KEY = /^[A-Za-z][A-Za-z0-9]{0,9}-\d{1,7}$/;
@@ -185,7 +189,7 @@ export interface GhCall {
   action: string;
   number?: number;
   repo?: string;
-  /** The command line `cd`s elsewhere before it: a `gh` naming no repo acts on that folder's, not the chat's. */
+  /** The command line, or an earlier step (`awaySteps`), `cd`s elsewhere before it: a `gh` naming no repo acts on that folder's, not the chat's. */
   moved?: true;
 }
 
@@ -367,6 +371,90 @@ export function ghCall(command: string): GhCall | null {
     return call;
   }
   return null;
+}
+
+/** A path as written, without the slashes that end it. */
+const unslashed = (p: string) => p.replace(/\/+$/, "") || "/";
+
+/**
+ * Where a command line leaves Claude Code's shell, which keeps its cwd from
+ * one Bash step to the next (decision 87): "away" once a `cd`, `pushd` or
+ * `popd` runs in the shell itself — one inside `( … )`, `$( … )` or
+ * backquotes runs in a subshell and moves nothing after it — and "home" when
+ * the last of them is a `cd` to `home`, the chat's folder, by that very
+ * absolute path; null when the line moves nothing. Nothing else counts as
+ * coming back: a relative `cd`, `cd -`, `popd`, a `cd` into the folder's
+ * own subfolder (it may be another repo's clone).
+ */
+export function shellMove(command: string, home?: string | null): "away" | "home" | null {
+  let q: string | null = null;
+  let word = "";
+  let has = false;
+  let quoted = false;
+  /** The next word is in a command's place. */
+  let head = true;
+  /** How many subshells deep the line is: `(` and `$(` open one, `)` closes it, backquotes are one. */
+  let depth = 0;
+  let tick = false;
+  /** A `cd`, `pushd` or `popd` the shell itself runs, and its words so far. */
+  let move: { verb: string; args: string[] } | null = null;
+  let last: "away" | "home" | null = null;
+  const end = () => {
+    if (!has) return;
+    const w = word;
+    const isQuoted = quoted;
+    word = "";
+    has = false;
+    quoted = false;
+    if (move) move.args.push(w);
+    else if (head && !ASSIGN.test(w) && !((PREFIX.has(w) || w === "builtin") && !isQuoted)) {
+      head = false;
+      if (!isQuoted && depth === 0 && !tick && (w === "cd" || w === "pushd" || w === "popd")) move = { verb: w, args: [] };
+    }
+  };
+  const stop = () => {
+    end();
+    if (move) {
+      const to = move.args.filter((a) => a !== "--" && !/^-[LPe@]+$/.test(a));
+      last = move.verb === "cd" && !!home && to.length === 1 && to[0].startsWith("/") && unslashed(to[0]) === unslashed(home) ? "home" : "away";
+      move = null;
+    }
+    head = true;
+  };
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i];
+    if (q) {
+      if (c === q) q = null;
+      else if (c === "\\" && q === '"' && i + 1 < command.length) word += command[++i];
+      else word += c;
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      q = c;
+      has = true;
+      quoted = true;
+    } else if (c === "\\" && i + 1 < command.length) {
+      word += command[++i];
+      has = true;
+    } else if (c === "(" || (c === "$" && command[i + 1] === "(")) {
+      stop();
+      depth++;
+      if (c === "$") i++;
+    } else if (c === ")") {
+      stop();
+      depth = Math.max(0, depth - 1);
+    } else if (c === "`") {
+      stop();
+      tick = !tick;
+    } else if (/[;&|\n]/.test(c)) stop();
+    else if (/\s/.test(c)) end();
+    else {
+      word += c;
+      has = true;
+    }
+  }
+  stop();
+  return last;
 }
 
 /**
@@ -555,24 +643,68 @@ function bench(tool: string, input: Obj, result: string | undefined, env: Subjec
  * the env it was read with, either of which can change what it names.
  * Every render asks again (a row, a run's list); its JSON is parsed once.
  */
-const read = new WeakMap<Step, { refs: number; env: string; s: Subject | null }>();
+const read = new WeakMap<Step, { refs: number; env: string; away: boolean; s: Subject | null }>();
 const envKey = (e: SubjectEnv) => [e.uiUrl, e.repo, e.own?.itemId, e.own?.title, e.own?.issueKey, e.own?.issueUrl].map((x) => x ?? "").join("\u0000");
 
 /** What a step touched, or null for a step that touches no connector (or none by name). */
 export function stepSubject(t: Step, env: SubjectEnv): Subject | null {
   const refs = refsVersion();
   const key = envKey(env);
+  // Whether an earlier step took the shell elsewhere is the step's own part of the env.
+  const away = !!t.id && !!env.away?.has(t.id);
   const hit = read.get(t);
-  if (hit && hit.refs === refs && hit.env === key) return hit.s;
-  const s = subjectOf(t, env);
-  read.set(t, { refs, env: key, s });
+  if (hit && hit.refs === refs && hit.env === key && hit.away === away) return hit.s;
+  const s = subjectOf(t, env, away);
+  read.set(t, { refs, env: key, away, s });
   return s;
 }
 
-function subjectOf(t: Step, env: SubjectEnv): Subject | null {
+/** A Bash step's command, read once per entry: whether it runs a `gh`, and where it leaves the shell. */
+const bashRead = new WeakMap<ToolEntry, { gh: boolean; home: string | null; move: "away" | "home" | null }>();
+
+function bashOf(e: ToolEntry, home: string | null): { gh: boolean; move: "away" | "home" | null } {
+  const hit = bashRead.get(e);
+  if (hit && hit.home === home) return hit;
+  const command = typeof e.input?.command === "string" ? e.input.command : "";
+  // A step the owner denied never ran.
+  const r = { gh: !!command && ghCall(command) !== null, home, move: command && e.status !== "denied" ? shellMove(command, home) : null };
+  bashRead.set(e, r);
+  return r;
+}
+
+/**
+ * The steps whose `gh` ran with Claude Code's shell elsewhere than the
+ * chat's folder (decision 87), by id: its Bash keeps the cwd from one step
+ * to the next, so once a step `cd`s away — in the shell itself, not in a
+ * subshell (`shellMove`) — a later `gh` that names no repo is no longer the
+ * folder's repo's, until a step `cd`s back to `home`, the folder, by its
+ * path. A subagent's shell goes back to the session's folder after each of
+ * its steps, so its `cd`s move nothing after them; its steps take the
+ * chat's shell as it was when it started, which names fewer repos, never a
+ * wrong one. Pure: the same entries give the same ids.
+ */
+export function awaySteps(timeline: readonly string[], entries: Readonly<Record<string, Entry>>, home: string | null): Set<string> {
+  const out = new Set<string>();
+  let away = false;
+  const visit = (id: string, sub: boolean) => {
+    const e = entries[id];
+    if (!e || e.kind !== "tool") return;
+    if (e.name === "Bash") {
+      const b = bashOf(e, home);
+      if (away && b.gh) out.add(e.id);
+      if (!sub && b.move) away = b.move === "away";
+    }
+    for (const c of e.children) visit(c, true);
+  };
+  for (const id of timeline) visit(id, false);
+  return out;
+}
+
+function subjectOf(t: Step, env: SubjectEnv, away: boolean): Subject | null {
   const input = t.input ?? {};
   if (t.name === "Bash") {
     const call = typeof input.command === "string" ? ghCall(input.command) : null;
+    if (call && away) call.moved = true;
     return call ? github(call, t.result, env) : null;
   }
   if (t.name === "WebFetch") return fetched(input, env);

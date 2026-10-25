@@ -213,7 +213,8 @@ test("a key or PR in prose is a link only when the index knows it, to Linear or 
       ],
     );
     assert.equal(parts.filter((p) => typeof p === "string").join(""), "Done in , see  and ; XYZ-1, UTF-8, step #3, #38 and #36 stay text.", "a bare #N is never a PR");
-    assert.match(links[2].title, /^owner\/repo#38 Flash from CI · merged\nOpens in GitHub: /);
+    // "PR #38" may be another repo's the chat discusses: its hover names the one it links, in full (88).
+    assert.match(links[2].title, /^owner\/repo#38 "Flash from CI" · merged\nOpens in GitHub: /);
     // "PR #36" is the chat's own repo's, any case; no repo known, or one the index has no such PR in: text.
     assert.deepEqual(core.proseRefs("pull Request #36 and pr#36", "owner/docs").filter((p) => typeof p !== "string").map((l) => [l.label, l.url]), [
       ["pull Request #36", "https://github.com/owner/docs/pull/36"],
@@ -223,7 +224,7 @@ test("a key or PR in prose is a link only when the index knows it, to Linear or 
     assert.equal(core.proseRefs("PR #38 merged", "owner/docs"), null);
     assert.equal(core.proseRefs("SPR #38, PR #38a and PR 38", "owner/repo"), null, "inside a word, or with no #");
     assert.match(links[0].title, /^ABC-154 Create the Widget · Done\nOpens in Linear: /);
-    assert.match(links[1].title, /^owner\/repo#36 Widget · merged\nOpens in GitHub: /);
+    assert.match(links[1].title, /^owner\/repo#36 "Widget" · merged\nOpens in GitHub: /);
     // A lower-case key, one inside a word or a path, and a branch name are text.
     assert.equal(core.proseRefs("abc-154, xABC-154, src/ABC-154.c and abc-154-create-the-widget", "owner/repo"), null);
     // A link the index carries to another host is no link.

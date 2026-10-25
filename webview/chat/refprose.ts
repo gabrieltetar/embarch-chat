@@ -4,7 +4,10 @@
 // them (refs.ts), the way atlas citations are links only in a repo with an
 // atlas (decision 16): nothing that merely looks like a key is turned into
 // one. A bare `#3` never is: "step #3" is no PR, and that one PR in the
-// index has the number does not make it the one meant. An issue opens
+// index has the number does not make it the one meant. "PR #36" is the
+// folder's repo's, though Claude may be discussing another's — what it
+// means cannot be known — so its hover names it in full, `owner/repo#36
+// "Its title"`, and a wrong one shows before the click. An issue opens
 // Linear, a PR GitHub, each only as https to that host (subjects.ts'
 // outsideLink). Never inside a code span or block, nor inside a link's own
 // text: markdown hands its hooks plain text alone. Pure, so the node tests
@@ -34,7 +37,8 @@ function one(m: RegExpExecArray, repo: string | null): ProseRef | null {
   const r = m[1] ?? repo;
   const p = r ? prRef(Number(m[2] ?? m[4]), r) : null;
   const url = outsideLink("github", p?.url);
-  return p && url ? { label: m[0], url, title: `${p.repo}#${p.number} ${p.title} · ${p.draft && p.state === "open" ? "draft" : p.state}\nOpens in GitHub: ${url}` } : null;
+  // By its repo, number and quoted title: a "PR #36" read as the folder's repo's when Claude meant another's shows so on hover.
+  return p && url ? { label: m[0], url, title: `${p.repo}#${p.number} "${p.title}" · ${p.draft && p.state === "open" ? "draft" : p.state}\nOpens in GitHub: ${url}` } : null;
 }
 
 /** The text with the references the index knows as links; null when it holds none. `repo`: the chat's folder's, for `PR #36`. */

@@ -174,6 +174,64 @@ test("gh pr merge|close|ready|review|checks|diff N without -R: the repo gh's lin
   assert.equal(subj("Bash", { command: "GH_REPO=ghe.example/owner/other gh pr merge 36" }, "").url, undefined, "another host's");
 });
 
+test("where a command line leaves Claude Code's shell: away after a cd, pushd or popd in the shell itself, home after a cd to the folder by its path (87)", () => {
+  const HOME = "/work/rec/x";
+  const away = ["cd ../other-clone && git pull", "cd /tmp", "pushd ../other", "popd", "cd", "cd -", "cd .", "cd src", "cd /work/rec/x/src", "if true; then cd /tmp; fi", "FOO=1 cd /tmp", "builtin cd /tmp", "{ cd /tmp; }", "cd /work/rec/x && cd sub", "cd $(git rev-parse --show-toplevel)", "cd ~/x"];
+  for (const c of away) assert.equal(core.shellMove(c, HOME), "away", c);
+  const home = ["cd /work/rec/x", "cd /work/rec/x/", 'cd "/work/rec/x" && npm test', "cd -- /work/rec/x", "cd -P /work/rec/x", "cd ../other; cd /work/rec/x"];
+  for (const c of home) assert.equal(core.shellMove(c, HOME), "home", c);
+  // A subshell's cd moves nothing after it; nor does a cd that is a word of another command, or quoted.
+  const none = ["(cd ../other && git pull)", "x=$(cd ../other && pwd)", "echo `cd /tmp; pwd`", "git -C ../other pull", 'git commit -m "cd ../x"', "bash -c 'cd /tmp'", "echo cd /tmp", "make -C sub", "'cd' /tmp", "gh pr merge 36"];
+  for (const c of none) assert.equal(core.shellMove(c, HOME), null, c);
+  assert.equal(core.shellMove("cd /work/rec/x"), "away", "no folder known: no way back is certain");
+});
+
+test("a `cd` in an earlier step moves every later step's gh: a gh naming no repo after it is not the chat's folder's repo's, until a step cds back (87)", () => {
+  const HOME = "/work/rec/x";
+  let n = 0;
+  const bash = (command, over = {}) => ({ kind: "tool", id: `b${++n}`, name: "Bash", input: { command }, parent: null, status: "done", result: "", children: [], ...over });
+  /** A chat as the reducer keeps it: top-level steps in order, a subagent's under its call. */
+  const chat = (...steps) => {
+    const entries = {};
+    const add = (e) => {
+      entries[e.id] = e;
+      for (const c of e.kids ?? []) add(c);
+    };
+    steps.forEach(add);
+    for (const e of Object.values(entries)) if (e.kids) e.children = e.kids.map((c) => c.id);
+    return { timeline: steps.map((e) => e.id), entries };
+  };
+  const urls = (c, home = HOME) => {
+    const away = core.awaySteps(c.timeline, c.entries, home);
+    const e = { ...env, repo: "owner/repo", away };
+    return Object.values(c.entries)
+      .filter((x) => x.name === "Bash")
+      .map((x) => core.stepSubject(x, e)?.url ?? null);
+  };
+  const PR = "https://github.com/owner/repo/pull/36";
+  // The repro: an earlier step cd'd to another clone; the merge names no repo and gh says nothing.
+  assert.deepEqual(urls(chat(bash("cd ../other-clone && git pull"), bash("gh pr merge 36 --squash"))), [null, null]);
+  // A cd in a subshell, git -C, or none at all: the folder's repo.
+  assert.deepEqual(urls(chat(bash("(cd ../other-clone && git pull)"), bash("git -C ../other-clone pull"), bash("gh pr merge 36 --squash"))), [null, null, PR]);
+  // Back to the folder by its path: the folder's again; no folder known, not.
+  const back = chat(bash("cd ../other-clone && git pull"), bash("gh pr view 36"), bash("cd /work/rec/x && npm test"), bash("gh pr merge 36"));
+  assert.deepEqual(urls(back), [null, null, null, PR]);
+  assert.deepEqual(urls(back, null), [null, null, null, null]);
+  // A repo the command or gh's own line names is that one, wherever the shell is.
+  assert.deepEqual(urls(chat(bash("cd ../other-clone"), bash("gh pr merge 36 -R owner/repo"), bash("gh pr merge 37", { result: "✓ Merged pull request owner/other#37 (x)\n" }))), [
+    null,
+    PR,
+    "https://github.com/owner/other/pull/37",
+  ]);
+  // A step the owner denied never ran.
+  assert.deepEqual(urls(chat(bash("cd ../other-clone", { status: "denied" }), bash("gh pr merge 36"))), [null, PR]);
+  // A subagent's shell goes back after each of its steps: its cd moves nothing after it; its gh takes the chat's shell as it was.
+  const task = (kids) => ({ kind: "tool", id: `a${++n}`, name: "Agent", input: { prompt: "x" }, parent: null, status: "done", result: "", children: [], kids });
+  const sub = (command) => bash(command, { parent: "a" });
+  assert.deepEqual(urls(chat(task([sub("cd ../other-clone")]), bash("gh pr merge 36"))), [null, PR]);
+  assert.deepEqual(urls(chat(bash("cd ../other-clone"), task([sub("gh pr merge 36")]))), [null, null]);
+});
+
 test("the chat's folder's GitHub repo: from its git config, github.com only, picked as gh picks it with no terminal; a worktree reads its main checkout's", () => {
   assert.equal(core.githubRepoOfUrl("git@github.com:owner/repo.git"), "owner/repo");
   assert.equal(core.githubRepoOfUrl("https://github.com/owner/repo"), "owner/repo");
@@ -354,6 +412,10 @@ test("what a step touched is read once per step entry, and again when the desk's
   const g = step("Bash", { command: "gh pr merge 36" }, "");
   assert.equal(core.stepSubject(g, env).url, undefined);
   assert.equal(core.stepSubject(g, { ...env, repo: "owner/repo" }).url, "https://github.com/owner/repo/pull/36", "the chat's repo is part of the env");
+  // So is whether an earlier step took the shell elsewhere, step by step.
+  const h = { ...g, id: "b9" };
+  assert.equal(core.stepSubject(h, { ...env, repo: "owner/repo", away: new Set(["b9"]) }).url, undefined, "this step is away");
+  assert.equal(core.stepSubject(h, { ...env, repo: "owner/repo", away: new Set(["b8"]) }).url, "https://github.com/owner/repo/pull/36", "another is");
 });
 
 test("a tool that touches no connector names nothing", () => {
