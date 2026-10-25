@@ -15,15 +15,17 @@
 //   alone, so its issue is the `issueId` it was given;
 // - `gh pr|issue view` piped: `title:\t…` and `url:\t…` lines (an issue's
 //   has no url), `--json` and `gh api` an object, `gh pr create|comment|edit`
-//   the URL it made, `gh pr merge|close|reopen|ready|review` and `gh issue
-//   close|reopen` a line naming it, `✓ Merged pull request owner/repo#36
-//   (Blink)` (gh 2.92's own strings). A `gh` step's repo is the one it
-//   names — `-R`/`--repo`, `GH_REPO=` — or the one its own output names;
-//   else `#36` shows alone, untitled and unlinked. It is never inferred
-//   from where the shell was: Claude Code's shell keeps its cwd from one
-//   Bash step to the next, and the chat's folder moves with each turn's
-//   init and a reopen, so no reading of `cd`s is certain — and a link to
-//   the wrong PR is worse than none (decision 87);
+//   the URL it made (the first printed), `gh pr close|reopen|ready` and `gh
+//   issue close|reopen` gh's status line naming it, `✓ Closed pull request
+//   owner/repo#36 (Blink)` (gh 2.92's own strings, as it prints them with no
+//   terminal: `merge` only its `!` warning, `review` none; none of them a
+//   URL). A `gh` step's repo is the one it names — `-R`/`--repo`,
+//   `GH_REPO=` — or the one its own output names; else `#36` shows alone,
+//   untitled and unlinked. It is never inferred from where the shell was:
+//   Claude Code's shell keeps its cwd from one Bash step to the next, and
+//   the chat's folder moves with each turn's init and a reopen, so no
+//   reading of `cd`s is certain — and a link to the wrong PR is worse than
+//   none (decision 87);
 // - a `slack_*` read: "Channel: name (ID)" and "Permalink: [link](…)";
 // - the desk's `desk_*`: `{item_id, title}`, `{id}`, `{work_item: {id,
 //   title}}`, `{tile: "<item>@<day>"}`, and the brief's first line
@@ -367,17 +369,27 @@ export function ghCall(command: string): GhCall | null {
 }
 
 /**
- * gh's own line naming what it acted on, from its strings (gh 2.92):
- * `✓ Merged pull request owner/repo#36 (Blink)`, `✓ Pull request
- * owner/repo#36 is marked as "ready for review"`, `✓ Approved pull request
- * owner/repo#36`, `✓ Closed issue owner/repo#7 (Flaky)`. A title, when gh
- * gives one, is in brackets right after the number.
+ * gh's own status line naming what it acted on, as gh 2.92 prints it with
+ * no terminal — and under Claude Code it never has one: `close`, `reopen`
+ * and `ready` print theirs either way, `✓ Closed pull request
+ * owner/repo#36 (Blink)`, `! Pull request owner/repo#36 (Blink) is already
+ * closed`, `✓ Pull request owner/repo#36 is marked as "ready for review"`,
+ * `✓ Closed issue owner/repo#7 (Flaky)`; `merge` prints only its warning,
+ * `! Pull request owner/repo#36 was already merged` — its ✓ lines are a
+ * terminal's alone — and `review` nothing. A title, when gh gives one, is
+ * in brackets right after the number.
  */
 const GH_SAID = /\b(pull request|issue) ([\w.-]+\/[\w.-]+)#(\d{1,7})(?: \(([^\n]*)\))?/gi;
-/** A line of gh's own status, by the mark it starts with — ✓ done, ! already so, + changes requested — colour or none. */
-const GH_STATUS = /^(?:\x1b\[[\d;]*m)*[✓!+](?:\x1b\[[\d;]*m)* /;
+/** Each action's own status lines, whole, as gh prints them with no terminal — ✓ done, ! already so — its colours taken off. */
+const GH_STATUS: Partial<Record<string, RegExp>> = {
+  close: /^[✓!] (?:Closed (?:pull request|issue) .*|(?:Pull request|Issue) .* is already closed)$/,
+  reopen: /^[✓!] (?:Reopened (?:pull request|issue) .*|(?:Pull request|Issue) .* is already open)$/,
+  ready: /^[✓!] Pull request .* is (?:marked as "ready for review"|converted to "draft"|already "ready for review"|already "in draft")$/,
+  merge: /^! Pull request .* (?:was already merged|is already queued to merge)$/,
+};
+const GH_LINK = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:pull|issues)\/\d+(?:#[\w-]+)?/;
 
-/** What gh's output says about the PR or issue: `--json`/`gh api`'s object, view's `key:\tvalue` lines, or the URL it printed. */
+/** What gh's output says about the PR or issue: `--json`/`gh api`'s object, view's `key:\tvalue` lines, the URL it printed, or its status line. */
 function ghResult(call: GhCall, result: string | undefined): { title?: string; url?: string; number?: number; repo?: string } {
   if (!result) return {};
   const j = json(result);
@@ -394,25 +406,32 @@ function ghResult(call: GhCall, result: string | undefined): { title?: string; u
     const url = line("url");
     const u = url ? GH_URL.exec(url) : null;
     const n = line("number");
-    return { title: line("title"), url: u ? url : undefined, number: n && /^\d+$/.test(n) ? Number(n) : u ? Number(u[3]) : undefined, repo: u?.[1] };
+    const number = n && /^\d+$/.test(n) ? Number(n) : u ? Number(u[3]) : undefined;
+    // Its own lines, of the number it named: a later command's view of another is not this one's.
+    if (call.number !== undefined && number !== undefined && number !== call.number) return {};
+    return { title: line("title"), url: u ? url : undefined, number, repo: u?.[1] };
   }
-  // A diff's or a check's links and lines are someone else's.
-  if (call.action === "diff" || call.action === "checks") return {};
-  // merge, close, reopen, ready, review: gh's line naming it, by repo, number and title — its own status line, the
-  // first: what a later command in the line prints (a PR's body, a comment) may name any PR (decision 87).
+  // create, comment, edit: the URL it made or acted on, the first one printed — of the number it named, if it named
+  // one; a later command's output (a PR's body, its comments) may hold any (decision 87).
+  if (call.action === "create" || call.action === "comment" || call.action === "edit") {
+    const first = GH_LINK.exec(head)?.[0];
+    const u = first ? GH_URL.exec(first) : null;
+    if (!u || (call.number !== undefined && Number(u[3]) !== call.number)) return {};
+    return { url: first, number: Number(u[3]), repo: u[1] };
+  }
+  // close, reopen, ready, merge: gh's own status line, the first, by repo, number and title. No URL anywhere in the
+  // output is theirs — gh prints none — and review, checks, diff print no line of theirs: a URL or a line there is
+  // another command's, or a check's, a diff's, a body's, which may name any PR (decision 87).
+  const status = GH_STATUS[call.action];
+  if (!status) return {};
   const kind = call.kind === "pr" ? "pull request" : "issue";
   const said = head
     .split("\n")
-    .filter((l) => GH_STATUS.test(l))
+    .map((l) => l.replace(/\x1b\[[\d;]*m/g, "").trimEnd())
+    .filter((l) => status.test(l))
     .flatMap((l) => [...l.matchAll(GH_SAID)])
     .find((m) => m[1].toLowerCase() === kind && (call.number === undefined || Number(m[3]) === call.number));
-  if (said) return { title: said[4]?.trim() || undefined, number: Number(said[3]), repo: said[2] };
-  // create, comment, edit: the URL it made or acted on.
-  const urls = [...head.matchAll(/https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:pull|issues)\/\d+(?:#[\w-]+)?/g)].map((m) => m[0]);
-  const pick = call.number !== undefined ? urls.find((x) => Number(GH_URL.exec(x)![3]) === call.number) : urls[urls.length - 1];
-  if (!pick) return {};
-  const u = GH_URL.exec(pick)!;
-  return { url: pick, number: Number(u[3]), repo: u[1] };
+  return said ? { title: said[4]?.trim() || undefined, number: Number(said[3]), repo: said[2] } : {};
 }
 
 function github(call: GhCall, result: string | undefined): Subject | null {

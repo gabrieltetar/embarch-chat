@@ -117,7 +117,7 @@ test("gh: --json, -R, a URL argument, create's printed URL, merge's flags, gh ap
   assert.equal(subj("Bash", { command: "git log --oneline" }, "abc"), null);
 });
 
-test("gh pr merge|close|ready|review|checks|diff N without -R: the repo gh's line names, else #N alone — never the chat's folder's, nor the index's only #N (decision 87)", () => {
+test("gh pr merge|close|ready|review|checks|diff N without -R: the repo gh's own status line names, else #N alone — never a URL in the output, the chat's folder's, nor the index's only #N (decision 87)", () => {
   const other = { repo: "owner/other", number: 36, title: "Another repo's PR", state: "open", url: "https://github.com/owner/other/pull/36", keys: [] };
   const mine = { repo: "owner/repo", number: 36, title: "Blink", state: "open", url: "https://github.com/owner/repo/pull/36", keys: [] };
   core.setRefs({ issues: [], prs: [other] });
@@ -132,32 +132,44 @@ test("gh pr merge|close|ready|review|checks|diff N without -R: the repo gh's lin
   assert.deepEqual(shown(subj("Bash", { command: "gh pr checks 36" }, "build\tpass\t1m\thttps://github.com/owner/other/actions/runs/1\n", at("owner/repo"))), ["#36", undefined, undefined, "github:#36"]);
   assert.deepEqual(shown(subj("Bash", { command: "gh pr diff 36" }, "+x", at("owner/repo"))), ["#36", undefined, undefined, "github:#36"]);
   assert.deepEqual(shown(subj("Bash", { command: "gh pr diff 36 -R owner/repo" }, "+x")), ["#36", "Blink", "https://github.com/owner/repo/pull/36", "github:owner/repo#36"], "named: the index's title");
-  // gh's own line names the repo, and the title: it wins over the folder's.
-  const merged = subj("Bash", { command: "gh pr merge 36 --squash --delete-branch" }, "✓ Squashed and merged pull request owner/other#36 (Another repo's PR (v2))\n✓ Deleted local branch x\n", at("owner/repo"));
-  assert.deepEqual(shown(merged), ["#36", "Another repo's PR (v2)", "https://github.com/owner/other/pull/36", "github:owner/other#36"]);
+  // gh's own status line names the repo, and the title — as gh 2.92 prints it with no terminal, which under Claude Code
+  // it never has: close, reopen and ready print theirs either way, merge only its "already merged" warning.
+  const closedOther = subj("Bash", { command: "gh pr close 36 --delete-branch" }, "✓ Closed pull request owner/other#36 (Another repo's PR (v2))\n✓ Deleted branch x and switched to branch main\n", at("owner/repo"));
+  assert.deepEqual(shown(closedOther), ["#36", "Another repo's PR (v2)", "https://github.com/owner/other/pull/36", "github:owner/other#36"]);
   const lines = [
     ["gh pr close 36", "✓ Closed pull request owner/other#36 (Another repo's PR)\n"],
+    ["gh pr close 36", "! Pull request owner/other#36 (Another repo's PR) is already closed\n"],
     ["gh pr reopen 36", "✓ Reopened pull request owner/other#36 (Another repo's PR)\n"],
     ["gh pr ready 36", '✓ Pull request owner/other#36 is marked as "ready for review"\n'],
-    ["gh pr review 36 --approve", "✓ Approved pull request owner/other#36\n"],
-    ["gh pr review 36 -r -b no", "+ Requested changes to pull request owner/other#36\n"],
     ["gh pr merge 36", "! Pull request owner/other#36 was already merged\n"],
   ];
   for (const [cmd, out] of lines) {
     const s = subj("Bash", { command: cmd }, out);
-    assert.deepEqual([s.url, s.title], ["https://github.com/owner/other/pull/36", "Another repo's PR"], cmd);
+    assert.deepEqual([s.url, s.title], ["https://github.com/owner/other/pull/36", "Another repo's PR"], `${cmd}: ${out}`);
   }
-  // No number: gh's own first status line, never what a later command in the line prints — a PR's body or comments
-  // that name another (87).
-  const view12 = "title:\tGadget\nnumber:\t12\n--\nFollows up pull request other/x#99 (Old)\n✓ Merged pull request other/x#98 (Older)\n";
-  for (const out of [
-    `✓ Squashed and merged pull request owner/repo#36 (Blink)\n✓ Deleted local branch x\n${view12}`,
-    `${view12.replace(/✓ .*\n/, "")}\x1b[0;35m✓\x1b[0m Squashed and merged pull request owner/repo#36 (Blink)\n`,
+  // A merge prints no ✓ line, a review none at all: one in their output is another command's — a PR's body, a comment.
+  for (const [cmd, out] of [
+    ["gh pr merge 36 --squash", "✓ Squashed and merged pull request owner/other#36 (Another repo's PR)\n"],
+    ["gh pr review 36 --approve", "✓ Approved pull request owner/other#36\n"],
+    ["gh pr review 36 -r -b no", "+ Requested changes to pull request owner/other#36\n"],
   ]) {
-    const s = subj("Bash", { command: "gh pr merge --squash && gh pr view 12 --comments" }, out, at("owner/other"));
+    assert.deepEqual(shown(subj("Bash", { command: cmd }, out)), ["#36", undefined, undefined, "github:#36"], cmd);
+  }
+  // No URL in the output is a merge's, close's, reopen's, ready's, review's, check's or diff's: what a later command in
+  // the line prints — `gh pr view 12 --comments`, with its url: line and a body naming any PR — is not theirs (87).
+  const view12 = "title:\tGadget\nstate:\tOPEN\nnumber:\t12\nurl:\thttps://github.com/owner/x/pull/12\n--\nFollows up https://github.com/other/x/pull/36 and pull request other/x#99 (Old)\n✓ Merged pull request other/x#98 (Older)\n";
+  for (const action of ["merge 36 --squash", "close 36", "reopen 36", "ready 36", "review 36 --approve", "checks 36", "diff 36"]) {
+    const s = subj("Bash", { command: `gh pr ${action} && gh pr view 12 --comments` }, view12);
+    assert.deepEqual(shown(s), ["#36", undefined, undefined, "github:#36"], action);
+  }
+  for (const action of ["merge --squash", "close", "reopen", "ready", "review --approve"]) {
+    assert.equal(subj("Bash", { command: `gh pr ${action} && gh pr view 12 --comments` }, view12), null, `${action}: no number known, not #12, #98 or #99`);
+  }
+  // No number: gh's own first status line, never one a later command in the line prints.
+  for (const out of [`✓ Closed pull request owner/repo#36 (Blink)\n${view12}`, `${view12.replace(/✓ .*\n/, "")}\x1b[0;31m✓\x1b[0m Closed pull request owner/repo#36 (Blink)\n`]) {
+    const s = subj("Bash", { command: "gh pr close && gh pr view 12 --comments" }, out, at("owner/other"));
     assert.deepEqual(shown(s), ["#36", "Blink", "https://github.com/owner/repo/pull/36", "github:owner/repo#36"], out);
   }
-  assert.equal(subj("Bash", { command: "gh pr merge --squash; gh pr view 12" }, view12.replace(/✓ .*\n/, "")), null, "no status line of gh's: no number known");
   const closed = subj("Bash", { command: "gh issue close 12" }, "✓ Closed issue owner/repo#12 (Flaky)\n");
   assert.deepEqual([closed.label, closed.title, closed.url], ["#12", "Flaky", "https://github.com/owner/repo/issues/12"]);
   // A line about another number is not this one's.
@@ -166,6 +178,24 @@ test("gh pr merge|close|ready|review|checks|diff N without -R: the repo gh's lin
   assert.equal(subj("Bash", { command: "GH_REPO=owner/other gh pr merge 36" }, "", at("owner/repo")).url, "https://github.com/owner/other/pull/36");
   assert.equal(subj("Bash", { command: "export GH_REPO=owner/other; gh pr view 36" }, undefined, at("owner/repo")).url, "https://github.com/owner/other/pull/36");
   assert.equal(subj("Bash", { command: "GH_REPO=ghe.example/owner/other gh pr merge 36" }, "").url, undefined, "another host's");
+});
+
+test("create, comment and edit: the first URL printed, of the number named; view: its own lines, of its number — never a later command's (87)", () => {
+  const shown = (s) => (s ? [s.label, s.title, s.url] : null);
+  const view12 = "title:\tGadget\nstate:\tOPEN\nnumber:\t12\nurl:\thttps://github.com/owner/x/pull/12\n--\nFollows up https://github.com/other/x/pull/36\n";
+  // The URL gh printed comes first; a later `gh pr view`'s url: line and its body's links are another PR's.
+  assert.deepEqual(shown(subj("Bash", { command: "gh pr comment 36 --body x && gh pr view 12 --comments" }, `https://github.com/owner/repo/pull/36#issuecomment-1\n${view12}`)), [
+    "#36",
+    undefined,
+    "https://github.com/owner/repo/pull/36#issuecomment-1",
+  ]);
+  assert.deepEqual(shown(subj("Bash", { command: 'gh pr create --title "Blink" --body x && gh pr view --comments' }, `https://github.com/owner/repo/pull/37\n${view12}`)), ["#37", undefined, "https://github.com/owner/repo/pull/37"]);
+  assert.deepEqual(shown(subj("Bash", { command: "gh pr edit --add-label x; gh pr view 12" }, `https://github.com/owner/repo/pull/36\n${view12}`)), ["#36", undefined, "https://github.com/owner/repo/pull/36"]);
+  // Of the number named, else nothing: the edit printed none, and the first is another command's.
+  assert.deepEqual(shown(subj("Bash", { command: "gh pr edit 36 --add-label x; gh pr view 12" }, view12)), ["#36", undefined, undefined]);
+  // A view's lines are its own number's: one that printed nothing leaves a later view's lines to that one.
+  assert.deepEqual(shown(subj("Bash", { command: "gh pr view 36; gh pr view 12" }, view12)), ["#36", undefined, undefined]);
+  assert.deepEqual(shown(subj("Bash", { command: "gh pr view 12 && gh pr view 36" }, view12)), ["#12", "Gadget", "https://github.com/owner/x/pull/12"]);
 });
 
 test("a gh that names no repo is #N alone, untitled and unlinked, after any history — where the shell was is never inferred (87)", () => {
