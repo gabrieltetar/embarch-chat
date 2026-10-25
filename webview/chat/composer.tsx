@@ -12,7 +12,9 @@
 // on a click, Ctrl+Z restores (37). The next keystroke cancels a stale call.
 // While the 💡 shows, the field holds the height of its tallest preview, so a
 // preview never moves the menu under the pointer; ↑/↓ focus a card and
-// preview it, Enter applies it, as IntelliSense does (86).
+// preview it, Enter or Tab applies it, as IntelliSense does — the pointer
+// only previews, so a menu opened under a still pointer never takes the
+// Enter meant to send (86).
 // After each turn, reply chips above the input (25). The 📚 beside the 💡
 // holds the library, one submenu per category (38).
 //
@@ -218,6 +220,9 @@ export function Composer(p: Props) {
   const measure = useRef<HTMLDivElement>(null);
   /** The field's height while the 💡 shows: its tallest preview's (86). */
   const held = useRef(0);
+  /** Measures `held` again for the draft and cards on screen (86). */
+  const measureNow = useRef<() => void>(() => {});
+  const field = useRef<HTMLDivElement>(null);
   /** The open menu's keys (86). */
   const menuKeys = useRef<MenuKeys["current"]>(null);
   const bulbBtn = useRef<HTMLButtonElement>(null);
@@ -268,14 +273,18 @@ export function Composer(p: Props) {
     setTyping(false);
   };
 
+  /** The input as tall as its text, the preview it shows, or the 💡's tallest preview (86), up to 40 % of the window. */
+  const fit = () => {
+    const el = ta.current;
+    if (!el) return;
+    el.style.height = "auto";
+    const want = Math.max(el.scrollHeight, overlay.current?.scrollHeight ?? 0, held.current);
+    el.style.height = `${Math.min(want + 2, window.innerHeight * 0.4)}px`;
+  };
+
   useEffect(() => {
     saveDraft(sid, text);
-    const el = ta.current;
-    if (el) {
-      el.style.height = "auto";
-      const want = Math.max(el.scrollHeight, overlay.current?.scrollHeight ?? 0, held.current);
-      el.style.height = `${Math.min(want + 2, window.innerHeight * 0.4)}px`;
-    }
+    fit();
   });
 
   useEffect(() => {
@@ -732,6 +741,14 @@ export function Composer(p: Props) {
       }
     }
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "z" && undo(e)) return;
+    // While a menu shows, Tab never takes the focus out of the input (86): a
+    // row the keys focused took it already (menus.tsx); else it takes the
+    // ghost text, as it did with no preview showing, or does nothing.
+    if (e.key === "Tab" && menuShown) {
+      e.preventDefault();
+      if (!e.shiftKey && ghostNow) acceptGhost(ghostNow);
+      return;
+    }
     if (e.key === "Tab" && !e.shiftKey && shown) {
       e.preventDefault();
       acceptGhost(shown);
@@ -818,9 +835,13 @@ export function Composer(p: Props) {
   // out once, as IntelliSense's widget is: when the 💡 opens, or its cards or
   // the draft change while it shows, each card's preview is measured, and the
   // field holds the tallest — the draft as it shows too — until it closes (86).
+  // A field of another width wraps each preview anew, so while the 💡 shows a
+  // change of the field's width — the panel or the window resized — measures
+  // again.
   const bulbShown = menu === "bulb" && menuShown;
   useLayoutEffect(() => {
     held.current = 0;
+    measureNow.current = () => {};
     const m = measure.current;
     if (!bulbShown || !m) return;
     const height = (parts: DiffPart[]) => {
@@ -835,18 +856,36 @@ export function Composer(p: Props) {
       );
       return m.scrollHeight;
     };
-    let h = height([{ t: "same", s: text }, ...(ghostNow ? [{ t: "add" as const, s: ghostNow }] : [])]);
-    for (const c of live) {
-      const next = applyEdit(text, c.edit);
-      if (next !== null) h = Math.max(h, height(wordDiff(text, next)));
-    }
-    m.replaceChildren();
-    held.current = h;
+    const run = () => {
+      let h = height([{ t: "same", s: text }, ...(ghostNow ? [{ t: "add" as const, s: ghostNow }] : [])]);
+      for (const c of live) {
+        const next = applyEdit(text, c.edit);
+        if (next !== null) h = Math.max(h, height(wordDiff(text, next)));
+      }
+      m.replaceChildren();
+      held.current = h;
+    };
+    measureNow.current = run;
+    run();
   }, [bulbShown, text, live, ghostNow]);
+  useEffect(() => {
+    const f = field.current;
+    if (!bulbShown || !f || typeof ResizeObserver === "undefined") return;
+    let width = f.clientWidth;
+    const ro = new ResizeObserver(() => {
+      // Its height moves with the input's own: only a new width wraps the previews anew.
+      if (f.clientWidth === width) return;
+      width = f.clientWidth;
+      measureNow.current();
+      fit();
+    });
+    ro.observe(f);
+    return () => ro.disconnect();
+  }, [bulbShown]);
 
   /**
-   * While a menu shows, ↑/↓ — and once a row is focused ←/→ and Enter — are
-   * its keys before the input's (86): after the @ and / list's, which owns
+   * While a menu shows, ↑/↓ — and once they focused a row ←/→, Enter and
+   * Tab — are its keys before the input's (86): after the @ and / list's, which owns
    * them while it shows. From the input or the composer's buttons, where the
    * focus is after a click on the 💡 or 📚.
    */
@@ -895,7 +934,7 @@ export function Composer(p: Props) {
           💬 Side question <span class="muted">· answered beside the chat · Esc leaves</span>
         </div>
       )}
-      <div class="field">
+      <div class="field" ref={field}>
         <div class="overlay" ref={overlay} aria-hidden="true">
           {after !== null ? (
             wordDiff(text, after).map((d, i) => (

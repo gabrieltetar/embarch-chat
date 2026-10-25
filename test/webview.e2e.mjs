@@ -1361,7 +1361,7 @@ await check("the 💡 by keyboard, as IntelliSense: ↓ focuses and previews a c
   assert.ok(!(await posts()).some((p) => p.t === "send"), "and nothing is sent");
   await type(CTRL_Z);
   assert.equal(await value(), draft, "Ctrl+Z restores the draft");
-  // A row the pointer focused is where the keys start; Esc closes.
+  // The keys start on the open category's first row, wherever the pointer is: here the one it opened; Esc closes.
   await click(".bulb");
   await settle();
   await hover(".menu.bulb .menu-cat", "Improvements");
@@ -1381,6 +1381,96 @@ await check("the 💡 by keyboard, as IntelliSense: ↓ focuses and previews a c
   assert.equal(lib.length, 1, "↓ focuses the first entry");
   await type(ENTER);
   assert.match(await value(), new RegExp(`^/embarch-chat:${lib[0].slice(1)} for this repo$`));
+});
+
+const inInput = () => exec("return document.activeElement === document.querySelector('.composer textarea')");
+
+await check("a 💡 the held send opens under a still pointer only previews the row there: the next Enter sends the draft as it is (26, 86)", async () => {
+  const ESC = "";
+  const draft = await openGrowing();
+  // The pointer parked where the menu's first row shows, then the menu closed under it.
+  await hover(".menu.bulb .menu-item", "Name the board");
+  assert.equal(await previewing(), true, "the pointer's row previews");
+  assert.deepEqual(await text(".menu.bulb .menu-item.on"), [], "but the keys focused nothing");
+  await type(ESC);
+  assert.equal((await text(".menu.bulb")).length, 0);
+  // A new word: Enter holds the draft for its cards (26), and their answer opens the 💡 where the pointer still is.
+  await type(" now");
+  await clearPosts();
+  await type(ENTER);
+  const ask = await waitAssist("cards");
+  assert.equal(ask.text, `${draft} now`);
+  assert.ok(!(await posts()).some((p) => p.t === "send"), "held for the cards");
+  await send([{ t: "cards", seq: ask.seq, cards: growCards() }]);
+  assert.equal((await text(".menu.bulb")).length, 1, "the 💡 opened");
+  // The browser entered the row under the still pointer, with no move: a preview, as IntelliSense's hover.
+  assert.deepEqual(await text(".menu.bulb .menu-item.hover .menu-item-label"), ["Name the board, port and log"], "entered with no move");
+  assert.deepEqual(await text(".menu.bulb .menu-item.on"), []);
+  await type(ENTER);
+  const sentP = (await posts()).filter((p) => p.t === "send");
+  assert.equal(sentP.length, 1, "Enter sent");
+  assert.equal(sentP[0].text, `${draft} now`, "the draft as it is, no card applied");
+  assert.equal(await value(), "");
+  // The 📚's disabled row under the pointer takes no Enter either.
+  await fresh({ slashCommands: ["compact", "notes"] });
+  await type("check the flash log");
+  await click(".library");
+  await settle();
+  await hover(".menu.library .menu-cat", "Bench");
+  await hover(".menu.library .menu-item");
+  assert.equal(await exec("return document.querySelector('.menu.library .menu-item.hover').classList.contains('disabled')"), true);
+  await clearPosts();
+  await type(ENTER);
+  assert.equal((await posts()).find((p) => p.t === "send")?.text, "check the flash log", "Enter sent the draft");
+});
+
+await check("Tab while a menu shows: it applies the row ↓ focused, takes the ghost text when none is, and never takes the focus out of the input (86)", async () => {
+  const DOWN = "";
+  const draft = await openGrowing();
+  // The pointer's row is a preview: Tab neither applies it nor leaves the input.
+  await hover(".menu.bulb .menu-item", "Name the board");
+  await type(TAB);
+  assert.equal(await value(), draft, "nothing applied");
+  assert.equal(await inInput(), true, "the focus stays in the input");
+  assert.equal(await previewing(), false, "the preview went back to the draft");
+  assert.equal((await text(".menu.bulb")).length, 1, "the menu stays");
+  await mouseAway();
+  // A row ↓ focused: Tab applies it, as Enter does.
+  await type(DOWN);
+  await type(TAB);
+  assert.equal(await value(), core.applyEdit(draft, growCards()[0].edit), "Tab applied the focused card");
+  assert.equal(await inInput(), true);
+  await type(CTRL_Z);
+  assert.equal(await value(), draft);
+  // No row focused and ghost text showing: Tab takes the ghost text, as it did with no preview (24).
+  await send([{ t: "prompts", items: [{ text: `${draft} twice over`, n: 3, lastMs: 1 }] }]);
+  await type(" ");
+  assert.equal(await ghostText(), "twice over");
+  await click(".bulb");
+  await settle();
+  assert.equal((await text(".menu.bulb")).length, 1);
+  await type(TAB);
+  assert.equal(await value(), `${draft} twice over`, "the ghost text taken");
+  assert.equal(await inInput(), true);
+});
+
+await check("a 💡 open while the panel narrows measures its previews again: a card that adds lines still moves nothing under the pointer (86)", async () => {
+  await openGrowing();
+  const wide = await rect(".composer .field");
+  await exec("document.querySelector('.composer').style.width = '250px'");
+  await settle();
+  const narrow = await rect(".composer .field");
+  assert.ok(narrow[2] < wide[2], `narrower: ${narrow} vs ${wide}`);
+  assert.ok(narrow[3] > wide[3], `the field taller, for the tallest preview wrapped anew: ${narrow} vs ${wide}`);
+  const menu = await rect(".menu.bulb");
+  await hover(".menu.bulb .menu-item", "Name the board");
+  assert.equal(await previewing(), true);
+  assert.deepEqual(await rect(".composer .field"), narrow, "the field already held it");
+  assert.deepEqual(await rect(".menu.bulb"), menu, "the menu never moved");
+  await mouseAway();
+  await exec("document.querySelector('.composer').style.width = ''");
+  await exec("document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape'}))");
+  await settle();
 });
 
 await check("the compact card adds /compact focus on: …; Enter sends the draft and the rest waits for the compaction", async () => {

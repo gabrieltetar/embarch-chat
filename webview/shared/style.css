@@ -1271,9 +1271,14 @@ details.thinking .md {
   padding: 3px 8px;
   cursor: pointer;
 }
-/* The focused row: the pointer's, or the one ↑/↓ moved to (86). */
-.menu-item.on {
+/* The pointer's row: a preview, never what Enter picks (86). */
+.menu-item.hover {
   background: var(--vscode-list-hoverBackground);
+}
+/* The row ↑/↓ moved to: what Enter and Tab pick, as IntelliSense's selection (86). */
+.menu-item.on {
+  background: var(--suggested);
+  color: var(--on-active);
 }
 .menu-item.disabled {
   opacity: 0.5;

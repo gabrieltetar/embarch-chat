@@ -3,14 +3,18 @@
 // `category:`. Categories on the left, the open one's items on the right;
 // a click picks an item.
 //
-// One row is focused at a time, as in IntelliSense (86): the pointer focuses
-// the row it enters, ↑/↓ move it within the open category and ←/→ to the
-// category before or after, Enter picks it, Esc closes. The caller hears which
-// row is focused (the 💡 previews its card in the draft, decision 37), and
-// nothing else: leaving a row for another swaps it, leaving the menu clears
-// it. The keys come through the input, which keeps the focus as an editor
-// does under its suggestions, so typing goes on; no row is focused when the
-// menu opens, so Enter still sends until ↑/↓ move in.
+// The keys focus a row, as in IntelliSense (86): ↑/↓ move it within the open
+// category and ←/→ to the category before or after, Enter or Tab picks it,
+// Esc closes. The pointer only previews, as IntelliSense's hover does: the
+// row it is over shows, but Enter and Tab never pick it — a menu that opens
+// under a still pointer (the held send's 💡, decision 26) gets a row entered
+// with no move, and the next Enter must still send as it is. The caller hears
+// which row shows (the 💡 previews its card in the draft, decision 37) — the
+// pointer's, else the keys' — and nothing else: leaving a row for another
+// swaps it, leaving the menu goes back to the keys' row. The keys come
+// through the input, which keeps the focus as an editor does under its
+// suggestions, so typing goes on; no row is focused when the menu opens, so
+// Enter still sends until ↑/↓ move in.
 
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 
@@ -48,8 +52,10 @@ const MODIFIERS = ["Shift", "Control", "Alt", "Meta", "AltGraph", "CapsLock"];
 
 export function CategoryMenu<T>({ kind, groups, onPick, onHover, onClose, anchor, keys }: Props<T>) {
   const [open, setOpen] = useState(groups[0]?.id ?? "");
-  /** The focused row's key. */
+  /** The row the keys focused: the one Enter and Tab pick. */
   const [on, setOn] = useState<string | null>(null);
+  /** The row under the pointer: previewed, never picked by a key (86). */
+  const [hover, setHover] = useState<string | null>(null);
   /** The last move was a key's: the focused row is scrolled into view. */
   const byKey = useRef(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -68,11 +74,20 @@ export function CategoryMenu<T>({ kind, groups, onPick, onHover, onClose, anchor
     };
   }, [anchor, onClose]);
   const cur = groups.find((g) => g.id === open) ?? groups[0];
+  const item = (k: string | null) => (k === null ? undefined : cur?.items.find((i) => i.key === k));
 
-  const focusRow = (it: MenuItem<T> | null, key = false) => {
-    byKey.current = key && it !== null;
+  /** The keys' row: the pointer's preview gives way to it, as the pointer stays where it is. */
+  const focusRow = (it: MenuItem<T> | null) => {
+    byKey.current = it !== null;
     setOn(it?.key ?? null);
+    setHover(null);
     onHover?.(it ? it.value : null);
+  };
+  /** The pointer's row, or none: what shows is it, else the keys' row. */
+  const point = (it: MenuItem<T> | null) => {
+    setHover(it?.key ?? null);
+    const shown = it ?? item(on);
+    onHover?.(shown ? shown.value : null);
   };
   const openGroup = (g: MenuGroup<T>) => {
     if (g.id === cur?.id) return;
@@ -80,8 +95,8 @@ export function CategoryMenu<T>({ kind, groups, onPick, onHover, onClose, anchor
     focusRow(null);
   };
 
-  // A focused row whose item went (the cards changed under it) is focused no more.
-  const stale = on !== null && !cur?.items.some((i) => i.key === on);
+  // A row whose item went (the cards changed under it) is focused, or pointed at, no more.
+  const stale = (on !== null && !item(on)) || (hover !== null && !item(hover));
   useEffect(() => {
     if (stale) focusRow(null);
   }, [stale]);
@@ -96,23 +111,27 @@ export function CategoryMenu<T>({ kind, groups, onPick, onHover, onClose, anchor
     const rows = cur.items.filter((i) => !i.disabled);
     const at = rows.findIndex((i) => i.key === on);
     if ((e.key === "ArrowDown" || e.key === "ArrowUp") && !e.shiftKey) {
-      // While the menu shows, ↑/↓ are its own, as under IntelliSense.
+      // While the menu shows, ↑/↓ are its own, as under IntelliSense; they start from the keys' row, never the pointer's.
       const n = rows.length;
       const down = e.key === "ArrowDown";
-      if (n) focusRow(rows[at < 0 ? (down ? 0 : n - 1) : (at + (down ? 1 : n - 1)) % n], true);
+      if (n) focusRow(rows[at < 0 ? (down ? 0 : n - 1) : (at + (down ? 1 : n - 1)) % n]);
       return true;
     }
-    if (on === null) return false;
+    // Only a row the keys reached takes ←/→, Enter and Tab: one the pointer is over, moved or still, is a preview (86).
+    const it = item(on);
+    if (!it || it.disabled) {
+      if (!MODIFIERS.includes(e.key)) focusRow(null);
+      return false;
+    }
     if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && !e.shiftKey) {
       const n = groups.length;
       const g = groups[(groups.indexOf(cur) + (e.key === "ArrowRight" ? 1 : n - 1)) % n];
       setOpen(g.id);
-      focusRow(g.items.find((i) => !i.disabled) ?? null, true);
+      focusRow(g.items.find((i) => !i.disabled) ?? null);
       return true;
     }
-    if (e.key === "Enter" && !e.shiftKey) {
-      const it = cur.items.find((i) => i.key === on);
-      if (it && !it.disabled) onPick(it.value);
+    if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey) {
+      onPick(it.value);
       return true;
     }
     // Any other key goes back to the draft: the focused row, and its preview, go.
@@ -132,7 +151,7 @@ export function CategoryMenu<T>({ kind, groups, onPick, onHover, onClose, anchor
 
   if (!cur) return null;
   return (
-    <div class={`menu ${kind}`} ref={ref} onMouseLeave={() => focusRow(null)}>
+    <div class={`menu ${kind}`} ref={ref} onMouseLeave={() => point(null)}>
       <div class="menu-cats">
         {groups.map((g) => (
           <div key={g.id} class={`menu-cat ${g.id === cur.id ? "on" : ""}`} onMouseEnter={() => openGroup(g)} onMouseDown={(e) => (e.preventDefault(), openGroup(g))}>
@@ -146,10 +165,10 @@ export function CategoryMenu<T>({ kind, groups, onPick, onHover, onClose, anchor
         {cur.items.map((it) => (
           <div
             key={it.key}
-            class={`menu-item ${it.disabled ? "disabled" : ""} ${it.key === on ? "on" : ""}`}
+            class={`menu-item ${it.disabled ? "disabled" : ""} ${it.key === on ? "on" : ""} ${it.key === hover ? "hover" : ""}`}
             title={it.title ?? it.detail}
             // No leave of its own (86): the next row's enter swaps the preview, the menu's leave ends it.
-            onMouseEnter={() => it.key !== on && focusRow(it)}
+            onMouseEnter={() => it.key !== hover && point(it)}
             onMouseDown={(e) => {
               e.preventDefault();
               if (!it.disabled) onPick(it.value);
