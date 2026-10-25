@@ -30,3 +30,5 @@ export * from "./views/page";
 export * from "../webview/chat/benchcard";
 export * from "../webview/chat/runs";
 export * from "../webview/chat/time";
+export * from "../webview/chat/refs";
+export * from "../webview/chat/subjects";

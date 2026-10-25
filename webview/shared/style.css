@@ -641,6 +641,62 @@ details.thinking .md {
   color: var(--muted);
   margin-right: auto;
 }
+/* What a step touched: its connector's glyph in the text's colour, the thing by name, a link (decision 87). */
+.tool .subject {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.tool .glyph {
+  flex: none;
+  align-self: center;
+  width: 1em;
+  height: 1em;
+}
+.tool .subject-link,
+.tool .subject-text {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35em;
+  min-width: 0;
+  overflow: hidden;
+}
+.tool .subject-key {
+  flex: none;
+  font-weight: 600;
+}
+.tool .subject-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tool .subject-out {
+  flex: none;
+  font-size: 0.9em;
+}
+.tool .name.tag {
+  font-weight: normal;
+  font-size: 0.85em;
+  color: var(--muted);
+  margin-right: auto;
+}
+.tool.run > .line .run-subjects {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+}
+.tool.run > .line .run-subjects .subject-key {
+  font-weight: normal;
+}
+.tool.run > .line .run-more {
+  font-size: 0.85em;
+  color: var(--muted);
+}
 /* A run of quiet steps as one row, headed by its latest (decision 50). */
 .tool.run > .line .chev {
   flex: none;
@@ -654,6 +710,8 @@ details.thinking .md {
   font-size: 0.85em;
   color: var(--muted);
   white-space: nowrap;
+  /* Right-aligned when no description or summary takes the row's room: a head that names what it touched. */
+  margin-left: auto;
 }
 .tool.run > .steps {
   margin: 4px 0 2px;

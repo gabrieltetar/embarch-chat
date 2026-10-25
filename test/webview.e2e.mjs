@@ -885,6 +885,76 @@ const realClick = async (el) => {
   await settle();
 };
 
+await check("a step that touches a connector shows its glyph and the thing by name, a link that opens once through the extension (decision 87)", async () => {
+  const DESK = "mcp__plugin_embarch-desk_embarch-desk__";
+  const issue = { key: "ABC-154", title: "Make the widget blink", url: "https://linear.app/acme/issue/ABC-154/make-the-widget-blink", state: "In Progress" };
+  await send([
+    snapshot(),
+    toolCall("toolu_s1", `${DESK}linear_get_issue`, { key: "ABC-154" }),
+    toolResult("toolu_s1", JSON.stringify(issue, null, 2)),
+  ]);
+  const row = await exec(
+    `const t = document.querySelector('.tool'); const s = t.querySelector('.subject'); const g = s && s.querySelector('svg.glyph');
+     return { glyph: g && g.getAttribute('class'), label: g && g.getAttribute('aria-label'), fill: g && g.querySelector('path').getAttribute('fill'),
+       glyphColor: g && getComputedStyle(g).color, lineColor: getComputedStyle(t.querySelector('.line')).color,
+       link: s.querySelector('.subject-link')?.textContent, tag: t.querySelector('.name.tag')?.textContent, hover: s.getAttribute('title'),
+       w: g && g.getBoundingClientRect().width, fontSize: parseFloat(getComputedStyle(s).fontSize) }`,
+  );
+  assert.equal(row.glyph, "glyph g-linear");
+  assert.equal(row.label, "Linear");
+  assert.equal(row.fill, "currentColor");
+  assert.equal(row.glyphColor, row.lineColor, "the glyph is drawn in the line's own colour, as a codicon is");
+  assert.ok(Math.abs(row.w - row.fontSize) < 1, `sized to the text: ${row.w} vs ${row.fontSize}`);
+  assert.equal(row.link, "ABC-154Make the widget blink↗");
+  assert.equal(row.tag, "linear_get_issue", "the tool name stays the muted tag");
+  assert.ok(row.hover.includes('{"key":"ABC-154"}'), `the raw input a hover away: ${row.hover}`);
+  const el = (await wd("POST", `${S}/elements`, { using: "css selector", value: ".tool .subject-link" }))[0];
+  await exec("window.__posts = []; window.__vscode = [];");
+  await realClick(el);
+  assert.deepEqual(await exec("return window.__vscode"), [], "VS Code's own handler opened nothing");
+  assert.deepEqual((await posts()).filter((p) => p.t === "openLink"), [{ t: "openLink", url: issue.url }], "opened once, in Linear");
+  assert.equal((await text(".tool .body")).length, 0, "the click opened the issue, not the row");
+  await shot("chat-subject");
+
+  // A URL from a tool's output on another host is shown, not linked.
+  await send([snapshot(), toolCall("toolu_s2", `${DESK}linear_get_issue`, { key: "ABC-155" }), toolResult("toolu_s2", JSON.stringify({ ...issue, key: "ABC-155", url: "https://linear.app.evil.example/x" }))]);
+  assert.equal((await text(".tool .subject-link")).length, 0);
+  assert.deepEqual(await text(".tool .subject-text"), ["ABC-155Make the widget blink"]);
+
+  // A folded run names what its other steps touched, each once, its head its own.
+  const view = "title:\tBlink\nstate:\tOPEN\nnumber:\t36\nurl:\thttps://github.com/owner/repo/pull/36\n--\nbody\n";
+  await send([
+    snapshot(),
+    toolCall("toolu_r1", `${DESK}linear_get_issue`, { key: "ABC-154" }),
+    toolResult("toolu_r1", JSON.stringify(issue)),
+    toolCall("toolu_r2", "Bash", { command: "gh pr view 36", description: "Read the PR" }),
+    toolResult("toolu_r2", view),
+    toolCall("toolu_r3", `${DESK}linear_get_issue`, { key: "ABC-154" }),
+    toolResult("toolu_r3", JSON.stringify(issue)),
+    toolCall("toolu_r4", "mcp__claude_ai_Slack__slack_read_channel", { channel_id: "C0123ABCD" }),
+    toolResult("toolu_r4", JSON.stringify({ messages: "Channel: general (C0123ABCD)\n\nhi", pagination_info: "" })),
+  ]);
+  const run = await exec(
+    `const r = document.querySelector('.tool.run > .line');
+     return { head: r.querySelector(':scope > .subject')?.textContent, glyphs: [...r.querySelectorAll('.run-subjects svg.glyph')].map(g => g.getAttribute('aria-label')),
+       names: [...r.querySelectorAll('.run-subjects .subject')].map(s => s.textContent), count: r.querySelector('.count').textContent,
+       colors: [...r.querySelectorAll('.subject-link')].map(a => getComputedStyle(a).color) }`,
+  );
+  assert.equal(run.colors.length, 3, "the head's and both listed things are links");
+  assert.equal(new Set(run.colors).size, 1, `all in the link colour: ${run.colors}`);
+  assert.equal(run.head, "#general↗");
+  assert.deepEqual(run.glyphs, ["Linear", "GitHub"]);
+  assert.deepEqual(run.names, ["ABC-154", "#36"]);
+  assert.equal(run.count, "4 steps");
+  const pr = (await wd("POST", `${S}/elements`, { using: "css selector", value: ".tool.run .run-subjects .subject-link" }))[1];
+  await exec("window.__posts = []; window.__vscode = [];");
+  await realClick(pr);
+  assert.deepEqual(await exec("return window.__vscode"), []);
+  assert.deepEqual((await posts()).filter((p) => p.t === "openLink"), [{ t: "openLink", url: "https://github.com/owner/repo/pull/36" }]);
+  assert.equal((await text(".tool.run > .steps")).length, 0, "the run stays folded");
+  await shot("chat-subject-run");
+});
+
 await check("no link has an href: VS Code's own handler never opens one, each opens once, and vscode:, mailto: and command: links are refused", async () => {
   const say = {
     t: "event",

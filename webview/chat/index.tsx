@@ -253,6 +253,10 @@ function App() {
   const turnRuns = !!state && (state.busy || state.compacting);
   const sid = state?.sessionId ?? "";
   const acts = !!model.view && !model.view.readOnly;
+  // What a step touched links into embarch-ui, and names the chat's own item from its card (decision 87).
+  const ui = model.view?.uiUrl ?? "";
+  const h = model.header;
+  const [ownId, ownTitle, ownKey, ownUrl] = [h?.itemId ?? null, h?.title ?? "", h?.issueKey, h?.issueUrl];
   const ctx: ToolCtx = useMemo(
     () => ({
       openLink: (url: string) => post({ t: "openLink", url }),
@@ -267,8 +271,10 @@ function App() {
             post({ t: "runInBackground", toolUseId });
           }
         : undefined,
+      subjects: { uiUrl: ui, own: h ? { itemId: ownId, title: ownTitle, issueKey: ownKey, issueUrl: ownUrl } : null },
     }),
-    [cwd, turnRuns, sid, acts],
+    // The card's fields, not the header object a desk poll replaces.
+    [cwd, turnRuns, sid, acts, ui, !!h, ownId, ownTitle, ownKey, ownUrl],
   );
 
   if (empty || !state || !model.view) {
