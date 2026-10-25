@@ -175,15 +175,19 @@ test("desk_* tools: the work item by its name, linking to its card on the Desk",
   assert.equal(core.stepSubject(step(`${DESK}desk_set_work_item`, {}, { item_id: "w12", title: "x" }), { uiUrl: "", own: null }).url, undefined, "no UI address, no link");
 });
 
-test("embarch-api tools: the study, else the board, linking into embarch-ui", () => {
+test("embarch-api tools: the study, else the board, linking into embarch-ui — a board by its role where the step named one, else by its board type (embarch-ui decision 58)", () => {
   const st = subj(`${API}run_study`, { study: {} }, { study_id: "st-42" });
   assert.deepEqual([st.connector, st.label, st.url], ["bench", "study st-42", `${UI}#live-study?study=st-42`]);
   assert.equal(subj(`${API}study_status`, { study_id: "st-42" }).id, "bench:study:st-42", "before its result too");
   const b = subj(`${API}build_and_flash`, { project: "fw" }, { success: true, build: { exit_code: 0, target: { board: "nrf54l15dk", app: "blinky" } } });
-  assert.deepEqual([b.label, b.url], ["nrf54l15dk", `${UI}#topology`]);
-  assert.equal(subj(`${API}mem_read`, { ranges: ["0x20000000"] }).label, "DUT");
-  assert.equal(subj(`${API}reset_dev_bench`, {}).label, "dev bench");
-  assert.equal(subj(`${API}set_role_board`, { role: "dut", board: "nrf54l15dk", chip: "nRF54L15" }).label, "nrf54l15dk");
+  assert.deepEqual([b.label, b.url], ["nrf54l15dk", `${UI}#topology?board=nrf54l15dk`]);
+  assert.equal(subj(`${API}build`, { board: "nrf54l15dk/nrf54l15/cpuapp" }).url, `${UI}#topology?board=nrf54l15dk%2Fnrf54l15%2Fcpuapp`, "encoded");
+  const mem = subj(`${API}mem_read`, { ranges: ["0x20000000"] });
+  assert.deepEqual([mem.label, mem.url], ["DUT", `${UI}#topology?board=dut`]);
+  const bench = subj(`${API}reset_dev_bench`, {});
+  assert.deepEqual([bench.label, bench.url], ["dev bench", `${UI}#topology?board=dev-bench`]);
+  const set = subj(`${API}set_role_board`, { role: "dut", board: "nrf54l15dk", chip: "nRF54L15" });
+  assert.deepEqual([set.label, set.url], ["nrf54l15dk", `${UI}#topology?board=dut`]);
   assert.equal(subj(`${API}declare_signal`, { name: "tx_done" }), null, "a signal's name is no board");
   assert.equal(subj(`${API}list_projects`, {}, "[]"), null);
 });

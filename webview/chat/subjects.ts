@@ -426,7 +426,7 @@ function bench(tool: string, input: Obj, result: string | undefined, env: Subjec
   const role = str(input.role) ?? (/(^dev_bench_|_dev_bench$)/.test(tool) ? "dev-bench" : tool === "mem_read" ? "dut" : undefined);
   // enroll_probe's `name` is what the board is called; another tool's is a signal's or a tap's.
   const label = str(input.board) ?? str(target?.board) ?? (tool === "enroll_probe" ? str(input.name) : undefined) ?? (role ? (ROLE[role] ?? role) : undefined);
-  return label ? { connector: "bench", label, url: uiLink(env, "topology"), where: "Topology", id: `bench:board:${label}` } : null;
+  return label ? { connector: "bench", label, url: uiLink(env, `topology?board=${encodeURIComponent(role ?? label)}`), where: "Topology", id: `bench:board:${label}` } : null;
 }
 
 // ------------------------------------------------------------ a step, a run
