@@ -77,6 +77,14 @@ test("a replace edit puts its text in as written, at the first whole word it nam
   assert.equal(core.applyEdit("check the PRs list", { op: "replace", find: "the PR", with: "PR #36" }), "check PR #36s list", "no whole one: the first");
   assert.equal(core.applyEdit("rethe PR and the PR", { op: "replace", find: "the PR", with: "X" }), "rethe PR and X");
   assert.equal(core.applyEdit("see (the PR) now", { op: "replace", find: "(the PR)", with: "X" }), "see X now", "punctuation at its ends is its own edge");
+  // A combining mark is part of its word: "cafe" is not the start of "café" written as e + U+0301.
+  assert.equal(core.applyEdit("the cafe\u0301 menu, then the cafe", { op: "replace", find: "cafe", with: "X" }), "the cafe\u0301 menu, then the X");
+  assert.equal(core.applyEdit("the cafe\u0301s and the cafe\u0301", { op: "replace", find: "cafe\u0301", with: "X" }), "the cafe\u0301s and the X", "a phrase that ends in a mark");
+  // An astral letter is a letter, read as one code point, not two halves: at either end of the draft's match or the phrase.
+  assert.equal(core.applyEdit("\u{1D400}bc then bc", { op: "replace", find: "bc", with: "X" }), "\u{1D400}bc then X");
+  assert.equal(core.applyEdit("bc\u{1D400} then bc", { op: "replace", find: "bc", with: "X" }), "bc\u{1D400} then X");
+  assert.equal(core.applyEdit("x\u{1D400}b, \u{1D400}b", { op: "replace", find: "\u{1D400}b", with: "X" }), "x\u{1D400}b, X", "a phrase that starts with one");
+  assert.equal(core.applyEdit("b\u{1D400}x, b\u{1D400}", { op: "replace", find: "b\u{1D400}", with: "X" }), "b\u{1D400}x, X", "a phrase that ends with one");
 });
 
 test("the preview is a word diff: added words, removed words, the rest as is", () => {

@@ -84,21 +84,27 @@ export function contextEdit(kind: ContextKind, focus: string): DraftEdit {
 
 // ------------------------------------------------------------ applying
 
-const WORD = /[\p{L}\p{N}_]/u;
+/** A word's character, a whole code point: a letter — an astral one too — a combining mark, a digit, `_`. */
+const WORD = /^[\p{L}\p{M}\p{N}_]$/u;
+/** Whether the code point starting at `i` is a word's. */
+const wordAt = (s: string, i: number) => i < s.length && WORD.test(String.fromCodePoint(s.codePointAt(i)!));
+/** Whether the code point ending at `i` is a word's. */
+const wordBefore = (s: string, i: number) => i > 0 && WORD.test(Array.from(s.slice(Math.max(0, i - 2), i)).pop()!);
 
 /**
  * Where a replace edit's text is in the draft: its first whole-word
- * occurrence — "the PR" in "check the PRs list, then the PR" is the second —
+ * occurrence — "the PR" in "check the PRs list, then the PR" is the second,
+ * "cafe" is never the start of "café" written with a combining accent —
  * else its first at all; -1 when it is gone.
  */
 export function findAt(draft: string, find: string): number {
   const first = draft.indexOf(find);
   if (first < 0) return -1;
-  const startsWord = WORD.test(find[0]);
-  const endsWord = WORD.test(find[find.length - 1]);
+  const startsWord = wordAt(find, 0);
+  const endsWord = wordBefore(find, find.length);
   for (let at = first; at >= 0; at = draft.indexOf(find, at + 1)) {
-    const before = at > 0 && startsWord && WORD.test(draft[at - 1]);
-    const after = at + find.length < draft.length && endsWord && WORD.test(draft[at + find.length]);
+    const before = startsWord && wordBefore(draft, at);
+    const after = endsWord && wordAt(draft, at + find.length);
     if (!before && !after) return at;
   }
   return first;
