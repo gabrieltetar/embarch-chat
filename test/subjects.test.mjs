@@ -266,7 +266,7 @@ test("the chat's folder's GitHub repo: from its git config, github.com only, pic
   }
 });
 
-test("the chat's folder's GitHub repo never hangs the extension host: a FIFO or a device where a git file should be is none, and no read takes more than 64 KB (87)", () => {
+test("the chat's folder's GitHub repo never hangs the extension host: a FIFO or a device where a git file should be is none, and so is a git file past 64 KB (87, 88)", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "embarch-chat-ghfifo-"));
   const conf = "[core]\n\tbare = false\n[remote \"origin\"]\n\turl = git@github.com:owner/repo.git\n";
   try {
@@ -288,16 +288,20 @@ test("the chat's folder's GitHub repo never hangs the extension host: a FIFO or 
     const dev = path.join(root, "dev");
     fs.mkdirSync(path.join(dev, ".git"), { recursive: true });
     fs.symlinkSync("/dev/zero", path.join(dev, ".git", "config"));
-    // A config past 64 KB: what fits is read, a line cut short is not.
+    // A config past 64 KB is none: its first 64 KB pick origin, the whole file the upstream past them. One that fits is
+    // read whole: upstream, as gh picks.
     const big = path.join(root, "big");
-    fs.mkdirSync(path.join(big, ".git"), { recursive: true });
-    fs.writeFileSync(path.join(big, ".git", "config"), `${conf}${"# filler line\n".repeat(6000)}[remote "upstream"]\n\turl = git@github.com:other/repo.git\n`);
+    const fits = path.join(root, "fits");
+    for (const [d, lines] of [[big, 6000], [fits, 4000]]) {
+      fs.mkdirSync(path.join(d, ".git"), { recursive: true });
+      fs.writeFileSync(path.join(d, ".git", "config"), `${conf}${"# filler line\n".repeat(lines)}[remote "upstream"]\n\turl = git@github.com:other/repo.git\n`);
+    }
     // In a child, so a read that blocks fails the test instead of hanging the run.
-    const probe = `const core = require(${JSON.stringify(path.resolve("test-out/core.js"))}); process.stdout.write(JSON.stringify(${JSON.stringify([a, wt, c, big, dev])}.map((d) => core.githubRepo(d))));`;
+    const probe = `const core = require(${JSON.stringify(path.resolve("test-out/core.js"))}); process.stdout.write(JSON.stringify(${JSON.stringify([a, wt, c, big, fits, dev])}.map((d) => core.githubRepo(d))));`;
     const r = spawnSync(process.execPath, ["-e", probe], { timeout: 5000, encoding: "utf8" });
     assert.equal(r.signal, null, "githubRepo returned instead of blocking on a FIFO");
     // A FIFO commondir: the worktree's own git dir has no config, so no repo — never a hang.
-    assert.deepEqual(JSON.parse(r.stdout), [null, null, null, "owner/repo", null]);
+    assert.deepEqual(JSON.parse(r.stdout), [null, null, null, null, "other/repo", null]);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

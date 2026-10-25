@@ -9,8 +9,9 @@
 // github.com only: another host's repo is no link of ours. None, or one that
 // cannot be read, is null, and a PR named without its repo stays unlinked.
 // It runs on the extension host, so a file it reads must not hold it up: a
-// FIFO, a device or a huge file where `.git`, `commondir` or the config
-// should be is read as none, and no read takes more than 64 KB.
+// FIFO, a device or a file past 64 KB where `.git`, `commondir` or the
+// config should be is read as none — a config's first 64 KB could pick
+// another remote than the whole, as a late `[remote "upstream"]` would.
 
 import * as fs from "fs";
 import * as path from "path";
@@ -77,10 +78,10 @@ export function pickGithubRepo(remotes: Remote[]): string | null {
 const CAP = 64 * 1024;
 
 /**
- * A regular file's text, at most `CAP` bytes of it (a last line cut short is
- * left out), and its stat; null for anything else. Opened without blocking
- * and checked on the open file, so a FIFO swapped in after a stat cannot
- * hang the extension host on its read.
+ * A regular file's text and its stat, when it is at most `CAP` bytes; null
+ * for anything else — a FIFO, a device, a file past `CAP`, whose part is not
+ * the file. Opened without blocking and checked on the open file, so a FIFO
+ * swapped in after a stat cannot hang the extension host on its read.
  */
 function readSmall(file: string): { text: string; st: fs.Stats } | null {
   let fd: number;
@@ -91,17 +92,16 @@ function readSmall(file: string): { text: string; st: fs.Stats } | null {
   }
   try {
     const st = fs.fstatSync(fd);
-    if (!st.isFile()) return null;
-    const buf = Buffer.alloc(Math.min(st.size, CAP));
+    if (!st.isFile() || st.size > CAP) return null;
+    // A byte past the most it takes: a file grown past it since the stat is cut too.
+    const buf = Buffer.alloc(CAP + 1);
     let got = 0;
     while (got < buf.length) {
       const n = fs.readSync(fd, buf, got, buf.length - got, got);
       if (n <= 0) break;
       got += n;
     }
-    let text = buf.subarray(0, got).toString("utf8");
-    if (st.size > CAP) text = text.slice(0, text.lastIndexOf("\n") + 1);
-    return { text, st };
+    return got > CAP ? null : { text: buf.subarray(0, got).toString("utf8"), st };
   } catch {
     return null;
   } finally {
