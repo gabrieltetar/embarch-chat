@@ -1073,6 +1073,12 @@ details.thinking .md {
   z-index: 1;
   color: var(--vscode-input-foreground);
 }
+/* The overlay's twin that measures each card's preview while the 💡 shows
+   (86): the same box and wrapping, sized by its text, never seen. */
+.composer .overlay.measure {
+  bottom: auto;
+  visibility: hidden;
+}
 .overlay .mirror {
   color: transparent;
 }
@@ -1207,7 +1213,8 @@ details.thinking .md {
   padding: 3px 8px;
   cursor: pointer;
 }
-.menu-item:hover {
+/* The focused row: the pointer's, or the one ↑/↓ moved to (86). */
+.menu-item.on {
   background: var(--vscode-list-hoverBackground);
 }
 .menu-item.disabled {

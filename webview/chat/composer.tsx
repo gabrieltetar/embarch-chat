@@ -10,6 +10,9 @@
 // its cards behind the 💡 (38), each an edit to the draft previewed in place
 // on hover — added words in ghost grey, removed ones struck through — applied
 // on a click, Ctrl+Z restores (37). The next keystroke cancels a stale call.
+// While the 💡 shows, the field holds the height of its tallest preview, so a
+// preview never moves the menu under the pointer; ↑/↓ focus a card and
+// preview it, Enter applies it, as IntelliSense does (86).
 // After each turn, reply chips above the input (25). The 📚 beside the 💡
 // holds the library, one submenu per category (38).
 //
@@ -26,8 +29,8 @@
 // A terminal picked from the @ list is a chip too: its output is read when
 // the message goes (58).
 
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import type { Card, Chip, PastPrompt } from "../../src/assistant/edits";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
+import type { Card, Chip, DiffPart, PastPrompt } from "../../src/assistant/edits";
 import { CATEGORIES, applyEdit, ghostRest, prefixMatch, wordDiff } from "../../src/assistant/edits";
 import type { LibraryEntry } from "../../src/library/entries";
 import { byCategory, invocation } from "../../src/library/entries";
@@ -37,7 +40,7 @@ import { IMAGE_TYPES, looksBinary, pasteToMark, pastesIn, rememberPaste, stripIn
 import type { HostToChat, MentionItem, TerminalRef } from "../shared/protocol";
 import { MODES } from "../shared/protocol";
 import { vscodeApi } from "../shared/vscode";
-import { CategoryMenu, MenuGroup } from "./menus";
+import { CategoryMenu, MenuGroup, MenuKeys } from "./menus";
 
 const post = (m: unknown) => vscodeApi.postMessage(m);
 
@@ -211,6 +214,12 @@ export function Composer(p: Props) {
   const [notice, setNotice] = useState<string | null>(null);
   const ta = useRef<HTMLTextAreaElement>(null);
   const overlay = useRef<HTMLDivElement>(null);
+  /** The overlay's twin, out of sight: what each card's preview would take (86). */
+  const measure = useRef<HTMLDivElement>(null);
+  /** The field's height while the 💡 shows: its tallest preview's (86). */
+  const held = useRef(0);
+  /** The open menu's keys (86). */
+  const menuKeys = useRef<MenuKeys["current"]>(null);
   const bulbBtn = useRef<HTMLButtonElement>(null);
   const libBtn = useRef<HTMLButtonElement>(null);
   const mentionTimer = useRef<number>(0);
@@ -264,7 +273,7 @@ export function Composer(p: Props) {
     const el = ta.current;
     if (el) {
       el.style.height = "auto";
-      const want = Math.max(el.scrollHeight, overlay.current?.scrollHeight ?? 0);
+      const want = Math.max(el.scrollHeight, overlay.current?.scrollHeight ?? 0, held.current);
       el.style.height = `${Math.min(want + 2, window.innerHeight * 0.4)}px`;
     }
   });
@@ -763,7 +772,9 @@ export function Composer(p: Props) {
     ta.current?.focus();
   };
 
-  const shown = ghost && atEnd && !pop && !preview ? ghostRest(text, ghost.base, ghost.completion) : null;
+  /** The ghost text the draft shows, or would but for a card's preview. */
+  const ghostNow = ghost && atEnd && !pop ? ghostRest(text, ghost.base, ghost.completion) : null;
+  const shown = preview ? null : ghostNow;
   const edKey = useMemo(() => (p.editor ? editorKey(p.editor) : null), [p.editor]);
   const edChip = p.editor && edKey !== dismissed ? p.editor : null;
   const edSent = edKey !== null && editorSent[sid] === edKey;
@@ -801,9 +812,57 @@ export function Composer(p: Props) {
     setPreview(null);
   }, [menu, menuShown]);
 
+  // The 💡's preview grows the draft, and the menu sits on the composer's top
+  // edge: a row under a still pointer would move away, its preview end, the
+  // draft shrink and the row come back, over and over. So the field is laid
+  // out once, as IntelliSense's widget is: when the 💡 opens, or its cards or
+  // the draft change while it shows, each card's preview is measured, and the
+  // field holds the tallest — the draft as it shows too — until it closes (86).
+  const bulbShown = menu === "bulb" && menuShown;
+  useLayoutEffect(() => {
+    held.current = 0;
+    const m = measure.current;
+    if (!bulbShown || !m) return;
+    const height = (parts: DiffPart[]) => {
+      m.replaceChildren(
+        ...parts.map((d) => {
+          const span = document.createElement("span");
+          span.className = d.t;
+          span.textContent = d.s;
+          return span;
+        }),
+        "\u200b",
+      );
+      return m.scrollHeight;
+    };
+    let h = height([{ t: "same", s: text }, ...(ghostNow ? [{ t: "add" as const, s: ghostNow }] : [])]);
+    for (const c of live) {
+      const next = applyEdit(text, c.edit);
+      if (next !== null) h = Math.max(h, height(wordDiff(text, next)));
+    }
+    m.replaceChildren();
+    held.current = h;
+  }, [bulbShown, text, live, ghostNow]);
+
+  /**
+   * While a menu shows, ↑/↓ — and once a row is focused ←/→ and Enter — are
+   * its keys before the input's (86): after the @ and / list's, which owns
+   * them while it shows. From the input or the composer's buttons, where the
+   * focus is after a click on the 💡 or 📚.
+   */
+  const menuFirst = (e: KeyboardEvent) => {
+    if (!menuShown || !menuKeys.current || (pop && pop.items.length)) return;
+    if (!(e.target === ta.current || e.target instanceof HTMLButtonElement)) return;
+    if (menuKeys.current(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  };
+
   return (
     <div
       class="composer"
+      onKeyDownCapture={menuFirst}
       onFocusOut={(e) => {
         // Leaving the input, not moving within it (the 💡, a chip), ends the typing (55).
         const to = e.relatedTarget;
@@ -829,8 +888,8 @@ export function Composer(p: Props) {
           ))}
         </div>
       )}
-      {menu === "bulb" && bulbGroups.length > 0 && <CategoryMenu kind="bulb" groups={bulbGroups} anchor={bulbBtn.current} onPick={applyCard} onHover={setPreview} onClose={() => (setMenu(null), setPreview(null))} />}
-      {menu === "library" && libGroups.length > 0 && <CategoryMenu kind="library" groups={libGroups} anchor={libBtn.current} onPick={pickEntry} onClose={() => setMenu(null)} />}
+      {menu === "bulb" && bulbGroups.length > 0 && <CategoryMenu kind="bulb" groups={bulbGroups} anchor={bulbBtn.current} keys={menuKeys} onPick={applyCard} onHover={setPreview} onClose={() => (setMenu(null), setPreview(null))} />}
+      {menu === "library" && libGroups.length > 0 && <CategoryMenu kind="library" groups={libGroups} anchor={libBtn.current} keys={menuKeys} onPick={pickEntry} onClose={() => setMenu(null)} />}
       {aside && (
         <div class="aside-tag" title="Enter asks Claude aside: the answer shows above, and neither joins the conversation. Esc or 💬 leaves, the draft kept.">
           💬 Side question <span class="muted">· answered beside the chat · Esc leaves</span>
@@ -888,6 +947,7 @@ export function Composer(p: Props) {
           }}
           onBlur={() => setTimeout(() => setPop(null), 150)}
         />
+        <div class="overlay measure" ref={measure} aria-hidden="true" />
       </div>
       {notice && <div class="paste-notice muted">{notice}</div>}
       {(images.length > 0 || edChip || terminals.length > 0) && (

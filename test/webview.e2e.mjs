@@ -1169,6 +1169,108 @@ await check("the 💡 lights with Haiku's cards; hovering a card previews its ed
   assert.equal(await value(), "fix the flash thing", "Ctrl+Z restores the draft");
 });
 
+/** Cards whose edits grow the draft by lines, two categories: the menu's layout and keys (86). */
+const TALL = "\n\nBoard: the dev bench, its first link port.\nPort: the one it enumerates as after a reset.\nLog: the last flash output, whole.";
+const growCards = () => [
+  { id: "g1", category: "missing", title: "Name the board, port and log", why: "Claude will ask which", edit: { op: "append", text: TALL } },
+  { id: "g2", category: "improve", title: "Say what done looks like", why: "So it knows when to stop", edit: { op: "append", text: "Done when it boots and logs once." } },
+];
+/** The 💡 menu open on cards that grow the draft. */
+const openGrowing = async () => {
+  await fresh();
+  const draft = "flash the new build and check it boots";
+  await exec("const t=document.querySelector('.composer textarea'); t.value=arguments[0]; t.dispatchEvent(new Event('input', {bubbles:true}))", [draft]);
+  const ask = await waitAssist("cards");
+  await send([{ t: "cards", seq: ask.seq, cards: growCards() }]);
+  await click(".bulb");
+  await settle();
+  return draft;
+};
+const previewing = () => exec("return document.querySelector('.composer textarea').classList.contains('previewing')");
+const rect = (sel) => exec("const r=document.querySelector(arguments[0]).getBoundingClientRect(); return [r.left, r.top, r.width, r.height].map(Math.round)", [sel]);
+
+await check("hovering a card whose edit adds lines moves nothing under the pointer: the menu stays put and the preview stays on (86)", async () => {
+  await openGrowing();
+  const before = await rect(".menu.bulb");
+  const field = await rect(".composer .field");
+  await hover(".menu.bulb .menu-item", "Name the board");
+  // The pointer stays still for half a second: every frame the menu is where it was, and the preview never toggles.
+  const seen = await wd("POST", `${S}/execute/async`, {
+    script: `const done = arguments[0]; const ta = document.querySelector('.composer textarea'); let flips = 0;
+      const mo = new MutationObserver(() => flips++); mo.observe(ta, { attributes: true, attributeFilter: ['class'] });
+      const rects = new Set(), off = []; const t0 = performance.now();
+      const tick = () => { const r = document.querySelector('.menu.bulb')?.getBoundingClientRect();
+        rects.add(r ? [r.left, r.top, r.width, r.height].map(Math.round).join(',') : 'gone');
+        if (!ta.classList.contains('previewing')) off.push(Math.round(performance.now() - t0));
+        if (performance.now() - t0 < 500) requestAnimationFrame(tick); else { mo.disconnect(); done({ flips, rects: [...rects], off }); } };
+      requestAnimationFrame(tick);`,
+    args: [],
+  });
+  assert.deepEqual(seen.off, [], "the preview stays on");
+  assert.equal(seen.flips, 0, "no toggling");
+  assert.deepEqual(seen.rects, [before.join(",")], "the menu never moves");
+  assert.match(await exec("return [...document.querySelectorAll('.overlay .add')].map(e=>e.textContent).join('')"), /Log: the last flash output/);
+  assert.deepEqual(await rect(".composer .field"), field, "the field was already as tall as the tallest preview");
+  await shot("assist-card-preview-tall");
+  // Leaving the menu ends the preview; the field keeps its height while the menu is open.
+  await mouseAway();
+  assert.equal(await previewing(), false);
+  assert.deepEqual(await rect(".menu.bulb"), before);
+  // Closed, the field is the draft's own height again.
+  await exec("document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape'}))");
+  await settle();
+  assert.ok((await rect(".composer .field"))[3] < field[3], "the reserved height goes with the menu");
+});
+
+await check("the 💡 by keyboard, as IntelliSense: ↓ focuses and previews a card, → the next category, Enter applies, Ctrl+Z restores (37, 86)", async () => {
+  const DOWN = "\uE015", UP = "\uE013", LEFT = "\uE012", RIGHT = "\uE014", ESC = "\uE00C";
+  const draft = await openGrowing();
+  const on = () => text(".menu.bulb .menu-item.on .menu-item-label");
+  assert.deepEqual(await on(), [], "no row is focused when it opens: Enter would still send");
+  await type(LEFT);
+  assert.equal(await exec("return document.querySelector('.composer textarea').selectionStart"), draft.length - 1, "← moves the caret while no row is focused");
+  assert.equal(await previewing(), false);
+  await type(DOWN);
+  assert.deepEqual(await on(), ["Name the board, port and log"]);
+  assert.equal(await previewing(), true, "the focused row previews");
+  assert.match(await exec("return [...document.querySelectorAll('.overlay .add')].map(e=>e.textContent).join('')"), /Board: the dev bench/);
+  assert.equal(await value(), draft, "nothing applied by a focus");
+  await type(RIGHT);
+  assert.deepEqual(await text(".menu.bulb .menu-cat.on .menu-label"), ["Improvements"]);
+  assert.deepEqual(await on(), ["Say what done looks like"], "→ opens the next category on its first row");
+  assert.match(await exec("return [...document.querySelectorAll('.overlay .add')].map(e=>e.textContent).join('')"), /Done when it boots/);
+  await type(LEFT);
+  await type(UP);
+  assert.deepEqual(await on(), ["Name the board, port and log"], "← back, ↑ wraps within the category");
+  await clearPosts();
+  await type(ENTER);
+  assert.equal(await value(), core.applyEdit(draft, growCards()[0].edit), "Enter applies the focused card");
+  assert.equal((await text(".menu.bulb")).length, 0, "the menu closes");
+  assert.ok(!(await posts()).some((p) => p.t === "send"), "and nothing is sent");
+  await type(CTRL_Z);
+  assert.equal(await value(), draft, "Ctrl+Z restores the draft");
+  // A row the pointer focused is where the keys start; Esc closes.
+  await click(".bulb");
+  await settle();
+  await hover(".menu.bulb .menu-cat", "Improvements");
+  await hover(".menu.bulb .menu-item", "Say what done looks like");
+  await type(DOWN);
+  assert.deepEqual(await on(), ["Say what done looks like"], "one row in the category: ↓ stays on it");
+  await type(ESC);
+  assert.equal((await text(".menu.bulb")).length, 0);
+  assert.equal(await previewing(), false);
+  // The 📚 shares the menu: ↓ and Enter put an entry at the head of the draft.
+  await fresh({ slashCommands: [] });
+  await type("for this repo");
+  await click(".library");
+  await settle();
+  await type(DOWN);
+  const lib = await text(".menu.library .menu-item.on .menu-item-label");
+  assert.equal(lib.length, 1, "↓ focuses the first entry");
+  await type(ENTER);
+  assert.match(await value(), new RegExp(`^/embarch-chat:${lib[0].slice(1)} for this repo$`));
+});
+
 await check("the compact card adds /compact focus on: …; Enter sends the draft and the rest waits for the compaction", async () => {
   const draft = "the widget is done. next, move on to the UART driver: add a ring buffer for RX and a test for it";
   const sid = await fresh({ context: { totalTokens: 136000, maxTokens: 200000, percentage: 68, categories: [] } });
