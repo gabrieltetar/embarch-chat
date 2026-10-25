@@ -7,6 +7,9 @@
 // marked, else the first of upstream, github, origin, then the rest by name.
 // github.com only: another host's repo is no link of ours. None, or one that
 // cannot be read, is null, and a PR named without its repo stays unlinked.
+// It runs on the extension host, so a file it reads must not hold it up: a
+// FIFO, a device or a huge file where `.git`, `commondir` or the config
+// should be is read as none, and no read takes more than 64 KB.
 
 import * as fs from "fs";
 import * as path from "path";
@@ -69,6 +72,42 @@ export function pickGithubRepo(remotes: Remote[]): string | null {
   return null;
 }
 
+/** The most a git file is read for: a config, a worktree's `.git` file, a `commondir`. */
+const CAP = 64 * 1024;
+
+/**
+ * A regular file's text, at most `CAP` bytes of it (a last line cut short is
+ * left out), and its stat; null for anything else. Opened without blocking
+ * and checked on the open file, so a FIFO swapped in after a stat cannot
+ * hang the extension host on its read.
+ */
+function readSmall(file: string): { text: string; st: fs.Stats } | null {
+  let fd: number;
+  try {
+    fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0));
+  } catch {
+    return null;
+  }
+  try {
+    const st = fs.fstatSync(fd);
+    if (!st.isFile()) return null;
+    const buf = Buffer.alloc(Math.min(st.size, CAP));
+    let got = 0;
+    while (got < buf.length) {
+      const n = fs.readSync(fd, buf, got, buf.length - got, got);
+      if (n <= 0) break;
+      got += n;
+    }
+    let text = buf.subarray(0, got).toString("utf8");
+    if (st.size > CAP) text = text.slice(0, text.lastIndexOf("\n") + 1);
+    return { text, st };
+  } catch {
+    return null;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 /** The config file of the repo `cwd` is in: a worktree's `.git` file points at its git dir, whose `commondir` holds it. */
 function configOf(cwd: string): string | null {
   let d = path.resolve(cwd);
@@ -82,16 +121,12 @@ function configOf(cwd: string): string | null {
     }
     if (st?.isDirectory()) return path.join(dotgit, "config");
     if (st?.isFile()) {
-      const m = /^gitdir:\s*(.+)$/m.exec(fs.readFileSync(dotgit, "utf8"));
+      const m = /^gitdir:\s*(.+)$/m.exec(readSmall(dotgit)?.text ?? "");
       if (!m) return null;
       const gitdir = path.resolve(d, m[1].trim());
-      let common = gitdir;
-      try {
-        common = path.resolve(gitdir, fs.readFileSync(path.join(gitdir, "commondir"), "utf8").trim());
-      } catch {
-        /* a plain git dir */
-      }
-      return path.join(common, "config");
+      // None, or not a file: a plain git dir.
+      const common = readSmall(path.join(gitdir, "commondir"))?.text.trim();
+      return path.join(common ? path.resolve(gitdir, common) : gitdir, "config");
     }
     const up = path.dirname(d);
     if (up === d) return null;
@@ -110,10 +145,13 @@ export function githubRepo(cwd: string): string | null {
     const config = configOf(cwd);
     if (!config) return null;
     const st = fs.statSync(config);
+    if (!st.isFile()) return null;
     const hit = read.get(config);
     if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.repo;
-    const repo = pickGithubRepo(parseRemotes(fs.readFileSync(config, "utf8")));
-    read.set(config, { mtimeMs: st.mtimeMs, size: st.size, repo });
+    const got = readSmall(config);
+    if (!got) return null;
+    const repo = pickGithubRepo(parseRemotes(got.text));
+    read.set(config, { mtimeMs: got.st.mtimeMs, size: got.st.size, repo });
     return repo;
   } catch {
     return null;
