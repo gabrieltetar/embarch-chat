@@ -962,20 +962,28 @@ await check("a key or PR in Claude's prose is a link once the desk's index knows
     t: "event",
     e: {
       type: "assistant",
-      message: { id: "m-refs", content: [{ type: "text", text: "Done in ABC-154, merged as owner/repo#36; #36 alone is two PRs, ABC-999 none, `ABC-154` code and **ABC-154** bold." }] },
+      message: { id: "m-refs", content: [{ type: "text", text: "Done in ABC-154, merged as owner/repo#36; #36 alone is two PRs, ABC-999 none, `ABC-154` code and **ABC-154** bold. Then PR #38, after step #3." }] },
       parent_tool_use_id: null,
     },
   };
-  await send([{ t: "refs", refs: null }, snapshot(), toolCall("toolu_x1", `${DESK}linear_set_status`, { key: "ABC-154", state: "Done" }), toolResult("toolu_x1", JSON.stringify({ key: "ABC-154", state: "Done" })), say]);
+  const merge = [toolCall("toolu_x2", "Bash", { command: "gh pr merge 38 --squash", description: "Merge it" }), toolResult("toolu_x2", "")];
+  await send([{ t: "refs", refs: null }, snapshot(), toolCall("toolu_x1", `${DESK}linear_set_status`, { key: "ABC-154", state: "Done" }), toolResult("toolu_x1", JSON.stringify({ key: "ABC-154", state: "Done" })), ...merge, say]);
   assert.equal((await text(".md a.ref")).length, 0, "no index, no links");
-  assert.deepEqual(await text(".tool .subject-text"), ["ABC-154"], "the step names the key alone");
+  assert.deepEqual(await text(".tool .subject-text"), ["#38", "ABC-154"], "the run's head and the step before it name the number and the key alone");
   // The index arrives: the rows already drawn are drawn again.
   await send([{ t: "refs", refs: { issues: INDEX.issues, prs: INDEX.prs } }]);
-  assert.deepEqual(await text(".md a.ref"), ["ABC-154", "owner/repo#36", "ABC-154"], "known keys and owner/repo#N, bold too; #36 two repos share stays text");
+  assert.deepEqual(await text(".md a.ref"), ["ABC-154", "owner/repo#36", "ABC-154"], "known keys and owner/repo#N, bold too; a bare #36, and PR #38 with no repo known, stay text");
   const md = (await text(".reply .md"))[0];
-  assert.ok(md.includes("ABC-999 none") && md.includes("#36 alone"), md);
+  assert.ok(md.includes("ABC-999 none") && md.includes("#36 alone") && md.includes("step #3"), md);
   assert.deepEqual(await text(".md code"), ["ABC-154"], "a code span stays code");
-  assert.deepEqual(await text(".tool .subject-link"), ["ABC-154Create the Widget↗"], "the step row took the index's title and link");
+  assert.deepEqual(await text(".tool .subject-link"), ["ABC-154"], "the status step, listed in the run, took the index's link");
+  assert.deepEqual(await text(".tool .subject-text"), ["#38"], "gh pr merge 38 with no repo known: the index's only #38 is not taken for it (87)");
+  // The chat's folder is a clone of owner/repo: "PR #38" and the merge are that repo's; "step #3" is still text (88).
+  await send([snapshot({}, { ...OURS, githubRepo: "owner/repo" }), toolCall("toolu_x1", `${DESK}linear_set_status`, { key: "ABC-154", state: "Done" }), toolResult("toolu_x1", JSON.stringify({ key: "ABC-154", state: "Done" })), ...merge, say]);
+  assert.deepEqual(await text(".md a.ref"), ["ABC-154", "owner/repo#36", "ABC-154", "PR #38"]);
+  assert.deepEqual(await text(".tool .subject-link"), ["#38Flash from CI↗", "ABC-154"]);
+  await send([snapshot(), toolCall("toolu_x1", `${DESK}linear_set_status`, { key: "ABC-154", state: "Done" }), toolResult("toolu_x1", JSON.stringify({ key: "ABC-154", state: "Done" })), say]);
+  assert.deepEqual(await text(".tool .subject-link"), ["ABC-154Create the Widget↗"], "a step of its own shows the index's title too");
   const hover = await exec("return document.querySelector('.md a.ref').getAttribute('title')");
   assert.match(hover, /^ABC-154 Create the Widget · Done\nOpens in Linear: https:\/\/linear\.app\//);
   // A real click opens it once, through the extension: the issue in Linear, the PR in GitHub.

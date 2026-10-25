@@ -28,7 +28,7 @@ import { BackgroundPanel, BackgroundToggle } from "./background";
 import { Queued } from "./queue";
 import { setAtlas } from "./atlas";
 import "./reflinks";
-import { setRefs } from "./refs";
+import { setChatRepo, setRefs } from "./refs";
 import { LimitBannerView } from "./limits";
 import { FOOTER_COMMANDS, McpPill, ModelPill, RemotePill, footerCommand } from "./footer";
 import { KeepReply } from "./keep";
@@ -203,6 +203,7 @@ function App() {
         case "snapshot":
           uiUrl = m.view.uiUrl;
           setAtlas(m.view.atlas);
+          setChatRepo(m.view.githubRepo);
           live.current = m.state;
           stick.current = true;
           setEmpty(false);
@@ -261,8 +262,9 @@ function App() {
   const turnRuns = !!state && (state.busy || state.compacting);
   const sid = state?.sessionId ?? "";
   const acts = !!model.view && !model.view.readOnly;
-  // What a step touched links into embarch-ui, and names the chat's own item from its card (decision 87).
+  // What a step touched links into embarch-ui, names the chat's own item from its card, and — a `gh` naming no repo — is the folder's own repo's (decision 87).
   const ui = model.view?.uiUrl ?? "";
+  const repo = model.view?.githubRepo ?? null;
   const h = model.header;
   const [ownId, ownTitle, ownKey, ownUrl] = [h?.itemId ?? null, h?.title ?? "", h?.issueKey, h?.issueUrl];
   const ctx: ToolCtx = useMemo(
@@ -279,11 +281,11 @@ function App() {
             post({ t: "runInBackground", toolUseId });
           }
         : undefined,
-      subjects: { uiUrl: ui, own: h ? { itemId: ownId, title: ownTitle, issueKey: ownKey, issueUrl: ownUrl } : null },
+      subjects: { uiUrl: ui, repo, own: h ? { itemId: ownId, title: ownTitle, issueKey: ownKey, issueUrl: ownUrl } : null },
     }),
     // The card's fields, not the header object a desk poll replaces; and the desk's index, which a step's
     // title and link and a key in prose read (decisions 87, 88): rows already drawn take it when it arrives.
-    [cwd, turnRuns, sid, acts, ui, !!h, ownId, ownTitle, ownKey, ownUrl, refsV],
+    [cwd, turnRuns, sid, acts, ui, repo, !!h, ownId, ownTitle, ownKey, ownUrl, refsV],
   );
 
   if (empty || !state || !model.view) {

@@ -13,6 +13,7 @@ import { isDestination, ownersAlways } from "../wire/cards";
 import { elicitedUrl } from "../wire/dialogs";
 import { diffSides } from "../diff";
 import { atlasInfo, citationTarget } from "../atlas";
+import { githubRepo } from "../githubRepo";
 import { DeskError } from "../desk/client";
 import type { PrRef } from "../desk/client";
 import { deskReferences, prLine } from "../assistant/references";
@@ -115,7 +116,7 @@ export function assistInput(ctx: HostCtx, rec: ChatRecord, draft: string, opts: 
     item: h.untracked ? null : { key: h.issueKey, title: h.title, state: h.stateName, prs: h.prs.map((p) => prLine(titled(p))) },
     library: ctx.library().map((e) => invocation(e, st.slashCommands) ?? e.name),
     context: st.context ? { percentage: st.context.percentage, totalTokens: st.context.totalTokens, maxTokens: st.context.maxTokens } : null,
-    ...(opts.references ? { references: deskReferences(index, draft, { ownKey: h.issueKey, ownPrs: h.prs }) } : {}),
+    ...(opts.references ? { references: deskReferences(index, draft, { ownKey: h.issueKey, ownPrs: h.prs, repo: githubRepo(rec.chat.opts.cwd || st.cwd || "") }) } : {}),
   };
 }
 
@@ -236,6 +237,7 @@ export class ChatHost implements vscode.Disposable {
           const a = atlasInfo(rec.chat.opts.cwd || rec.chat.state.cwd || "");
           return a ? { docs: a.docs, boards: a.boards } : null;
         })(),
+        githubRepo: githubRepo(rec.chat.opts.cwd || rec.chat.state.cwd || ""),
         timestamps: vscode.workspace.getConfiguration("embarchChat").get<boolean>("showMessageTimestamps", false),
         permDestination: this.ctx.remembered.get<string>(DESTINATION_KEY),
       },

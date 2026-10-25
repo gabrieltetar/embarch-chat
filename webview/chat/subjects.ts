@@ -15,7 +15,11 @@
 //   alone, so its issue is the `issueId` it was given;
 // - `gh pr|issue view` piped: `title:\t…` and `url:\t…` lines (an issue's
 //   has no url), `--json` and `gh api` an object, `gh pr create|comment|edit`
-//   the URL it made;
+//   the URL it made, `gh pr merge|close|reopen|ready|review` and `gh issue
+//   close|reopen` a line naming it, `✓ Merged pull request owner/repo#36
+//   (Blink)` (gh 2.92's own strings); a `gh` that names no repo acts on the
+//   chat's folder's, which the host reads from its git remote — unless the
+//   command `cd`s elsewhere first, and then the repo is not known;
 // - a `slack_*` read: "Channel: name (ID)" and "Permalink: [link](…)";
 // - the desk's `desk_*`: `{item_id, title}`, `{id}`, `{work_item: {id,
 //   title}}`, `{tile: "<item>@<day>"}`, and the brief's first line
@@ -30,7 +34,7 @@
 // bench's are built here from the extension's own setting.
 
 import type { Entry, ToolEntry } from "../../src/wire/reducer";
-import { issueRef, prRef } from "./refs";
+import { issueRef, prRef, refsVersion } from "./refs";
 import { runHead } from "./runs";
 
 export type Connector = "linear" | "github" | "slack" | "desk" | "bench";
@@ -61,6 +65,8 @@ export interface SubjectEnv {
   /** embarch-ui's address, which also serves the Desk: the extension's own setting. */
   uiUrl?: string;
   own?: OwnItem | null;
+  /** The chat's folder's GitHub repo, `owner/repo` (refs.ts' `setChatRepo`): what a `gh` naming none acts on. */
+  repo?: string | null;
 }
 
 type Step = Pick<ToolEntry, "name" | "input" | "result">;
@@ -179,6 +185,8 @@ export interface GhCall {
   action: string;
   number?: number;
   repo?: string;
+  /** The command line `cd`s elsewhere before it: a `gh` naming no repo acts on that folder's, not the chat's. */
+  moved?: true;
 }
 
 /** A command line's words up to the end of its first command: quotes and escapes read, `;`, `&`, `|`, `)` and a line end stop it. */
@@ -215,12 +223,96 @@ function words(s: string): string[] {
   return out;
 }
 
+/** Words before a command that leave it the command: `then gh …`, `sudo gh …`. */
+const PREFIX = new Set(["then", "do", "else", "elif", "time", "nohup", "sudo", "env", "exec", "command", "!", "{"]);
+const ASSIGN = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/s;
+
+/**
+ * Each `gh` a command line runs, where its words start: only a `gh` in a
+ * command's place — after the line's start, `;`, `&`, `|`, `(`, a backquote
+ * or a line end, and any `NAME=value` — never one inside quotes, as in
+ * `git commit -m "follow-up to gh pr view 3"`, nor one that is an argument.
+ * With each, the `GH_REPO` it runs with (its own `GH_REPO=…` or an earlier
+ * `export GH_REPO=…`) and whether an earlier command `cd`s elsewhere.
+ */
+function ghRuns(s: string): Array<{ at: number; ghRepo?: string; moved: boolean }> {
+  const out: Array<{ at: number; ghRepo?: string; moved: boolean }> = [];
+  let q: string | null = null;
+  let word = "";
+  let has = false;
+  let quoted = false;
+  /** The next word is in a command's place. */
+  let head = true;
+  let exporting = false;
+  let moved = false;
+  let exported: string | undefined;
+  let own: string | undefined;
+  const end = (at: number) => {
+    if (!has) return;
+    const w = word;
+    word = "";
+    has = false;
+    const isQuoted = quoted;
+    quoted = false;
+    const a = ASSIGN.exec(w);
+    if (head) {
+      if (a) {
+        if (a[1] === "GH_REPO") own = a[2];
+        return;
+      }
+      if (PREFIX.has(w) && !isQuoted) return;
+      head = false;
+      if (isQuoted) return;
+      if (w === "gh") out.push({ at, ghRepo: own ?? exported, moved });
+      else if (w === "cd" || w === "pushd") moved = true;
+      else if (w === "export") exporting = true;
+      return;
+    }
+    if (exporting && a?.[1] === "GH_REPO") exported = a[2];
+  };
+  const stop = () => {
+    head = true;
+    exporting = false;
+    own = undefined;
+  };
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (q) {
+      if (c === q) q = null;
+      else if (c === "\\" && q === '"' && i + 1 < s.length) word += s[++i];
+      else word += c;
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      q = c;
+      has = true;
+      quoted = true;
+    } else if (c === "\\" && i + 1 < s.length) {
+      word += s[++i];
+      has = true;
+    } else if (c === "$" && s[i + 1] === "(") {
+      end(i);
+      stop();
+      i++;
+    } else if (/[;&|()`\n]/.test(c)) {
+      end(i);
+      stop();
+    } else if (/\s/.test(c)) end(i);
+    else {
+      word += c;
+      has = true;
+    }
+  }
+  end(s.length);
+  return out;
+}
+
 /** gh's flags that take a value: the word after one is never the PR. `-m` and `-r` are left out — on `merge` they take none. */
 const VALUE_FLAGS = new Set([
   "-R", "--repo", "--json", "-q", "--jq", "-t", "--title", "-b", "--body", "-F", "--body-file", "-B", "--base", "-H", "--head",
   "-T", "--template", "-a", "--assignee", "-l", "--label", "--reviewer", "--add-label", "--remove-label", "--add-assignee",
   "--remove-assignee", "--add-reviewer", "--remove-reviewer", "--milestone", "-p", "--project", "-X", "--method", "-f", "--field",
-  "--raw-field", "--subject", "--match-head-commit", "--author-email", "-A", "--interval",
+  "--raw-field", "--subject", "--match-head-commit", "--author-email", "-A", "-i", "--interval",
 ]);
 
 const GH_ACTIONS = new Set(["view", "create", "merge", "checks", "comment", "edit", "diff", "close", "reopen", "ready", "review"]);
@@ -235,11 +327,10 @@ function ghRepo(v: string | undefined): string | undefined {
   return parts.length >= 2 && parts.length <= 3 && REPO.test(r) ? r : undefined;
 }
 
-/** The first `gh pr|issue <action>` or `gh api repos/o/r/(pulls|issues)/N` in a command line, what it acts on as far as the command says. */
+/** The first `gh pr|issue <action>` or `gh api repos/o/r/(pulls|issues)/N` a command line runs, what it acts on as far as the command says. */
 export function ghCall(command: string): GhCall | null {
-  const at = /(?:^|[\s;&|(`])gh\s+(?=pr\s|issue\s|api\s)/g;
-  for (let m: RegExpExecArray | null; (m = at.exec(command)); ) {
-    const w = words(command.slice(m.index + m[0].length));
+  for (const run of ghRuns(command)) {
+    const w = words(command.slice(run.at));
     if (w[0] === "api") {
       for (const p of w.slice(1)) {
         const a = /^\/?repos\/([\w.-]+\/[\w.-]+)\/(pulls|issues)\/(\d+)(?:[/?#].*)?$/.exec(p);
@@ -247,7 +338,8 @@ export function ghCall(command: string): GhCall | null {
       }
       continue;
     }
-    const kind = w[0] as "pr" | "issue";
+    if (w[0] !== "pr" && w[0] !== "issue") continue;
+    const kind: "pr" | "issue" = w[0];
     const action = w[1];
     if (!action || !GH_ACTIONS.has(action)) continue;
     const call: GhCall = { kind, action };
@@ -269,10 +361,22 @@ export function ghCall(command: string): GhCall | null {
         }
       }
     }
+    // gh's own `GH_REPO`, set on the command or exported before it, is a repo the command names.
+    if (!call.repo && run.ghRepo) call.repo = ghRepo(run.ghRepo);
+    if (run.moved) call.moved = true;
     return call;
   }
   return null;
 }
+
+/**
+ * gh's own line naming what it acted on, from its strings (gh 2.92):
+ * `✓ Merged pull request owner/repo#36 (Blink)`, `✓ Pull request
+ * owner/repo#36 is marked as "ready for review"`, `✓ Approved pull request
+ * owner/repo#36`, `✓ Closed issue owner/repo#7 (Flaky)`. A title, when gh
+ * gives one, is in brackets right after the number.
+ */
+const GH_SAID = /\b(pull request|issue) ([\w.-]+\/[\w.-]+)#(\d{1,7})(?: \(([^\n]*)\))?/gi;
 
 /** What gh's output says about the PR or issue: `--json`/`gh api`'s object, view's `key:\tvalue` lines, or the URL it printed. */
 function ghResult(call: GhCall, result: string | undefined): { title?: string; url?: string; number?: number; repo?: string } {
@@ -293,8 +397,13 @@ function ghResult(call: GhCall, result: string | undefined): { title?: string; u
     const n = line("number");
     return { title: line("title"), url: u ? url : undefined, number: n && /^\d+$/.test(n) ? Number(n) : u ? Number(u[3]) : undefined, repo: u?.[1] };
   }
-  // create, comment, edit, merge, ...: the URL it made or acted on. A diff's or a check's links are someone else's.
+  // A diff's or a check's links and lines are someone else's.
   if (call.action === "diff" || call.action === "checks") return {};
+  // merge, close, reopen, ready, review: gh's line naming it, by repo, number and title.
+  const kind = call.kind === "pr" ? "pull request" : "issue";
+  const said = [...head.matchAll(GH_SAID)].filter((m) => m[1].toLowerCase() === kind && (call.number === undefined || Number(m[3]) === call.number)).at(-1);
+  if (said) return { title: said[4]?.trim() || undefined, number: Number(said[3]), repo: said[2] };
+  // create, comment, edit: the URL it made or acted on.
   const urls = [...head.matchAll(/https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:pull|issues)\/\d+(?:#[\w-]+)?/g)].map((m) => m[0]);
   const pick = call.number !== undefined ? urls.find((x) => Number(GH_URL.exec(x)![3]) === call.number) : urls[urls.length - 1];
   if (!pick) return {};
@@ -302,12 +411,14 @@ function ghResult(call: GhCall, result: string | undefined): { title?: string; u
   return { url: pick, number: Number(u[3]), repo: u[1] };
 }
 
-function github(call: GhCall, result: string | undefined): Subject | null {
+function github(call: GhCall, result: string | undefined, env: SubjectEnv): Subject | null {
   const r = ghResult(call, result);
   const n = call.number ?? r.number;
   if (n === undefined) return null;
-  const repo = call.repo ?? r.repo;
-  const ref = call.kind === "pr" ? prRef(n, repo) : null;
+  // The repo the command names, else the one gh's output names, else — run in the chat's folder — the folder's own.
+  // None known: `#36` alone, untitled and unlinked; the desk's index is asked only with a repo (decision 87).
+  const repo = call.repo ?? r.repo ?? (call.moved ? undefined : (env.repo ?? undefined));
+  const ref = call.kind === "pr" && repo ? prRef(n, repo) : null;
   const made = repo ? `https://github.com/${repo}/${call.kind === "pr" ? "pull" : "issues"}/${n}` : undefined;
   return {
     connector: "github",
@@ -323,7 +434,7 @@ function github(call: GhCall, result: string | undefined): Subject | null {
 function fetched(input: Obj, env: SubjectEnv): Subject | null {
   const gh = outsideLink("github", input.url);
   const u = gh ? GH_URL.exec(gh) : null;
-  if (u) return github({ kind: u[2] === "pull" ? "pr" : "issue", action: "fetch", repo: u[1], number: Number(u[3]) }, undefined);
+  if (u) return github({ kind: u[2] === "pull" ? "pr" : "issue", action: "fetch", repo: u[1], number: Number(u[3]) }, undefined, env);
   const li = outsideLink("linear", input.url);
   const l = li ? /^https:\/\/linear\.app\/[\w.-]+\/issue\/([A-Za-z][A-Za-z0-9]{0,9}-\d{1,7})(?:[/?#]|$)/.exec(li) : null;
   return l ? issue(l[1].toUpperCase(), { url: li }, env) : null;
@@ -431,12 +542,31 @@ function bench(tool: string, input: Obj, result: string | undefined, env: Subjec
 
 // ------------------------------------------------------------ a step, a run
 
+/**
+ * What a step touched, read once per step: the reducer replaces an entry
+ * that changes, so it is kept by the entry — and by the desk's index and
+ * the env it was read with, either of which can change what it names.
+ * Every render asks again (a row, a run's list); its JSON is parsed once.
+ */
+const read = new WeakMap<Step, { refs: number; env: string; s: Subject | null }>();
+const envKey = (e: SubjectEnv) => [e.uiUrl, e.repo, e.own?.itemId, e.own?.title, e.own?.issueKey, e.own?.issueUrl].map((x) => x ?? "").join("\u0000");
+
 /** What a step touched, or null for a step that touches no connector (or none by name). */
 export function stepSubject(t: Step, env: SubjectEnv): Subject | null {
+  const refs = refsVersion();
+  const key = envKey(env);
+  const hit = read.get(t);
+  if (hit && hit.refs === refs && hit.env === key) return hit.s;
+  const s = subjectOf(t, env);
+  read.set(t, { refs, env: key, s });
+  return s;
+}
+
+function subjectOf(t: Step, env: SubjectEnv): Subject | null {
   const input = t.input ?? {};
   if (t.name === "Bash") {
     const call = typeof input.command === "string" ? ghCall(input.command) : null;
-    return call ? github(call, t.result) : null;
+    return call ? github(call, t.result, env) : null;
   }
   if (t.name === "WebFetch") return fetched(input, env);
   const m = /^mcp__(.+?)__(.+)$/.exec(t.name);

@@ -51,10 +51,17 @@ test("a draft whose words no title shares gets no references, and no index none 
   assert.deepEqual(core.deskReferences(INDEX, "   ", own), []);
 });
 
-test("#N that two repos share lists both, for a card each; owner/repo#N is the one", () => {
-  assert.deepEqual(core.deskReferences(INDEX, "add a test like #36 did", own), [WIDGET, 'PR owner/docs#36 "Release notes template" merged']);
-  assert.deepEqual(core.deskReferences(INDEX, "add a test like PR 36 did", own), [WIDGET, 'PR owner/docs#36 "Release notes template" merged']);
-  assert.deepEqual(core.deskReferences(INDEX, "add a test like owner/docs#36 did", own), ['PR owner/docs#36 "Release notes template" merged']);
+test("a bare #N names no PR — \"step #3\" is none; \"PR 36\" is the chat's own repo's, owner/repo#N the one it says", () => {
+  const lines = (draft, opts) => core.deskReferences(INDEX, draft, opts);
+  const inRepo = { ...own, repo: "owner/repo" };
+  assert.deepEqual(lines("add a test like #36 did", inRepo), [], "a bare #36, even in a repo that has one");
+  assert.deepEqual(lines("now do step #3 and step #38", inRepo), [], "step #3 adds nothing");
+  assert.deepEqual(lines("add a test like PR 36 did", inRepo), [WIDGET]);
+  assert.deepEqual(lines("add a test like pull request #36 did", inRepo), [WIDGET]);
+  assert.deepEqual(lines("add a test like PR #36 did", { ...own, repo: "Owner/Docs" }), ['PR owner/docs#36 "Release notes template" merged']);
+  assert.deepEqual(lines("add a test like PR 36 did", own), [], "no repo known: PR 36 is none");
+  assert.deepEqual(lines("add a test like PR 36 did", { ...own, repo: "owner/elsewhere" }), [], "the chat's repo has no PR 36 in the index");
+  assert.deepEqual(lines("add a test like owner/docs#36 did", inRepo), ['PR owner/docs#36 "Release notes template" merged']);
 });
 
 test("the block holds at most 8 lines and about 600 tokens, best first, each issue and PR once", () => {
@@ -121,27 +128,36 @@ test("the recorded cards call for the vague widget PR replaces the phrase with t
 
 test("a key or PR in prose is a link only when the index knows it, to Linear or GitHub, never elsewhere", () => {
   core.setRefs(null);
-  assert.equal(core.proseRefs("Done in ABC-154 and owner/repo#36."), null, "no index, no links");
+  assert.equal(core.proseRefs("Done in ABC-154 and owner/repo#36.", "owner/repo"), null, "no index, no links");
   core.setRefs(INDEX);
   try {
-    const parts = core.proseRefs("Done in ABC-154, see owner/repo#36 and #38; XYZ-1, UTF-8 and #36 stay text.");
+    const parts = core.proseRefs("Done in ABC-154, see owner/repo#36 and PR #38; XYZ-1, UTF-8, step #3, #38 and #36 stay text.", "owner/repo");
     const links = parts.filter((p) => typeof p !== "string");
     assert.deepEqual(
       links.map((l) => [l.label, l.url]),
       [
         ["ABC-154", "https://linear.app/acme/issue/ABC-154/create-the-widget"],
         ["owner/repo#36", "https://github.com/owner/repo/pull/36"],
-        ["#38", "https://github.com/owner/repo/pull/38"],
+        ["PR #38", "https://github.com/owner/repo/pull/38"],
       ],
     );
-    assert.equal(parts.filter((p) => typeof p === "string").join(""), "Done in , see  and ; XYZ-1, UTF-8 and #36 stay text.", "#36 two repos share: text");
+    assert.equal(parts.filter((p) => typeof p === "string").join(""), "Done in , see  and ; XYZ-1, UTF-8, step #3, #38 and #36 stay text.", "a bare #N is never a PR");
+    assert.match(links[2].title, /^owner\/repo#38 Flash from CI · merged\nOpens in GitHub: /);
+    // "PR #36" is the chat's own repo's, any case; no repo known, or one the index has no such PR in: text.
+    assert.deepEqual(core.proseRefs("pull Request #36 and pr#36", "owner/docs").filter((p) => typeof p !== "string").map((l) => [l.label, l.url]), [
+      ["pull Request #36", "https://github.com/owner/docs/pull/36"],
+      ["pr#36", "https://github.com/owner/docs/pull/36"],
+    ]);
+    assert.equal(core.proseRefs("PR #38 merged", null), null);
+    assert.equal(core.proseRefs("PR #38 merged", "owner/docs"), null);
+    assert.equal(core.proseRefs("SPR #38, PR #38a and PR 38", "owner/repo"), null, "inside a word, or with no #");
     assert.match(links[0].title, /^ABC-154 Create the Widget · Done\nOpens in Linear: /);
     assert.match(links[1].title, /^owner\/repo#36 Widget · merged\nOpens in GitHub: /);
     // A lower-case key, one inside a word or a path, and a branch name are text.
-    assert.equal(core.proseRefs("abc-154, xABC-154, src/ABC-154.c and abc-154-create-the-widget"), null);
+    assert.equal(core.proseRefs("abc-154, xABC-154, src/ABC-154.c and abc-154-create-the-widget", "owner/repo"), null);
     // A link the index carries to another host is no link.
     core.setRefs({ issues: [{ ...INDEX.issues[5], url: "https://linear.app.evil.example/x" }], prs: [{ ...INDEX.prs[3], url: "http://github.com/owner/repo/pull/36" }] });
-    assert.equal(core.proseRefs("ABC-154 and #36"), null);
+    assert.equal(core.proseRefs("ABC-154 and PR #36", "owner/repo"), null);
   } finally {
     core.setRefs(null);
   }

@@ -1606,6 +1606,21 @@ test("the window's desk's reference index reaches each chat page, and the cards 
     assert.ok(made[0].prompt.includes('<desk_references>\nIssues and PRs on this desk that the draft names, or whose titles share its words, best first:\nABC-154 "Create the Widget" Done · PR owner/repo#36 "Widget" merged\n</desk_references>'), made[0].prompt);
     assert.equal(c.cards[0].edit.op, "replace");
     assert.match(c.cards[0].edit.with, /owner\/repo#36/);
+    // The chat's folder is a clone of owner/repo (decisions 87, 88): its page hears it, and "PR 36" in a draft is that repo's.
+    fs.mkdirSync(path.join(folder, ".git"), { recursive: true });
+    fs.writeFileSync(path.join(folder, ".git", "config"), '[core]\n\tbare = false\n[remote "origin"]\n\turl = git@github.com:owner/repo.git\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n');
+    try {
+      chatView.webview.fromPage({ t: "ready" });
+      const snap = await waitFor(() => lastSnapshot()?.view.githubRepo === "owner/repo" && lastSnapshot(), 3000, "the repo on the page");
+      assert.equal(snap.state.sessionId, sid);
+      const k = calls().length;
+      chatView.webview.fromPage({ t: "assist", kind: "cards", text: "add a test like PR 36 did and do step #3", seq: 883 });
+      await waitFor(() => posted((m) => m.t === "cards" && m.seq === 883), 5000, "the cards");
+      const p = calls().slice(k)[0].prompt;
+      assert.ok(p.includes('best first:\nABC-154 "Create the Widget" Done · PR owner/repo#36 "Widget" merged\n</desk_references>'), p);
+    } finally {
+      fs.rmSync(path.join(folder, ".git"), { recursive: true, force: true });
+    }
   } finally {
     delete process.env.FAKE_HAIKU_CARDS;
   }

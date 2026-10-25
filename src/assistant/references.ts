@@ -17,8 +17,6 @@ export const REFS_CHARS = 2400;
 const TITLE_CAP = 90;
 /** PRs shown on one issue's line. */
 const PRS_PER_LINE = 2;
-/** PRs a bare number names when repos share it. */
-const SAME_NUMBER = 3;
 
 /** Function words and the words a request is written in: never what tells one title from another. */
 const STOP = new Set(
@@ -119,12 +117,18 @@ export interface MatchOpts {
   /** The chat's own work item: its card is already in the prompt, so its words find nothing. */
   ownKey?: string;
   ownPrs?: Array<{ repo: string; number: number }>;
+  /** The chat's folder's GitHub repo (githubRepo.ts): "PR 36" with no repo written is that repo's. */
+  repo?: string | null;
 }
 
 type Cand = { issue: IndexIssue } | { pr: IndexPr };
 
-/** The references the draft names itself, in its order: keys, `owner/repo#N`, `#N` and `PR N`. */
-function named(draft: string, idx: Prepared, index: RefIndex): Cand[] {
+/**
+ * The references the draft names itself, in its order: keys, `owner/repo#N`
+ * and a PR's link, and "PR 36" or "pull request #36" in the chat's own repo.
+ * A bare `#36` is none — "step #3" is no PR (as in prose, refprose.ts).
+ */
+function named(draft: string, idx: Prepared, index: RefIndex, opts: MatchOpts): Cand[] {
   const hits: Array<{ at: number; c: Cand[] }> = [];
   for (const m of draft.matchAll(/(?<![\w/.-])([A-Za-z][A-Za-z0-9]{0,9}-\d{1,7})(?![\w-])/g)) {
     const i = idx.issues.get(m[1].toUpperCase());
@@ -135,10 +139,10 @@ function named(draft: string, idx: Prepared, index: RefIndex): Cand[] {
     const p = index.prs.find((x) => x.number === Number(n) && x.repo.toLowerCase() === repo.toLowerCase());
     if (p) hits.push({ at: m.index!, c: [{ pr: p }] });
   }
-  for (const m of draft.matchAll(/(?<![\w/.&-])#(\d{1,7})\b|\b(?:PR|pull request)\s*#?(\d{1,7})\b/gi)) {
-    const n = Number(m[1] ?? m[2]);
-    const same = index.prs.filter((x) => x.number === n).slice(0, SAME_NUMBER);
-    if (same.length) hits.push({ at: m.index!, c: same.map((pr) => ({ pr })) });
+  const own = opts.repo?.toLowerCase();
+  for (const m of own ? draft.matchAll(/(?<![\w/.#-])(?:PR|pull request) ?#?(\d{1,7})(?![\w-])/gi) : []) {
+    const p = index.prs.find((x) => x.number === Number(m[1]) && x.repo.toLowerCase() === own);
+    if (p) hits.push({ at: m.index!, c: [{ pr: p }] });
   }
   return hits.sort((a, b) => a.at - b.at).flatMap((h) => h.c);
 }
@@ -205,7 +209,7 @@ export function deskReferences(index: RefIndex | null, draft: string, opts: Matc
     chars += line.length + 1;
     return true;
   };
-  for (const c of [...named(draft, idx, index), ...byWords(draft, idx, opts)]) {
+  for (const c of [...named(draft, idx, index, opts), ...byWords(draft, idx, opts)]) {
     if (lines.length >= REFS_LINES) break;
     // A PR that names an issue the index has is shown on that issue's line, first among its PRs.
     const pr = "pr" in c ? c.pr : null;

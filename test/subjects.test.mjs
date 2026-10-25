@@ -6,6 +6,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 
 const require = createRequire(import.meta.url);
 const core = require("../test-out/core.js");
@@ -84,8 +87,10 @@ test("Bash `gh pr view 36`: #36, its title and its URL from gh's piped output", 
   const running = subj("Bash", { command: "gh pr view 36" });
   assert.deepEqual([running.label, running.title, running.url], ["#36", undefined, undefined], "while it runs: the number, no guessed repo");
   core.setRefs({ issues: [], prs: [{ repo: "owner/repo", number: 36, title: "Blink", state: "open", url: "https://github.com/owner/repo/pull/36", keys: ["ABC-154"] }] });
-  const filled = subj("Bash", { command: "gh pr view 36" });
-  assert.deepEqual([filled.title, filled.url], ["Blink", "https://github.com/owner/repo/pull/36"], "the desk's index fills it");
+  const filled = subj("Bash", { command: "gh pr view 36" }, undefined, { ...env, repo: "owner/repo" });
+  assert.deepEqual([filled.title, filled.url], ["Blink", "https://github.com/owner/repo/pull/36"], "run in the chat's folder: its repo's PR, from the desk's index");
+  const unknown = subj("Bash", { command: "gh pr view 36" });
+  assert.deepEqual([unknown.title, unknown.url], [undefined, undefined], "no repo known: the index's only #36 is not taken for it");
 });
 
 test("gh: --json, -R, a URL argument, create's printed URL, merge's flags, gh api, an issue, a URL off github.com", () => {
@@ -111,7 +116,101 @@ test("gh: --json, -R, a URL argument, create's printed URL, merge's flags, gh ap
   assert.equal(subj("Bash", { command: "git log --oneline" }, "abc"), null);
 });
 
-test("ghCall reads only what the command says", () => {
+test("gh pr merge|close|ready|review|checks|diff N without -R: the repo gh's line names, else the chat's folder's — never the index's only #N (decision 87)", () => {
+  const other = { repo: "owner/other", number: 36, title: "Another repo's PR", state: "open", url: "https://github.com/owner/other/pull/36", keys: [] };
+  const mine = { repo: "owner/repo", number: 36, title: "Blink", state: "open", url: "https://github.com/owner/repo/pull/36", keys: [] };
+  core.setRefs({ issues: [], prs: [other] });
+  const at = (repo) => ({ ...env, repo });
+  const shown = (s) => [s.label, s.title, s.url, s.id];
+  // Unique in the desk's index is not the cwd's PR: with no repo known, #36 alone, untitled and unlinked.
+  for (const cmd of ["gh pr merge 36 --squash", "gh pr close 36", "gh pr ready 36", "gh pr review 36 --approve", "gh pr checks 36", "gh pr diff 36"]) {
+    assert.deepEqual(shown(subj("Bash", { command: cmd }, "")), ["#36", undefined, undefined, "github:#36"], cmd);
+  }
+  // In a folder whose remote is owner/repo: that repo's #36, its title from the index when it has it.
+  assert.deepEqual(shown(subj("Bash", { command: "gh pr checks 36" }, "build\tpass\t1m\thttps://github.com/owner/other/actions/runs/1\n", at("owner/repo"))), [
+    "#36",
+    undefined,
+    "https://github.com/owner/repo/pull/36",
+    "github:owner/repo#36",
+  ]);
+  core.setRefs({ issues: [], prs: [other, mine] });
+  assert.deepEqual(shown(subj("Bash", { command: "gh pr diff 36" }, "+x", at("owner/repo"))), ["#36", "Blink", "https://github.com/owner/repo/pull/36", "github:owner/repo#36"]);
+  // gh's own line names the repo, and the title: it wins over the folder's.
+  const merged = subj("Bash", { command: "gh pr merge 36 --squash --delete-branch" }, "✓ Squashed and merged pull request owner/other#36 (Another repo's PR (v2))\n✓ Deleted local branch x\n", at("owner/repo"));
+  assert.deepEqual(shown(merged), ["#36", "Another repo's PR (v2)", "https://github.com/owner/other/pull/36", "github:owner/other#36"]);
+  const lines = [
+    ["gh pr close 36", "✓ Closed pull request owner/other#36 (Another repo's PR)\n"],
+    ["gh pr reopen 36", "✓ Reopened pull request owner/other#36 (Another repo's PR)\n"],
+    ["gh pr ready 36", '✓ Pull request owner/other#36 is marked as "ready for review"\n'],
+    ["gh pr review 36 --approve", "✓ Approved pull request owner/other#36\n"],
+    ["gh pr review 36 -r -b no", "+ Requested changes to pull request owner/other#36\n"],
+    ["gh pr merge 36", "! Pull request owner/other#36 was already merged\n"],
+  ];
+  for (const [cmd, out] of lines) {
+    const s = subj("Bash", { command: cmd }, out);
+    assert.deepEqual([s.url, s.title], ["https://github.com/owner/other/pull/36", "Another repo's PR"], cmd);
+  }
+  const closed = subj("Bash", { command: "gh issue close 12" }, "✓ Closed issue owner/repo#12 (Flaky)\n");
+  assert.deepEqual([closed.label, closed.title, closed.url], ["#12", "Flaky", "https://github.com/owner/repo/issues/12"]);
+  // A line about another number is not this one's.
+  assert.equal(subj("Bash", { command: "gh pr close 36" }, "✓ Closed pull request owner/other#35 (x)\n").url, undefined);
+  // `cd` elsewhere first: the folder's repo is not where it ran.
+  assert.equal(subj("Bash", { command: "cd ../other && gh pr merge 36" }, "", at("owner/repo")).url, undefined);
+  // GH_REPO, on the command or exported before it, names the repo as -R does.
+  assert.equal(subj("Bash", { command: "GH_REPO=owner/other gh pr merge 36" }, "", at("owner/repo")).url, "https://github.com/owner/other/pull/36");
+  assert.equal(subj("Bash", { command: "export GH_REPO=owner/other; gh pr view 36" }, undefined, at("owner/repo")).url, "https://github.com/owner/other/pull/36");
+  assert.equal(subj("Bash", { command: "GH_REPO=ghe.example/owner/other gh pr merge 36" }, "").url, undefined, "another host's");
+});
+
+test("the chat's folder's GitHub repo: from its git config, github.com only, picked as gh picks it with no terminal; a worktree reads its main checkout's", () => {
+  assert.equal(core.githubRepoOfUrl("git@github.com:owner/repo.git"), "owner/repo");
+  assert.equal(core.githubRepoOfUrl("https://github.com/owner/repo"), "owner/repo");
+  assert.equal(core.githubRepoOfUrl("https://x-access-token:t@github.com/owner/repo.git/"), "owner/repo");
+  assert.equal(core.githubRepoOfUrl("ssh://git@github.com/owner/repo.git"), "owner/repo");
+  for (const u of ["git@ghe.example:owner/repo.git", "https://github.com.evil.example/owner/repo", "https://gitlab.com/owner/repo", "/srv/git/repo.git", "https://github.com/owner"]) {
+    assert.equal(core.githubRepoOfUrl(u), null, u);
+  }
+  const conf = (remotes) => remotes.map(([name, url, extra = ""]) => `[remote "${name}"]\n\turl = ${url}\n\tfetch = +refs/heads/*:refs/remotes/${name}/*\n${extra}`).join("");
+  const pick = (remotes) => core.pickGithubRepo(core.parseRemotes(`[core]\n\tbare = false\n${conf(remotes)}[branch "main"]\n\tremote = origin\n`));
+  assert.equal(pick([["origin", "git@github.com:owner/repo.git"]]), "owner/repo");
+  assert.equal(pick([["origin", "git@github.com:me/repo.git"], ["upstream", "https://github.com/owner/repo.git"]]), "owner/repo", "upstream before origin, as gh");
+  assert.equal(pick([["origin", "git@github.com:me/repo.git"], ["upstream", "https://github.com/owner/repo.git"]].map((r, i) => (i ? r : [...r, "\tgh-resolved = base\n"]))), "me/repo", "gh repo set-default's choice first");
+  assert.equal(pick([["origin", "git@ghe.example:owner/repo.git"]]), null, "another host's only");
+  assert.equal(pick([]), null);
+  // On disk: a checkout, and a worktree whose .git file points into it.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "embarch-chat-ghrepo-"));
+  try {
+    const main = path.join(root, "main");
+    fs.mkdirSync(path.join(main, ".git", "worktrees", "wt"), { recursive: true });
+    fs.mkdirSync(path.join(main, "src", "deep"), { recursive: true });
+    fs.writeFileSync(path.join(main, ".git", "config"), conf([["origin", "git@github.com:owner/repo.git"]]));
+    fs.writeFileSync(path.join(main, ".git", "worktrees", "wt", "commondir"), "../..\n");
+    const wt = path.join(root, "wt");
+    fs.mkdirSync(wt);
+    fs.writeFileSync(path.join(wt, ".git"), `gitdir: ${path.join(main, ".git", "worktrees", "wt")}\n`);
+    assert.equal(core.githubRepo(path.join(main, "src", "deep")), "owner/repo");
+    assert.equal(core.githubRepo(wt), "owner/repo");
+    const none = path.join(root, "none");
+    fs.mkdirSync(path.join(none, ".git"), { recursive: true });
+    fs.writeFileSync(path.join(none, ".git", "config"), "[core]\n\tbare = false\n");
+    assert.equal(core.githubRepo(none), null);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("ghCall reads only what the command says: a gh in a command's place, never one inside quotes or as an argument", () => {
+  assert.equal(core.ghCall('git commit -m "follow-up to gh pr view 3"'), null);
+  assert.equal(core.ghCall("git commit -m 'gh pr merge 3'"), null);
+  assert.equal(core.ghCall('git commit -m "a \\"quoted\\" gh pr view 3" && echo gh pr view 4'), null);
+  assert.deepEqual(core.ghCall('git commit -m "follow-up to gh pr view 3" && gh pr view 4'), { kind: "pr", action: "view", number: 4 });
+  assert.deepEqual(core.ghCall("if true; then gh pr view 5; fi"), { kind: "pr", action: "view", number: 5 });
+  assert.deepEqual(core.ghCall("t=$(gh pr view 6 --json title)"), { kind: "pr", action: "view", number: 6 });
+  assert.deepEqual(core.ghCall("(gh pr view 7)"), { kind: "pr", action: "view", number: 7 });
+  assert.deepEqual(core.ghCall("cd /w/x && gh pr merge 8"), { kind: "pr", action: "merge", number: 8, moved: true });
+  // -i takes a value, as --interval does.
+  assert.deepEqual(core.ghCall("gh pr checks --watch -i 10 36"), { kind: "pr", action: "checks", number: 36 });
+  assert.deepEqual(core.ghCall("gh pr checks --watch --interval 10 36"), { kind: "pr", action: "checks", number: 36 });
   assert.deepEqual(core.ghCall("gh pr view 36"), { kind: "pr", action: "view", number: 36 });
   assert.deepEqual(core.ghCall("gh pr comment --body 12 36 --repo=owner/repo"), { kind: "pr", action: "comment", number: 36, repo: "owner/repo" });
   assert.deepEqual(core.ghCall("gh pr view --json title"), { kind: "pr", action: "view" });
@@ -129,12 +228,12 @@ test("WebFetch on a GitHub PR or a Linear issue page", () => {
   assert.equal(subj("WebFetch", { url: "https://example.com/owner/repo/pull/36" }), null);
 });
 
-test("prRef: by number in a repo; without one, only a number no two repos share", () => {
+test("prRef: by number in its repo, never by the number alone", () => {
   const pr = (repo, number) => ({ repo, number, title: "t", state: "open", url: `https://github.com/${repo}/pull/${number}`, keys: [] });
   core.setRefs({ issues: [], prs: [pr("owner/repo", 36), pr("owner/other", 36), pr("owner/repo", 40)] });
-  assert.equal(core.prRef(36), null);
   assert.equal(core.prRef(36, "Owner/Other").repo, "owner/other");
-  assert.equal(core.prRef(40).repo, "owner/repo");
+  assert.equal(core.prRef(40, "owner/repo").repo, "owner/repo");
+  assert.equal(core.prRef(40, "owner/other"), null, "the only #40 is another repo's");
   assert.equal(core.issueRef("abc-1"), null);
 });
 
@@ -190,6 +289,22 @@ test("embarch-api tools: the study, else the board, linking into embarch-ui — 
   assert.deepEqual([set.label, set.url], ["nrf54l15dk", `${UI}#topology?board=dut`]);
   assert.equal(subj(`${API}declare_signal`, { name: "tx_done" }), null, "a signal's name is no board");
   assert.equal(subj(`${API}list_projects`, {}, "[]"), null);
+});
+
+test("what a step touched is read once per step entry, and again when the desk's index or the env changes", () => {
+  const t = step(`${DESK}linear_get_issue`, { key: "ABC-154" }, { key: "ABC-154" });
+  const a = core.stepSubject(t, env);
+  assert.equal(core.stepSubject(t, { ...env }), a, "the same entry and env: the same answer, not read again");
+  assert.equal(a.title, undefined);
+  core.setRefs({ issues: [{ key: "ABC-154", title: "Make the widget blink", url: ISSUE.url }], prs: [] });
+  const b = core.stepSubject(t, env);
+  assert.notEqual(b, a);
+  assert.equal(b.title, "Make the widget blink", "a new index is read");
+  const c = core.stepSubject(t, { ...env, uiUrl: "http://127.0.0.1:4999/" });
+  assert.notEqual(c, b, "another env is read");
+  const g = step("Bash", { command: "gh pr merge 36" }, "");
+  assert.equal(core.stepSubject(g, env).url, undefined);
+  assert.equal(core.stepSubject(g, { ...env, repo: "owner/repo" }).url, "https://github.com/owner/repo/pull/36", "the chat's repo is part of the env");
 });
 
 test("a tool that touches no connector names nothing", () => {

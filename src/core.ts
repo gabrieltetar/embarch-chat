@@ -21,6 +21,7 @@ export * from "./assistant/edits";
 export * from "./assistant/haiku";
 export * from "./assistant/prompts";
 export * from "./assistant/references";
+export * from "./githubRepo";
 export * from "./assistant/history";
 export * from "./assistant/assistant";
 export * from "./library/entries";
