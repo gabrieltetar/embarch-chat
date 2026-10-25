@@ -68,6 +68,17 @@ test("a card's edit applies to the draft, or not at all once its text is gone", 
   assert.equal(core.applyEdit(h, { op: "handoff" }), null, "a handoff request is not wrapped twice");
 });
 
+test("a replace edit puts its text in as written, at the first whole word it names (37, 88)", () => {
+  // A PR title with `$` in it: String.replace would read `$'`, `$&`, `` $` `` and `$$` as its own patterns.
+  const title = 'PR owner/repo#36 "Cost $\' $& $` $$ cut"';
+  assert.equal(core.applyEdit("do as the widget PR did", { op: "replace", find: "the widget PR", with: title }), `do as ${title} did`);
+  // "the PR" inside "the PRs list" is not the phrase: the first whole one is, else the first at all.
+  assert.equal(core.applyEdit("check the PRs list, then the PR", { op: "replace", find: "the PR", with: "PR #36" }), "check the PRs list, then PR #36");
+  assert.equal(core.applyEdit("check the PRs list", { op: "replace", find: "the PR", with: "PR #36" }), "check PR #36s list", "no whole one: the first");
+  assert.equal(core.applyEdit("rethe PR and the PR", { op: "replace", find: "the PR", with: "X" }), "rethe PR and X");
+  assert.equal(core.applyEdit("see (the PR) now", { op: "replace", find: "(the PR)", with: "X" }), "see X now", "punctuation at its ends is its own edge");
+});
+
 test("the preview is a word diff: added words, removed words, the rest as is", () => {
   const d = core.wordDiff("fix the flash thing", "fix the flash driver on the board");
   assert.deepEqual(

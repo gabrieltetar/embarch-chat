@@ -84,6 +84,26 @@ export function contextEdit(kind: ContextKind, focus: string): DraftEdit {
 
 // ------------------------------------------------------------ applying
 
+const WORD = /[\p{L}\p{N}_]/u;
+
+/**
+ * Where a replace edit's text is in the draft: its first whole-word
+ * occurrence — "the PR" in "check the PRs list, then the PR" is the second —
+ * else its first at all; -1 when it is gone.
+ */
+export function findAt(draft: string, find: string): number {
+  const first = draft.indexOf(find);
+  if (first < 0) return -1;
+  const startsWord = WORD.test(find[0]);
+  const endsWord = WORD.test(find[find.length - 1]);
+  for (let at = first; at >= 0; at = draft.indexOf(find, at + 1)) {
+    const before = at > 0 && startsWord && WORD.test(draft[at - 1]);
+    const after = at + find.length < draft.length && endsWord && WORD.test(draft[at + find.length]);
+    if (!before && !after) return at;
+  }
+  return first;
+}
+
 /** The draft after an edit, or null when the edit no longer applies (its text is gone). */
 export function applyEdit(draft: string, e: DraftEdit): string | null {
   switch (e.op) {
@@ -102,9 +122,12 @@ export function applyEdit(draft: string, e: DraftEdit): string | null {
       const sep = /\s$/.test(e.text) ? e.text.slice(e.text.trimEnd().length) : " ";
       return head + sep + draft.replace(/^\s+/, "");
     }
-    case "replace":
-      if (!e.find || !draft.includes(e.find) || e.find === e.with) return null;
-      return draft.replace(e.find, e.with);
+    case "replace": {
+      if (!e.find || e.find === e.with) return null;
+      const at = findAt(draft, e.find);
+      // Spliced in as written: a `$&` or `$'` in a title is text, not String.replace's pattern.
+      return at < 0 ? null : draft.slice(0, at) + e.with + draft.slice(at + e.find.length);
+    }
     case "handoff":
       return draft.startsWith(handoffRequest("").split("\n")[0]) ? null : handoffRequest(draft);
   }
