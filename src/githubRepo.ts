@@ -83,7 +83,7 @@ const CAP = 64 * 1024;
  * the file. Opened without blocking and checked on the open file, so a FIFO
  * swapped in after a stat cannot hang the extension host on its read.
  */
-function readSmall(file: string): { text: string; st: fs.Stats } | null {
+export function readGitFile(file: string): { text: string; st: fs.Stats } | null {
   let fd: number;
   try {
     fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0));
@@ -122,11 +122,11 @@ function configOf(cwd: string): string | null {
     }
     if (st?.isDirectory()) return path.join(dotgit, "config");
     if (st?.isFile()) {
-      const m = /^gitdir:\s*(.+)$/m.exec(readSmall(dotgit)?.text ?? "");
+      const m = /^gitdir:\s*(.+)$/m.exec(readGitFile(dotgit)?.text ?? "");
       if (!m) return null;
       const gitdir = path.resolve(d, m[1].trim());
       // None, or not a file: a plain git dir.
-      const common = readSmall(path.join(gitdir, "commondir"))?.text.trim();
+      const common = readGitFile(path.join(gitdir, "commondir"))?.text.trim();
       return path.join(common ? path.resolve(gitdir, common) : gitdir, "config");
     }
     const up = path.dirname(d);
@@ -149,7 +149,7 @@ export function githubRepo(cwd: string): string | null {
     if (!st.isFile()) return null;
     const hit = read.get(config);
     if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.repo;
-    const got = readSmall(config);
+    const got = readGitFile(config);
     if (!got) return null;
     const repo = pickGithubRepo(parseRemotes(got.text));
     read.set(config, { mtimeMs: got.st.mtimeMs, size: got.st.size, repo });

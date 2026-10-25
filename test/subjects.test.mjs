@@ -271,7 +271,13 @@ test("the chat's folder's GitHub repo never hangs the extension host: a FIFO or 
   const conf = "[core]\n\tbare = false\n[remote \"origin\"]\n\turl = git@github.com:owner/repo.git\n";
   try {
     const fifo = (p) => execFileSync("mkfifo", [p]);
-    // .git/config a FIFO; a worktree's .git file pointing at a git dir whose commondir is one; a .git file that is one.
+    // What each case covers:
+    // - a: .git/config a FIFO. githubRepo's stat of the config sees no regular file and stops before any open.
+    // - wt: a worktree's .git file pointing at a git dir whose commondir is a FIFO. No stat comes first: the reader opens
+    //   it without blocking — a blocking open of a FIFO with no writer never returns — and its fstat refuses it.
+    // - c: a .git that is a FIFO. The walk's stat sees neither a directory nor a file and goes on up, as git does.
+    // - dev: a config that is /dev/zero, refused by the stat as a's is; big and fits: past 64 KB, and within.
+    // A FIFO swapped in after a's or c's stat would reach the reader as wt's does, so it is handed both FIFOs too.
     const a = path.join(root, "a");
     fs.mkdirSync(path.join(a, ".git"), { recursive: true });
     fifo(path.join(a, ".git", "config"));
@@ -297,11 +303,18 @@ test("the chat's folder's GitHub repo never hangs the extension host: a FIFO or 
       fs.writeFileSync(path.join(d, ".git", "config"), `${conf}${"# filler line\n".repeat(lines)}[remote "upstream"]\n\turl = git@github.com:other/repo.git\n`);
     }
     // In a child, so a read that blocks fails the test instead of hanging the run.
-    const probe = `const core = require(${JSON.stringify(path.resolve("test-out/core.js"))}); process.stdout.write(JSON.stringify(${JSON.stringify([a, wt, c, big, fits, dev])}.map((d) => core.githubRepo(d))));`;
+    const dirs = [a, wt, c, big, fits, dev];
+    const fifos = [path.join(a, ".git", "config"), path.join(c, ".git")];
+    const probe = `const core = require(${JSON.stringify(path.resolve("test-out/core.js"))});
+      const repos = ${JSON.stringify(dirs)}.map((d) => core.githubRepo(d));
+      const reads = ${JSON.stringify(fifos)}.map((f) => core.readGitFile(f));
+      process.stdout.write(JSON.stringify({ repos, reads }));`;
     const r = spawnSync(process.execPath, ["-e", probe], { timeout: 5000, encoding: "utf8" });
-    assert.equal(r.signal, null, "githubRepo returned instead of blocking on a FIFO");
+    assert.equal(r.signal, null, "returned instead of blocking on a FIFO");
+    const out = JSON.parse(r.stdout);
     // A FIFO commondir: the worktree's own git dir has no config, so no repo — never a hang.
-    assert.deepEqual(JSON.parse(r.stdout), [null, null, null, null, "other/repo", null]);
+    assert.deepEqual(out.repos, [null, null, null, null, "other/repo", null]);
+    assert.deepEqual(out.reads, [null, null], "the reader opens a FIFO .git or config without blocking and refuses it");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
