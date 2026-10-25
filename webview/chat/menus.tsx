@@ -9,9 +9,11 @@
 // row it is over shows, but Enter and Tab never pick it — a menu that opens
 // under a still pointer (the held send's 💡, decision 26) gets a row entered
 // with no move, and the next Enter must still send as it is. The caller hears
-// which row shows (the 💡 previews its card in the draft, decision 37) — the
-// pointer's, else the keys' — and nothing else: leaving a row for another
-// swaps it, leaving the menu goes back to the keys' row. The keys come
+// which row shows (the 💡 previews its card in the draft, decision 37): the
+// keys' row while there is one — what shows is what Enter applies, as VS
+// Code's suggest details follow the selection, not the pointer — else the
+// pointer's: leaving a row for another swaps it, leaving the menu ends it.
+// The pointer still marks the row it is over. The keys come
 // through the input, which keeps the focus as an editor does under its
 // suggestions, so typing goes on; no row is focused when the menu opens, so
 // Enter still sends until ↑/↓ move in.
@@ -83,11 +85,12 @@ export function CategoryMenu<T>({ kind, groups, onPick, onHover, onClose, anchor
     setHover(null);
     onHover?.(it ? it.value : null);
   };
-  /** The pointer's row, or none: what shows is it, else the keys' row. */
+  /** The pointer's row, or none: it shows only while the keys have none, whose preview stays what Enter applies (86). */
   const point = (it: MenuItem<T> | null) => {
     setHover(it?.key ?? null);
-    const shown = it ?? item(on);
-    onHover?.(shown ? shown.value : null);
+    const keyed = item(on);
+    if (keyed) return;
+    onHover?.(it ? it.value : null);
   };
   const openGroup = (g: MenuGroup<T>) => {
     if (g.id === cur?.id) return;

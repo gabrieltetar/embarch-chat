@@ -1462,6 +1462,41 @@ await check("Tab while a menu shows: it applies the row ↓ focused, takes the g
   assert.equal(await inInput(), true);
 });
 
+await check("while ↓ has focused a row, the pointer over another marks it but the preview stays the focused row's — what Enter applies (86)", async () => {
+  const DOWN = "";
+  await fresh();
+  const draft = "flash the new build and check it boots";
+  await exec("const t=document.querySelector('.composer textarea'); t.value=arguments[0]; t.dispatchEvent(new Event('input', {bubbles:true}))", [draft]);
+  const ask = await waitAssist("cards");
+  const cards = [
+    { id: "k1", category: "missing", title: "Name the board", why: "Claude will ask which", edit: { op: "append", text: "Board: the dev bench." } },
+    { id: "k2", category: "missing", title: "Name the log level", why: "So the log says enough", edit: { op: "append", text: "Log level: debug." } },
+  ];
+  await send([{ t: "cards", seq: ask.seq, cards }]);
+  await click(".bulb");
+  await settle();
+  const added = () => exec("return [...document.querySelectorAll('.overlay .add')].map(e=>e.textContent).join('')");
+  // No row focused: the pointer's row previews.
+  await hover(".menu.bulb .menu-item", "Name the log level");
+  assert.match(await added(), /Log level: debug/);
+  // ↓ focuses the first row: it previews, as VS Code's suggest details follow the selection.
+  await type(DOWN);
+  assert.deepEqual(await text(".menu.bulb .menu-item.on .menu-item-label"), ["Name the board"]);
+  assert.match(await added(), /Board: the dev bench/);
+  // The pointer moves over the rows: it marks the one it is over, and the preview stays the focused row's.
+  await hover(".menu.bulb .menu-item", "Name the board");
+  await hover(".menu.bulb .menu-item", "Name the log level");
+  assert.deepEqual(await text(".menu.bulb .menu-item.hover .menu-item-label"), ["Name the log level"]);
+  assert.match(await added(), /Board: the dev bench/);
+  assert.doesNotMatch(await added(), /Log level/);
+  await mouseAway();
+  assert.match(await added(), /Board: the dev bench/, "leaving the menu leaves it on");
+  // Enter applies what showed.
+  await hover(".menu.bulb .menu-item", "Name the log level");
+  await type(ENTER);
+  assert.equal(await value(), core.applyEdit(draft, cards[0].edit));
+});
+
 await check("a 💡 open while the panel narrows measures its previews again: a card that adds lines still moves nothing under the pointer (86)", async () => {
   await openGrowing();
   const wide = await rect(".composer .field");
