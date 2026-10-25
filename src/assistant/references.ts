@@ -6,9 +6,18 @@
 // 8 lines, about 600 tokens, inside decision 27's 1–3K — so "the widget PR"
 // can become the PR itself in the same single call: no extra wave, and no
 // network on a keystroke (26). Ghost text never gets the block (26's
-// latency). Pure, so the node tests run it.
+// latency).
+//
+// A title is anyone's to write — a PR opened on a repo in the desk's scope
+// is in the index — so none reaches the draft through Haiku: each line has
+// an id, Haiku answers a reference card by that id and the vague phrase it
+// replaces, and the replacement is written here from the index entry (its
+// key, `owner/repo#N` and its title quoted, cleaned and clipped). A title
+// in the block or the draft carries no `<`, `>`, line break or character
+// that shows nothing. Pure, so the node tests run it.
 
 import type { IndexIssue, IndexPr, RefIndex } from "../desk/client";
+import { stripInvisible } from "../wire/message";
 
 /** At most this many lines in the block. */
 export const REFS_LINES = 8;
@@ -17,6 +26,8 @@ export const REFS_CHARS = 2400;
 const TITLE_CAP = 90;
 /** PRs shown on one issue's line. */
 const PRS_PER_LINE = 2;
+/** The longest vague phrase a reference card replaces. */
+const FIND_CAP = 80;
 
 /** Function words and the words a request is written in: never what tells one title from another. */
 const STOP = new Set(
@@ -96,8 +107,14 @@ function prepare(index: RefIndex): Prepared {
   return p;
 }
 
-function clipTitle(t: string): string {
-  const s = t.replace(/\s+/g, " ").replace(/"/g, "'").trim();
+/** A title as the prompt and the draft carry it: one line, no `<`/`>` to close a block with, no quote to end its own, nothing unseen, clipped. */
+export function clipTitle(t: string): string {
+  const s = stripInvisible(t)
+    .text.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
+    .replace(/[<>]/g, "")
+    .replace(/"/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
   return s.length <= TITLE_CAP ? s : s.slice(0, TITLE_CAP - 1) + "…";
 }
 
@@ -189,6 +206,17 @@ function byWords(draft: string, idx: Prepared, opts: MatchOpts): Cand[] {
     .map(({ d }) => (d.issue ? { issue: d.issue } : { pr: d.pr! }));
 }
 
+/** One line of the <desk_references> block: an issue with the PRs that name it, or a PR alone. */
+export interface DeskRef {
+  /** Its id in the block, `r1`…: a reference card names its line by it. */
+  id: string;
+  /** The line as the prompt shows it, after `[id] `. */
+  line: string;
+  issue?: IndexIssue;
+  /** The PRs on its line, the one the draft matched first. */
+  prs: IndexPr[];
+}
+
 /**
  * The lines of the <desk_references> block for a draft: what it names
  * first, then what its words match, each an issue with the PRs that name
@@ -196,32 +224,82 @@ function byWords(draft: string, idx: Prepared, opts: MatchOpts): Cand[] {
  * merged` — or a PR alone; each issue and PR once, at most REFS_LINES lines
  * and REFS_CHARS characters.
  */
-export function deskReferences(index: RefIndex | null, draft: string, opts: MatchOpts = {}): string[] {
+export function deskReferences(index: RefIndex | null, draft: string, opts: MatchOpts = {}): DeskRef[] {
   if (!index || (!index.issues.length && !index.prs.length) || !draft.trim()) return [];
   const idx = prepare(index);
   const shownIssues = new Set<string>();
   const shownPrs = new Set<string>();
-  const lines: string[] = [];
+  const refs: DeskRef[] = [];
   let chars = 0;
-  const add = (line: string): boolean => {
-    if (lines.length >= REFS_LINES || chars + line.length + 1 > REFS_CHARS) return false;
-    lines.push(line);
-    chars += line.length + 1;
+  const add = (r: Omit<DeskRef, "id">): boolean => {
+    const id = `r${refs.length + 1}`;
+    const size = id.length + 3 + r.line.length + 1;
+    if (refs.length >= REFS_LINES || chars + size > REFS_CHARS) return false;
+    refs.push({ id, ...r });
+    chars += size;
     return true;
   };
   for (const c of [...named(draft, idx, index, opts), ...byWords(draft, idx, opts)]) {
-    if (lines.length >= REFS_LINES) break;
+    if (refs.length >= REFS_LINES) break;
     // A PR that names an issue the index has is shown on that issue's line, first among its PRs.
     const pr = "pr" in c ? c.pr : null;
     const issue = "issue" in c ? c.issue : (pr?.keys ?? []).map((k) => idx.issues.get(k.toUpperCase())).find(Boolean);
     if (issue && !shownIssues.has(issue.key.toUpperCase())) {
       const prs = [...(pr ? [pr] : []), ...(idx.prsOf.get(issue.key.toUpperCase()) ?? []).filter((p) => !pr || prId(p) !== prId(pr))].slice(0, PRS_PER_LINE);
-      if (!add([issueLine(issue), ...prs.map(prLine)].join(" · "))) continue;
+      if (!add({ line: [issueLine(issue), ...prs.map(prLine)].join(" · "), issue, prs })) continue;
       shownIssues.add(issue.key.toUpperCase());
       for (const p of prs) shownPrs.add(prId(p));
     } else if (pr && !shownPrs.has(prId(pr))) {
-      if (add(prLine(pr))) shownPrs.add(prId(pr));
+      if (add({ line: prLine(pr), prs: [pr] })) shownPrs.add(prId(pr));
     }
   }
-  return lines;
+  return refs;
+}
+
+/**
+ * What a reference card puts in place of the vague phrase, written here,
+ * never by Haiku: the PR as `PR owner/repo#36 "Widget" (ABC-154)`, or the
+ * issue first — `ABC-154 "Create the Widget" (PR owner/repo#36)` — when the
+ * phrase says issue, ticket or card, or the line has no PR.
+ */
+export function referenceText(ref: DeskRef, find: string): string {
+  const pr = ref.prs[0];
+  const issueFirst = !pr || (ref.issue && /\b(?:issues?|tickets?|cards?)\b/i.test(find));
+  const title = (t: string | undefined) => (t && clipTitle(t) ? ` "${clipTitle(t)}"` : "");
+  const prText = pr ? `PR ${pr.repo}#${pr.number}${title(pr.title)}` : "";
+  if (issueFirst && ref.issue) return `${ref.issue.key}${title(ref.issue.title)}${pr ? ` (${prText})` : ""}`;
+  return `${prText}${ref.issue ? ` (${ref.issue.key})` : ""}`;
+}
+
+/** The reference card Haiku named by line id and phrase, as an edit to the draft; null when the id is not a line it was sent or the phrase is not the draft's. */
+export function referenceEdit(refs: DeskRef[], id: unknown, find: unknown, draft: string): { op: "replace"; find: string; with: string } | null {
+  if (typeof id !== "string" || typeof find !== "string") return null;
+  const ref = refs.find((r) => r.id === id.replace(/[[\]\s]/g, ""));
+  if (!ref || !find.trim() || find.length > FIND_CAP || !draft.includes(find)) return null;
+  return { op: "replace", find, with: referenceText(ref, find) };
+}
+
+const lower = (s: string) => clipTitle(s).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+
+/**
+ * Whether text a card would add copies a run of a reference title's words
+ * — four in a row, or all of a shorter one of three — that the draft does
+ * not already hold: a card other than a reference card never carries a
+ * title into the draft (the titles are anyone's to write).
+ */
+export function copiesTitle(added: string, draft: string, refs: DeskRef[]): boolean {
+  const a = ` ${lower(added)} `;
+  const d = ` ${lower(draft)} `;
+  for (const r of refs) {
+    for (const t of [r.issue?.title, ...r.prs.map((p) => p.title)]) {
+      const w = t ? lower(t).split(" ").filter(Boolean) : [];
+      if (w.length < 3) continue;
+      const n = Math.min(4, w.length);
+      for (let i = 0; i + n <= w.length; i++) {
+        const run = ` ${w.slice(i, i + n).join(" ")} `;
+        if (a.includes(run) && !d.includes(run)) return true;
+      }
+    }
+  }
+  return false;
 }

@@ -1603,9 +1603,10 @@ test("the window's desk's reference index reaches each chat page, and the cards 
     const c = await waitFor(() => posted((m) => m.t === "cards" && m.seq === 882), 5000, "the cards");
     const made = calls().slice(n);
     assert.deepEqual(made.map((x) => x.task), ["cards"], "one call");
-    assert.ok(made[0].prompt.includes('<desk_references>\nIssues and PRs on this desk that the draft names, or whose titles share its words, best first:\nABC-154 "Create the Widget" Done · PR owner/repo#36 "Widget" merged\n</desk_references>'), made[0].prompt);
+    assert.ok(made[0].prompt.includes('<desk_references>\nIssues and PRs on this desk that the draft names, or whose titles share its words, best first:\n[r1] ABC-154 "Create the Widget" Done · PR owner/repo#36 "Widget" merged\n</desk_references>'), made[0].prompt);
+    // Haiku named line r1; the reference is the extension's, from the index.
     assert.equal(c.cards[0].edit.op, "replace");
-    assert.match(c.cards[0].edit.with, /owner\/repo#36/);
+    assert.equal(c.cards[0].edit.with, 'PR owner/repo#36 "Widget" (ABC-154)');
     // The chat's folder is a clone of owner/repo (decisions 87, 88): its page hears it, and "PR 36" in a draft is that repo's.
     fs.mkdirSync(path.join(folder, ".git"), { recursive: true });
     fs.writeFileSync(path.join(folder, ".git", "config"), '[core]\n\tbare = false\n[remote "origin"]\n\turl = git@github.com:owner/repo.git\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n');
@@ -1617,7 +1618,8 @@ test("the window's desk's reference index reaches each chat page, and the cards 
       chatView.webview.fromPage({ t: "assist", kind: "cards", text: "add a test like PR 36 did and do step #3", seq: 883 });
       await waitFor(() => posted((m) => m.t === "cards" && m.seq === 883), 5000, "the cards");
       const p = calls().slice(k)[0].prompt;
-      assert.ok(p.includes('best first:\nABC-154 "Create the Widget" Done · PR owner/repo#36 "Widget" merged\n</desk_references>'), p);
+      assert.ok(p.includes('[r1] ABC-154 "Create the Widget" Done · PR owner/repo#36 "Widget" merged'), p);
+      assert.ok(!p.includes("[r2]"), "step #3 named nothing");
     } finally {
       fs.rmSync(path.join(folder, ".git"), { recursive: true, force: true });
     }

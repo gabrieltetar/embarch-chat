@@ -110,11 +110,11 @@ export class HaikuAssistant extends EventEmitter {
     return typeof o?.completion === "string" ? cleanCompletion(input.draft, o.completion) : null;
   }
 
-  /** The third wave (26, 28, 36): cards that edit the draft (37). */
+  /** The third wave (26, 28, 36): cards that edit the draft (37), a reference card's edit written from the line it names (88). */
   async cards(sid: string, input: AssistInput): Promise<Card[] | null> {
     const r = await this.call(sid, "cards", cardsPrompt(input));
     if (!r) return null;
-    return parseCards(parseObject(r.text), input.draft, `c${this.seq}`);
+    return parseCards(parseObject(r.text), input.draft, `c${this.seq}`, input.references ?? []);
   }
 
   // ------------------------------------------------------------ chips
