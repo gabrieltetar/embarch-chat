@@ -377,6 +377,8 @@ export function ghCall(command: string): GhCall | null {
  * gives one, is in brackets right after the number.
  */
 const GH_SAID = /\b(pull request|issue) ([\w.-]+\/[\w.-]+)#(\d{1,7})(?: \(([^\n]*)\))?/gi;
+/** A line of gh's own status, by the mark it starts with — ✓ done, ! already so, + changes requested — colour or none. */
+const GH_STATUS = /^(?:\x1b\[[\d;]*m)*[✓!+](?:\x1b\[[\d;]*m)* /;
 
 /** What gh's output says about the PR or issue: `--json`/`gh api`'s object, view's `key:\tvalue` lines, or the URL it printed. */
 function ghResult(call: GhCall, result: string | undefined): { title?: string; url?: string; number?: number; repo?: string } {
@@ -399,9 +401,14 @@ function ghResult(call: GhCall, result: string | undefined): { title?: string; u
   }
   // A diff's or a check's links and lines are someone else's.
   if (call.action === "diff" || call.action === "checks") return {};
-  // merge, close, reopen, ready, review: gh's line naming it, by repo, number and title.
+  // merge, close, reopen, ready, review: gh's line naming it, by repo, number and title — its own status line, the
+  // first: what a later command in the line prints (a PR's body, a comment) may name any PR (decision 87).
   const kind = call.kind === "pr" ? "pull request" : "issue";
-  const said = [...head.matchAll(GH_SAID)].filter((m) => m[1].toLowerCase() === kind && (call.number === undefined || Number(m[3]) === call.number)).at(-1);
+  const said = head
+    .split("\n")
+    .filter((l) => GH_STATUS.test(l))
+    .flatMap((l) => [...l.matchAll(GH_SAID)])
+    .find((m) => m[1].toLowerCase() === kind && (call.number === undefined || Number(m[3]) === call.number));
   if (said) return { title: said[4]?.trim() || undefined, number: Number(said[3]), repo: said[2] };
   // create, comment, edit: the URL it made or acted on.
   const urls = [...head.matchAll(/https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:pull|issues)\/\d+(?:#[\w-]+)?/g)].map((m) => m[0]);
