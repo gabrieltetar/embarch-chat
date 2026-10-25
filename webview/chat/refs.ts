@@ -1,8 +1,9 @@
 // What the desk knows about the issues and PRs a chat may touch (embarch-chat
 // decision 87): a step that names only a key or a number — a status move, a
-// `gh pr merge 36` — takes its title and its link from here, but only once
-// its repo is known: the one the command or gh's output names, else the
-// chat's folder's own GitHub repo (`setChatRepo`, from the host). The host
+// `gh pr merge 36 -R owner/repo` — takes its title and its link from here,
+// but only once its repo is known: the one the command or gh's output
+// names, never the chat's folder's. That one (`setChatRepo`, from the host)
+// is what a "PR #36" in prose means (decision 88). The host
 // hands the index over with `setRefs`; until it does the index is empty and
 // a step shows what it carries itself. Pure, so the node tests run it.
 
@@ -44,10 +45,10 @@ export function refsVersion(): number {
 
 /**
  * The GitHub repo the chat's folder is a clone of, `owner/repo` (the host
- * reads it from the folder's git remote, github.com only): what a `gh pr`
- * run there acts on when it names no repo, and what a bare "PR #36" in
- * Claude's prose means (decision 88). Null when it has none, or more than
- * one gh could pick.
+ * reads it from the folder's git remote, github.com only): what a bare
+ * "PR #36" in Claude's prose means (decision 88) — never what a `gh` step
+ * naming no repo acted on (decision 87). Null when it has none, or more
+ * than one gh could pick.
  */
 export function setChatRepo(repo: string | null | undefined): void {
   chatRepoNow = repo ?? null;

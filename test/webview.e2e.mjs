@@ -978,10 +978,12 @@ await check("a key or PR in Claude's prose is a link once the desk's index knows
   assert.deepEqual(await text(".md code"), ["ABC-154"], "a code span stays code");
   assert.deepEqual(await text(".tool .subject-link"), ["ABC-154"], "the status step, listed in the run, took the index's link");
   assert.deepEqual(await text(".tool .subject-text"), ["#38"], "gh pr merge 38 with no repo known: the index's only #38 is not taken for it (87)");
-  // The chat's folder is a clone of owner/repo: "PR #38" and the merge are that repo's; "step #3" is still text (88).
+  // The chat's folder is a clone of owner/repo: "PR #38" in prose is that repo's; "step #3" is still text (88). The
+  // merge names no repo, and where its shell was is not known: still #38 alone (87).
   await send([snapshot({}, { ...OURS, githubRepo: "owner/repo" }), toolCall("toolu_x1", `${DESK}linear_set_status`, { key: "ABC-154", state: "Done" }), toolResult("toolu_x1", JSON.stringify({ key: "ABC-154", state: "Done" })), ...merge, say]);
   assert.deepEqual(await text(".md a.ref"), ["ABC-154", "owner/repo#36", "ABC-154", "PR #38"]);
-  assert.deepEqual(await text(".tool .subject-link"), ["#38Flash from CI↗", "ABC-154"]);
+  assert.deepEqual(await text(".tool .subject-link"), ["ABC-154"]);
+  assert.deepEqual(await text(".tool .subject-text"), ["#38"]);
   await send([snapshot(), toolCall("toolu_x1", `${DESK}linear_set_status`, { key: "ABC-154", state: "Done" }), toolResult("toolu_x1", JSON.stringify({ key: "ABC-154", state: "Done" })), say]);
   assert.deepEqual(await text(".tool .subject-link"), ["ABC-154Create the Widget↗"], "a step of its own shows the index's title too");
   const hover = await exec("return document.querySelector('.md a.ref').getAttribute('title')");
@@ -1005,29 +1007,22 @@ await check("a key or PR in Claude's prose is a link once the desk's index knows
   assert.equal((await text(".md a.ref")).length, 0);
 });
 
-await check("a gh naming no repo after an earlier step cd'd elsewhere is not the chat's folder's PR: shown, not linked, until a step cds back to the folder (87)", async () => {
-  // Claude Code's Bash keeps its cwd between steps: the merge ran in the other clone, whatever the folder's remote says.
-  const steps = [
-    toolCall("toolu_cd1", "Bash", { command: "cd ../other-clone && git pull", description: "Pull the other clone" }),
-    toolResult("toolu_cd1", "Already up to date."),
-    toolCall("toolu_cd2", "Bash", { command: "gh pr merge 36 --squash", description: "Merge it" }),
-    toolResult("toolu_cd2", ""),
-  ];
-  await send([{ t: "refs", refs: { issues: INDEX.issues, prs: INDEX.prs } }, snapshot({}, { ...OURS, githubRepo: "owner/repo" }), ...steps]);
-  assert.deepEqual(await text(".tool .subject-link"), [], "not owner/repo's #36");
+await check("a gh naming no repo is #N shown, not linked, whatever the chat's folder's repo and whatever steps came before it (87)", async () => {
+  // Claude Code's Bash keeps its cwd between steps and the chat's folder moves with each turn: the merge may have run in
+  // another clone, whatever the folder's remote says, and a link to the wrong PR is worse than none.
+  const merge = [toolCall("toolu_cd2", "Bash", { command: "gh pr merge 36 --squash", description: "Merge it" }), toolResult("toolu_cd2", "")];
+  const before = (command) => [toolCall("toolu_cd1", "Bash", { command, description: "Before" }), toolResult("toolu_cd1", "")];
+  await send([{ t: "refs", refs: { issues: INDEX.issues, prs: INDEX.prs } }]);
+  for (const steps of [merge, [...before("cd ../other-clone && git pull"), ...merge], [...before("(cd ../other-clone && git pull)"), ...merge], [...before("cd /work/rec/x && npm test"), ...merge]]) {
+    await send([snapshot({}, { ...OURS, githubRepo: "owner/repo" }), ...steps]);
+    assert.deepEqual(await text(".tool .subject-link"), [], steps[0].e?.message?.content?.[0]?.input?.command);
+    assert.deepEqual(await text(".tool .subject-text"), ["#36"]);
+  }
+  // Live as it arrives, too; and one that names its repo is that repo's #36, its title from the index.
+  await send([snapshot({}, { ...OURS, githubRepo: "owner/repo" })]);
+  await send(merge);
   assert.deepEqual(await text(".tool .subject-text"), ["#36"]);
-  // A cd in a subshell moves nothing after it: the folder's repo's #36, its title from the index.
-  await send([snapshot({}, { ...OURS, githubRepo: "owner/repo" }), toolCall("toolu_cd1", "Bash", { command: "(cd ../other-clone && git pull)" }), toolResult("toolu_cd1", ""), ...steps.slice(2)]);
-  assert.deepEqual(await text(".tool .subject-link"), ["#36Widget↗"]);
-  // Back in the folder, by its path: the next merge is the folder's repo's again, live as it arrives.
-  await send([snapshot({}, { ...OURS, githubRepo: "owner/repo" }), ...steps]);
-  assert.deepEqual(await text(".tool .subject-link"), []);
-  await send([
-    toolCall("toolu_cd3", "Bash", { command: "cd /work/rec/x && npm test", description: "Test" }),
-    toolResult("toolu_cd3", "ok"),
-    toolCall("toolu_cd4", "Bash", { command: "gh pr merge 36 --squash", description: "Merge it" }),
-    toolResult("toolu_cd4", ""),
-  ]);
+  await send([toolCall("toolu_cd3", "Bash", { command: "gh pr merge 36 --squash -R owner/repo", description: "Merge it" }), toolResult("toolu_cd3", "")]);
   assert.deepEqual(await text(".tool .subject-link"), ["#36Widget↗"]);
   await send([{ t: "refs", refs: null }]);
 });

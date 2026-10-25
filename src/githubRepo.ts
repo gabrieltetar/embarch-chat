@@ -1,10 +1,11 @@
-// The GitHub repo a chat's folder is a clone of (decisions 87, 88): what a
-// `gh pr merge 36` run there acts on when it names no repo, and what a bare
-// "PR #36" in Claude's prose or the owner's draft means. Read from the
-// folder's git config on disk — a few stats and, when it changed, one small
-// file, never a `git` run on each snapshot or cards call — and picked as
-// gh picks it with no terminal to ask on: the remote `gh repo set-default`
-// marked, else the first of upstream, github, origin, then the rest by name.
+// The GitHub repo a chat's folder is a clone of (decision 88): what a bare
+// "PR #36" in Claude's prose or the owner's draft means — never what a `gh`
+// step naming no repo acted on, as where its shell was is not known (87).
+// Read from the folder's git config on disk — a few stats and, when it
+// changed, one small file, never a `git` run on each snapshot or cards
+// call — and picked as gh picks it with no terminal to ask on: the remote
+// `gh repo set-default` marked, else the first of upstream, github, origin,
+// then the rest by name.
 // github.com only: another host's repo is no link of ours. None, or one that
 // cannot be read, is null, and a PR named without its repo stays unlinked.
 // It runs on the extension host, so a file it reads must not hold it up: a

@@ -40,8 +40,9 @@ export interface ChatView {
   atlas: { docs: string[]; boards: string[] } | null;
   /**
    * The chat's folder's GitHub repo, `owner/repo`, from its git remote
-   * (github.com only): what a `gh pr` step naming none acted on, and what
-   * "PR #36" in prose means (decisions 87, 88). Null without one.
+   * (github.com only): what "PR #36" in prose and in the draft means
+   * (decision 88) — never what a `gh` step naming no repo acted on
+   * (decision 87). Null without one.
    */
   githubRepo?: string | null;
   /** The time above each message, with a date line where the day changes (decision 68): embarchChat.showMessageTimestamps. */
