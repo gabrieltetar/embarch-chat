@@ -15,14 +15,10 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 import { createInterface } from "node:readline";
+import { INDEX, OWN, VAGUE } from "./refs-index.mjs";
 
 const core = createRequire(import.meta.url)("../test-out/core.js");
 const [, , scratch, ...only] = process.argv;
-if (!scratch) {
-  console.error("usage: record-haiku.mjs <scratch-dir> [scenario ...]");
-  process.exit(2);
-}
-fs.mkdirSync(scratch, { recursive: true });
 
 const BASE = {
   lastReply:
@@ -44,6 +40,17 @@ export const SCENARIOS = {
       context: { percentage: 68, totalTokens: 136000, maxTokens: 200000 },
     }),
   turn: () => core.turnPrompt({ ...BASE, draft: "", cliSuggestion: "flash it" }, { chips: true, name: true }),
+  // Decision 88: a vague pointer at another item's PR, with the desk's references the draft matches.
+  "cards-refs": () => core.cardsPrompt(REFS_CASE),
+};
+
+/** The cards-refs case: a chat on the gadget parser whose draft points at "the widget PR". */
+export const REFS_CASE = {
+  ...BASE,
+  lastReply: "The gadget parser reads every field now, and its unit test passes. I have not tested its error paths yet.",
+  item: { key: OWN.key, title: OWN.title, state: OWN.state, prs: [core.prLine(INDEX.prs.find((p) => p.number === 44))] },
+  draft: VAGUE,
+  references: core.deskReferences(INDEX, VAGUE, { ownKey: OWN.key, ownPrs: OWN.prs }),
 };
 
 function record(name, prompt) {
@@ -68,6 +75,12 @@ function record(name, prompt) {
   });
 }
 
+// Run, not imported (the tests import REFS_CASE).
 if (process.argv[1] && import.meta.url.endsWith(path.basename(process.argv[1]))) {
+  if (!scratch) {
+    console.error("usage: record-haiku.mjs <scratch-dir> [scenario ...]");
+    process.exit(2);
+  }
+  fs.mkdirSync(scratch, { recursive: true });
   for (const n of only.length ? only : Object.keys(SCENARIOS)) await record(n, SCENARIOS[n]());
 }

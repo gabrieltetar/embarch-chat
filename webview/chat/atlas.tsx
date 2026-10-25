@@ -35,7 +35,7 @@ export function setAtlas(info: AtlasInfo | null): void {
 }
 
 /** The hook markdown runs over plain text: citations out, the rest left to it. */
-function citations(text: string, _ctx: MdCtx): ComponentChildren[] | null {
+function citations(text: string, _ctx: MdCtx, key: string): ComponentChildren[] | null {
   if (!re) return null;
   const r = new RegExp(re.source, "g");
   const out: ComponentChildren[] = [];
@@ -51,7 +51,7 @@ function citations(text: string, _ctx: MdCtx): ComponentChildren[] | null {
     const label = m[0];
     out.push(
       <Link
-        key={`cite${n++}`}
+        key={`${key}cite${n++}`}
         class="cite"
         title={doc ? `Open ${doc}, page ${page}` : `Open board ${boardLabel}'s entry for ${ref}`}
         onOpen={() => vscodeApi.postMessage(doc ? { t: "atlas", doc, page: Number(page) } : { t: "atlas", board: boardLabel, ref })}
@@ -63,10 +63,8 @@ function citations(text: string, _ctx: MdCtx): ComponentChildren[] | null {
   }
   if (!n) return null;
   if (last < text.length) out.push(text.slice(last));
-  // Line breaks inside the run stay line breaks.
-  return out.flatMap((x, i) =>
-    typeof x === "string" && x.includes("\n") ? x.split("\n").flatMap((p, k) => (k ? [<br key={`cb${i}-${k}`} />, p] : [p])) : [x],
-  );
+  // Its text keeps its line breaks: markdown makes them breaks, after the other hooks.
+  return out;
 }
 
 inlineHooks.push(citations);

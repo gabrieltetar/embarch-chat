@@ -6,7 +6,7 @@
 import type { ChatState } from "../../src/wire/reducer";
 import type { RewindResult } from "../../src/wire/chat";
 import type { WireMessage } from "../../src/wire/types";
-import type { PrRef } from "../../src/desk/client";
+import type { IndexIssue, IndexPr, PrRef } from "../../src/desk/client";
 import type { ThreadGroup } from "../../src/desk/threads";
 import type { Card, Chip, PastPrompt } from "../../src/assistant/edits";
 import type { LibraryEntry } from "../../src/library/entries";
@@ -86,7 +86,9 @@ export type HostToChat =
   /** Text in at the input's caret: an @-mention of the editor's selection (Alt+Shift+K, 59); not when the editor chip carries these lines (`unlessChip`). */
   | { t: "insert"; text: string; unlessChip?: { path: string; startLine: number; endLine: number } }
   /** A reply kept on the work item (decision 40), held until the chat has one, or not kept and why. */
-  | { t: "kept"; entryId: string; kind: KeepKind; held?: boolean; error?: string };
+  | { t: "kept"; entryId: string; kind: KeepKind; held?: boolean; error?: string }
+  /** The window's desk's reference index, whole, each time it changes (decision 88); null: none. */
+  | { t: "refs"; refs: { issues: IndexIssue[]; prs: IndexPr[] } | null };
 
 /** What a kept reply is on the work item: the desk's note kinds a reply can be. */
 export type KeepKind = "finding" | "decision";

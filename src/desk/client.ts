@@ -264,6 +264,54 @@ export class DeskClient {
   postFocus(sessionId: string, folder: string): Promise<{ id: string }> {
     return this.call("POST", "/mailbox", { kind: "focus", session_id: sessionId, folder });
   }
+
+  /**
+   * A desk's reference index (embarch-desk decision 56; this panel's 88):
+   * every issue in its Linear scope and every PR in its repos. With `desk`,
+   * that desk's, else the open desk's — the same desk `/view` is asked for.
+   * Re-read only when the view's `refs_ms` moves.
+   */
+  async refs(desk?: string | null): Promise<RefIndex> {
+    const r = await this.call<Partial<RefIndex> | undefined>("GET", desk ? `/refs?desk=${encodeURIComponent(desk)}` : "/refs");
+    return {
+      desk_id: typeof r?.desk_id === "string" ? r.desk_id : null,
+      synced_ms: typeof r?.synced_ms === "number" ? r.synced_ms : null,
+      issues: Array.isArray(r?.issues) ? r.issues.filter((i) => i && typeof i.key === "string" && typeof i.title === "string") : [],
+      prs: Array.isArray(r?.prs) ? r.prs.filter((p) => p && typeof p.repo === "string" && typeof p.number === "number").map((p) => ({ ...p, keys: Array.isArray(p.keys) ? p.keys : [] })) : [],
+    };
+  }
+}
+
+// ------------------------------------------------------------ the index (88)
+
+/** An issue in a desk's reference index: `state` is Linear's own name (`Done`, `Canceled`, ...). */
+export interface IndexIssue {
+  key: string;
+  title: string;
+  state: string;
+  url: string;
+}
+
+/** A PR in a desk's reference index: `keys` are the issues it names, of teams the index knows. */
+export interface IndexPr {
+  repo: string;
+  number: number;
+  title: string;
+  /** `open`, `closed` or `merged`. */
+  state: string;
+  draft: boolean;
+  url: string;
+  branch: string;
+  keys: string[];
+}
+
+/** `GET /refs`: issues newest first; PRs by repo, newest first. */
+export interface RefIndex {
+  desk_id: string | null;
+  /** When a refresh last changed it; null before the first. */
+  synced_ms: number | null;
+  issues: IndexIssue[];
+  prs: IndexPr[];
 }
 
 // ------------------------------------------------------------------- shapes
@@ -345,6 +393,12 @@ export interface DeskView {
   open_desk: ViewDesk | null;
   ignore?: string[];
   sessions_waiting?: number;
+  /**
+   * When the viewed desk's reference index last changed (null: not synced
+   * yet). `/refs` is read again only when it moves (decision 88); a desk
+   * without the field (older than embarch-desk 90728f2) has no index.
+   */
+  refs_ms?: number | null;
   /** Every live session the desk tracks, on a card or not (the desk's addition for this panel). */
   sessions?: Array<ViewSession & { item_id?: string | null; desk_id?: string | null; untracked?: boolean }>;
   settings?: { chat_panel?: boolean };

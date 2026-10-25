@@ -2,11 +2,13 @@
 // every 3 s while the list is visible — slower while it is hidden, for the
 // waiting count every window shows (35) — joined with this window's own chats
 // from their streams and past chats from transcripts. The mailbox (desk
-// decision 33) is polled for each of the window's folders.
+// decision 33) is polled for each of the window's folders. The desk's
+// reference index (decision 88) is mirrored for the same desk the view is
+// asked for: read once, then again only when the view's `refs_ms` moves.
 
 import * as cp from "child_process";
 import { EventEmitter } from "events";
-import { DeskClient, DeskError, DeskView, MailboxEntry, ViewDesk, refusesDesk } from "./desk/client";
+import { DeskClient, DeskError, DeskView, MailboxEntry, RefIndex, ViewDesk, refusesDesk } from "./desk/client";
 import { ThreadGroup, buildThreads, isUnder, ownDesk, resolveDesk, waitingThreads } from "./desk/threads";
 import { TranscriptIndex, TranscriptMeta } from "./wire/transcript";
 import type { ChatManager } from "./chats";
@@ -44,9 +46,19 @@ async function worktrees(repo: string): Promise<string[]> {
     .map((l) => l.slice(9));
 }
 
-/** Events: `changed` (groups moved), `mail` (an entry this window took). */
+/** Events: `changed` (groups moved), `mail` (an entry this window took), `refs` (the reference index changed). */
 export class DeskService extends EventEmitter {
   view: DeskView | null = null;
+  /**
+   * The window's desk's reference index (decision 88), as the desk last
+   * served it; null before the first read and on a desk without one. The
+   * webviews get it from the host, never from the desk (decision 20).
+   */
+  refs: RefIndex | null = null;
+  /** The desk and `refs_ms` the index was read for: another pair reads it again. */
+  private refsAt: string | null = null;
+  /** The pair whose read last failed: logged once, asked again each poll. */
+  private refsFailed: string | null = null;
   desk: ViewDesk | null = null;
   groups: ThreadGroup[] = [];
   error: string | null = null;
@@ -241,6 +253,7 @@ export class DeskService extends EventEmitter {
     try {
       this.view = await this.fetchView();
       this.error = null;
+      await this.syncRefs(this.view);
       // Back after an outage: the mailbox is asked now, not after its backoff.
       if (wasDown || this.mailBackoffUntil) {
         this.mailBackoffUntil = 0;
@@ -259,6 +272,36 @@ export class DeskService extends EventEmitter {
     await this.refreshRepos();
     await this.refreshPast();
     this.rebuild();
+  }
+
+  /**
+   * The reference index of the desk this view is (decision 88): asked as
+   * the view was — `?desk=` for the window's own desk, else the open
+   * desk's — once, and again only when the view's `refs_ms` moves (it moves
+   * only when a refresh changed the index) or the desk changes. A desk
+   * whose view has no `refs_ms` predates the index: nothing is asked. A
+   * failed read is asked again on the next poll, the index kept till then.
+   */
+  private async syncRefs(v: DeskView): Promise<void> {
+    if (!("refs_ms" in v)) {
+      this.refsAt = null;
+      if (this.refs) {
+        this.refs = null;
+        this.emit("refs");
+      }
+      return;
+    }
+    const at = `${this.scopedTo ?? `open:${v.open_desk?.id ?? ""}`}@${v.refs_ms ?? "none"}`;
+    if (at === this.refsAt) return;
+    try {
+      this.refs = await this.client.refs(this.scopedTo);
+      this.refsAt = at;
+      this.log(`desk: reference index ${this.refs.desk_id ?? "(no desk)"}: ${this.refs.issues.length} issues, ${this.refs.prs.length} PRs`);
+      this.emit("refs");
+    } catch (e) {
+      if (this.refsFailed !== at) this.log(`desk: the reference index was not read: ${(e as Error).message}`);
+      this.refsFailed = at;
+    }
   }
 
   private async refreshRepos(): Promise<void> {

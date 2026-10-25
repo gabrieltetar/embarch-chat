@@ -14,6 +14,8 @@ import { elicitedUrl } from "../wire/dialogs";
 import { diffSides } from "../diff";
 import { atlasInfo, citationTarget } from "../atlas";
 import { DeskError } from "../desk/client";
+import type { PrRef } from "../desk/client";
+import { deskReferences, prLine } from "../assistant/references";
 import { jump } from "../jump";
 import { mentionItems, mentionOf } from "../mentions";
 import type { WireMessage } from "../wire/types";
@@ -96,16 +98,24 @@ export function headerFor(ctx: HostCtx, rec: ChatRecord): Header {
   };
 }
 
-/** What the assistant sees (decision 27): the draft, Claude's last reply, the item's card, the library's names, the context usage. */
-export function assistInput(ctx: HostCtx, rec: ChatRecord, draft: string): AssistInput {
+/**
+ * What the assistant sees (decision 27): the draft, Claude's last reply, the
+ * item's card — its PRs by title, the desk's index filling one the card
+ * lacks — the library's names, the context usage. `references`: also the
+ * desk's issues and PRs the draft matches, for the cards call (decision 88).
+ */
+export function assistInput(ctx: HostCtx, rec: ChatRecord, draft: string, opts: { references?: boolean } = {}): AssistInput {
   const h = headerFor(ctx, rec);
   const st = rec.chat.state;
+  const index = ctx.desk.refs;
+  const titled = (p: PrRef) => (p.title?.trim() ? p : { ...p, title: index?.prs.find((x) => x.number === p.number && x.repo.toLowerCase() === p.repo.toLowerCase())?.title });
   return {
     draft,
     lastReply: lastReply(st),
-    item: h.untracked ? null : { key: h.issueKey, title: h.title, state: h.stateName, prs: h.prs.map((p) => `PR #${p.number} ${p.draft ? "draft" : p.state}`) },
+    item: h.untracked ? null : { key: h.issueKey, title: h.title, state: h.stateName, prs: h.prs.map((p) => prLine(titled(p))) },
     library: ctx.library().map((e) => invocation(e, st.slashCommands) ?? e.name),
     context: st.context ? { percentage: st.context.percentage, totalTokens: st.context.totalTokens, maxTokens: st.context.maxTokens } : null,
+    ...(opts.references ? { references: deskReferences(index, draft, { ownKey: h.issueKey, ownPrs: h.prs }) } : {}),
   };
 }
 
@@ -151,6 +161,10 @@ export class ChatHost implements vscode.Disposable {
   private onEditor = () => {
     if (this.ready) this.pushEditor();
   };
+  /** The desk's reference index changed: every page gets it whole (decision 88). */
+  private onRefs = () => {
+    if (this.ready) this.pushRefs();
+  };
 
   /** Messages go in the order sent, though one waits — to resume its chat, for a terminal's output. */
   private sending: Promise<void> = Promise.resolve();
@@ -169,6 +183,7 @@ export class ChatHost implements vscode.Disposable {
     ctx.chats.on("changed", this.onSnapshotIfView);
     ctx.chats.on("draft", this.onDraft);
     ctx.desk.on("changed", this.onDesk);
+    ctx.desk.on("refs", this.onRefs);
     ctx.assistant.on("chips", this.onChips);
     ctx.history.on("changed", this.onPrompts);
     ctx.editor.on("changed", this.onEditor);
@@ -264,6 +279,17 @@ export class ChatHost implements vscode.Disposable {
     rec.draft = null;
   }
 
+  /**
+   * The window's desk's reference index (decision 88), for step rows' titles
+   * and links (87) and prose keys as links: what the desk served, the token
+   * never (20). Issues by key, title, state and link; PRs by repo, number,
+   * title, state, link, branch and the keys they name.
+   */
+  private pushRefs(): void {
+    const r = this.ctx.desk.refs;
+    this.post({ t: "refs", refs: r ? { issues: r.issues, prs: r.prs } : null });
+  }
+
   /** The owner's past prompts, when they changed since this page last got them. */
   private pushPrompts(): void {
     const v = this.ctx.history.version;
@@ -282,6 +308,8 @@ export class ChatHost implements vscode.Disposable {
       this.ready = true;
       this.promptsSent = -1;
       this.post({ t: "library", entries: this.ctx.library(), assistant: this.ctx.assistantOn() });
+      // Before the snapshot, so its rows are drawn with the index's titles and links.
+      this.pushRefs();
       this.snapshot();
       for (const k of this.keyed.splice(0)) this.post(k);
       return;
@@ -315,7 +343,8 @@ export class ChatHost implements vscode.Disposable {
         return;
       case "assist": {
         if (!rec.ours) return;
-        const input = assistInput(this.ctx, rec, m.text);
+        // The desk's references only for the cards (decision 88): ghost text keeps its latency (26).
+        const input = assistInput(this.ctx, rec, m.text, { references: m.kind === "cards" });
         if (m.kind === "ghost") {
           const text = await this.ctx.assistant.ghost(chat.sessionId, input, (t) => this.post({ t: "ghost", seq: m.seq, text: t, done: false }));
           this.post({ t: "ghost", seq: m.seq, text: text ?? "", done: true });
@@ -623,6 +652,7 @@ export class ChatHost implements vscode.Disposable {
     this.ctx.chats.off("changed", this.onSnapshotIfView);
     this.ctx.chats.off("draft", this.onDraft);
     this.ctx.desk.off("changed", this.onDesk);
+    this.ctx.desk.off("refs", this.onRefs);
     this.ctx.assistant.off("chips", this.onChips);
     this.ctx.history.off("changed", this.onPrompts);
     this.ctx.editor.off("changed", this.onEditor);

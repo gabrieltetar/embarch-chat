@@ -2,7 +2,9 @@
 // the draft, Claude's last reply, the work item's card, the library's entry
 // names and the chat's context usage — 1–3K tokens (decision 27) — and
 // answers one JSON object: a completion (24), cards (28, 36), or chips and a
-// name (25, 12).
+// name (25, 12). The cards call alone also sees the desk's references the
+// draft matches (decision 88, references.ts), so a vague "the widget PR"
+// becomes the PR itself.
 
 import { Card, CardCategory, ContextKind, DraftEdit, applyEdit, contextEdit } from "./edits";
 
@@ -16,6 +18,11 @@ export interface AssistInput {
   context: { percentage: number; totalTokens: number; maxTokens: number } | null;
   /** The CLI's own guess at the next prompt (`--prompt-suggestions`), when it has one. */
   cliSuggestion?: string | null;
+  /**
+   * The desk's issues and PRs the draft matches, one per line, best first
+   * (decision 88, `deskReferences`): only the cards call shows them.
+   */
+  references?: string[];
 }
 
 export const SYSTEM =
@@ -29,8 +36,11 @@ function clip(s: string, n: number): string {
   return s.length <= n ? s : "…" + s.slice(s.length - n);
 }
 
-/** The context every call shares (27). */
-export function contextBlock(i: AssistInput, opts: { draft?: boolean } = {}): string {
+/**
+ * The context every call shares (27). `references`: the desk's references
+ * the draft matches (88) — the cards call's, never ghost text's (26's latency).
+ */
+export function contextBlock(i: AssistInput, opts: { draft?: boolean; references?: boolean } = {}): string {
   const lines: string[] = [];
   if (i.item) {
     const head = [i.item.key, i.item.title].filter(Boolean).join(" ");
@@ -39,6 +49,11 @@ export function contextBlock(i: AssistInput, opts: { draft?: boolean } = {}): st
   } else lines.push("<work_item>none (untracked chat)</work_item>");
   if (i.context) lines.push(`<context_usage>${Math.round(i.context.percentage)}% of ${Math.round(i.context.maxTokens / 1000)}K tokens used</context_usage>`);
   if (i.library.length) lines.push(`<library_commands>${i.library.map((n) => "/" + n).join(", ")}</library_commands>`);
+  if (opts.references && i.references?.length) {
+    lines.push(
+      `<desk_references>\nIssues and PRs on this desk that the draft names, or whose titles share its words, best first:\n${i.references.join("\n")}\n</desk_references>`,
+    );
+  }
   lines.push(i.lastReply.trim() ? `<claude_last_reply>\n${clip(i.lastReply.trim(), REPLY_CAP)}\n</claude_last_reply>` : "<claude_last_reply>none yet: this is the chat's first message</claude_last_reply>");
   if (opts.draft !== false) lines.push(`<draft>${i.draft}</draft>`);
   return lines.join("\n");
@@ -56,6 +71,19 @@ export function ghostPrompt(i: AssistInput): string {
   ].join("\n");
 }
 
+/**
+ * With the desk's references (decision 88): a vague pointer the desk can
+ * resolve is replaced by the thing itself, not asked about; several that
+ * fit are one card each, which the hover preview lets the owner compare (37).
+ */
+const REFERENCES_RULE =
+  "<desk_references> lists the desk's issues and PRs that may be what the draft means. Check it first: when the draft points at an issue, a PR, a test or a file only vaguely " +
+  '("the parser PR", "like we did for the parser", "that ticket") and a line there fits, the first card is a missing card titled with that reference, and its edit is ' +
+  '{"op": "replace", "find": "<the vague phrase, exactly as the draft has it>", "with": "<that phrase naming the reference: its key, the PR as owner/repo#N, and its title>"} — ' +
+  "the reference itself, never a question about it. When several lines fit, one such card per line, at most 3. Only when none fits, ask in brackets. " +
+  'For example, with the line ABC-12 "Make the parser" Done · PR owner/repo#7 "Parser" merged, the draft "test it like the parser PR did" gets ' +
+  '{"category": "missing", "title": "Name PR owner/repo#7", "why": "The desk knows the parser PR", "edit": {"op": "replace", "find": "the parser PR", "with": "PR owner/repo#7 \\"Parser\\" (ABC-12)"}}.';
+
 /** The third wave: cards on a 2 s pause or just before send (26, 28, 36). */
 export function cardsPrompt(i: AssistInput): string {
   return [
@@ -66,9 +94,10 @@ export function cardsPrompt(i: AssistInput): string {
     '- {"category": "improve", "title": "<6 words at most>", "why": "<one line>", "edit": <edit>} — the prompt put better: clearer, more specific, the expected result stated.',
     '- {"category": "context", "kind": "compact" | "handoff" | "background", "title": "<6 words at most>", "why": "<one line>", "focus": "<what the draft is about, 3 to 8 words>"} — compact when the context is filling (above about 60%) and the draft moves to new work; handoff when the context is nearly full (above about 80%) or the draft starts unrelated work; background when the draft asks for a long, self-contained job (a long build or test run, a sweep, research) that Claude can do while the chat stays free.',
     'An edit is {"op": "append", "text": "..."}, {"op": "prepend", "text": "..."}, or {"op": "replace", "find": "<an exact substring of the draft>", "with": "..."}.',
+    ...(i.references?.length ? [REFERENCES_RULE] : []),
     "Keep the engineer's words and voice; change only what the card is about. Never invent facts that are not in the context.",
     "",
-    contextBlock(i),
+    contextBlock(i, { references: true }),
   ].join("\n");
 }
 

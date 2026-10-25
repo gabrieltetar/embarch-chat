@@ -15,6 +15,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ScratchDesk, haveDesk } from "./scratch-desk.mjs";
+import { INDEX, VAGUE } from "./refs-index.mjs";
 
 const require = createRequire(import.meta.url);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -1565,4 +1566,48 @@ test("Ctrl+Alt+Esc with lines selected: the editor chip is brought up to date fi
     mock.vscode.window.visibleTextEditors = [];
     mock.bus.emit("activeEditor", undefined);
   }
+});
+
+// Last: it gives the window's folder a desk of its own, which every test before it ran without.
+test("the window's desk's reference index reaches each chat page, and the cards call carries what the draft matches — ghost text never (decision 88)", { skip }, async () => {
+  const sid = await startUntracked("basic");
+  const idOf = (r) => r.id ?? r.desk?.id;
+  const d = idOf(await client.call("POST", "/desks", { name: "Refs desk", firmware_repos: [folder], github_repos: ["owner/repo"] }));
+  // Seeded as a refresh would leave it, while the desk is stopped; it cannot read owner/repo (no account), so it keeps it.
+  await desk.stop();
+  const prs = INDEX.prs.filter((p) => p.repo === "owner/repo");
+  fs.writeFileSync(path.join(dir, "desk", "data", "refs.json"), JSON.stringify({ [d]: { linear_scope: "", repos: ["owner/repo"], index: { ...INDEX, desk_id: d, prs } } }));
+  await desk.start();
+  await mock.state.commands.get("embarchChat.refresh")();
+  const got = await waitFor(() => posted((m) => m.t === "refs" && m.refs?.issues.some((i) => i.key === "ABC-154")), 8000, "the index on the page");
+  assert.deepEqual(got.refs.issues.map((i) => i.key), INDEX.issues.map((i) => i.key));
+  assert.deepEqual(got.refs.prs.map((p) => `${p.repo}#${p.number}`), prs.map((p) => `${p.repo}#${p.number}`));
+  assert.ok(!JSON.stringify(got).includes(fs.readFileSync(desk.tokenPath, "utf8").trim()), "never the token (20)");
+  // A page that loads later gets it with its first snapshot, before it.
+  await mock.state.commands.get("embarchChat.openInEditor")();
+  const panel = mock.state.panels.at(-1);
+  panel.webview.fromPage({ t: "ready" });
+  await waitFor(() => panel.webview.posted.some((m) => m.t === "snapshot"), 3000, "the tab's snapshot");
+  const order = panel.webview.posted.map((m) => m.t);
+  assert.ok(order.indexOf("refs") >= 0 && order.indexOf("refs") < order.indexOf("snapshot"), order.join(","));
+  panel.dispose();
+  // Ghost text keeps its latency: no references (26).
+  chatView.webview.fromPage({ t: "assist", kind: "ghost", text: VAGUE, seq: 881 });
+  await waitFor(() => posted((m) => m.t === "ghost" && m.seq === 881 && m.done), 5000, "the ghost text");
+  assert.ok(!calls().filter((x) => x.task === "ghost").at(-1).prompt.includes("desk_references"));
+  // The cards: the references the draft matches, in the same single call, and the card names the PR.
+  process.env.FAKE_HAIKU_CARDS = path.join(here, "fixtures", "haiku", "cards-refs.jsonl");
+  try {
+    const n = calls().length;
+    chatView.webview.fromPage({ t: "assist", kind: "cards", text: VAGUE, seq: 882 });
+    const c = await waitFor(() => posted((m) => m.t === "cards" && m.seq === 882), 5000, "the cards");
+    const made = calls().slice(n);
+    assert.deepEqual(made.map((x) => x.task), ["cards"], "one call");
+    assert.ok(made[0].prompt.includes('<desk_references>\nIssues and PRs on this desk that the draft names, or whose titles share its words, best first:\nABC-154 "Create the Widget" Done · PR owner/repo#36 "Widget" merged\n</desk_references>'), made[0].prompt);
+    assert.equal(c.cards[0].edit.op, "replace");
+    assert.match(c.cards[0].edit.with, /owner\/repo#36/);
+  } finally {
+    delete process.env.FAKE_HAIKU_CARDS;
+  }
+  assert.equal(lastSnapshot().state.sessionId, sid);
 });

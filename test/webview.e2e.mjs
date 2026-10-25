@@ -18,6 +18,7 @@ import * as http from "node:http";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { MEASURE_OPEN, MEASURE_UPDATES, longSession, streamedReply } from "./longsession.mjs";
+import { INDEX } from "./refs-index.mjs";
 
 const require = createRequire(import.meta.url);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -953,6 +954,47 @@ await check("a step that touches a connector shows its glyph and the thing by na
   assert.deepEqual((await posts()).filter((p) => p.t === "openLink"), [{ t: "openLink", url: "https://github.com/owner/repo/pull/36" }]);
   assert.equal((await text(".tool.run > .steps")).length, 0, "the run stays folded");
   await shot("chat-subject-run");
+});
+
+await check("a key or PR in Claude's prose is a link once the desk's index knows it, and a step row drawn before the index arrived takes its title and link (decision 88)", async () => {
+  const DESK = "mcp__plugin_embarch-desk_embarch-desk__";
+  const say = {
+    t: "event",
+    e: {
+      type: "assistant",
+      message: { id: "m-refs", content: [{ type: "text", text: "Done in ABC-154, merged as owner/repo#36; #36 alone is two PRs, ABC-999 none, `ABC-154` code and **ABC-154** bold." }] },
+      parent_tool_use_id: null,
+    },
+  };
+  await send([{ t: "refs", refs: null }, snapshot(), toolCall("toolu_x1", `${DESK}linear_set_status`, { key: "ABC-154", state: "Done" }), toolResult("toolu_x1", JSON.stringify({ key: "ABC-154", state: "Done" })), say]);
+  assert.equal((await text(".md a.ref")).length, 0, "no index, no links");
+  assert.deepEqual(await text(".tool .subject-text"), ["ABC-154"], "the step names the key alone");
+  // The index arrives: the rows already drawn are drawn again.
+  await send([{ t: "refs", refs: { issues: INDEX.issues, prs: INDEX.prs } }]);
+  assert.deepEqual(await text(".md a.ref"), ["ABC-154", "owner/repo#36", "ABC-154"], "known keys and owner/repo#N, bold too; #36 two repos share stays text");
+  const md = (await text(".reply .md"))[0];
+  assert.ok(md.includes("ABC-999 none") && md.includes("#36 alone"), md);
+  assert.deepEqual(await text(".md code"), ["ABC-154"], "a code span stays code");
+  assert.deepEqual(await text(".tool .subject-link"), ["ABC-154Create the Widget↗"], "the step row took the index's title and link");
+  const hover = await exec("return document.querySelector('.md a.ref').getAttribute('title')");
+  assert.match(hover, /^ABC-154 Create the Widget · Done\nOpens in Linear: https:\/\/linear\.app\//);
+  // A real click opens it once, through the extension: the issue in Linear, the PR in GitHub.
+  const refs = await wd("POST", `${S}/elements`, { using: "css selector", value: ".md a.ref" });
+  await exec("window.__posts = []; window.__vscode = [];");
+  await realClick(refs[0]);
+  await realClick(refs[1]);
+  assert.deepEqual(await exec("return window.__vscode"), [], "VS Code's own handler opened nothing");
+  assert.deepEqual(
+    (await posts()).filter((p) => p.t === "openLink"),
+    [
+      { t: "openLink", url: INDEX.issues.find((i) => i.key === "ABC-154").url },
+      { t: "openLink", url: "https://github.com/owner/repo/pull/36" },
+    ],
+  );
+  await shot("chat-refs");
+  // Emptied again: the links go.
+  await send([{ t: "refs", refs: null }]);
+  assert.equal((await text(".md a.ref")).length, 0);
 });
 
 await check("no link has an href: VS Code's own handler never opens one, each opens once, and vscode:, mailto: and command: links are refused", async () => {

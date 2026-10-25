@@ -32,6 +32,11 @@ export function setRefs(r: { issues: RefIssue[]; prs: RefPr[] } | null): void {
   prs = r?.prs ?? [];
 }
 
+/** Whether the host has handed over an index with anything in it. */
+export function hasRefs(): boolean {
+  return issues.size > 0 || prs.length > 0;
+}
+
 /** An issue by its key, in any case. */
 export function issueRef(key: string): RefIssue | null {
   return issues.get(key.trim().toUpperCase()) ?? null;

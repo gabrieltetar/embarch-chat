@@ -27,6 +27,8 @@ import { benchRenderer } from "./bench";
 import { BackgroundPanel, BackgroundToggle } from "./background";
 import { Queued } from "./queue";
 import { setAtlas } from "./atlas";
+import "./reflinks";
+import { setRefs } from "./refs";
 import { LimitBannerView } from "./limits";
 import { FOOTER_COMMANDS, McpPill, ModelPill, RemotePill, footerCommand } from "./footer";
 import { KeepReply } from "./keep";
@@ -178,6 +180,8 @@ function App() {
   const [library, setLibrary] = useState<{ entries: LibraryEntry[]; assistant: boolean }>({ entries: [], assistant: false });
   const [chips, setChips] = useState<{ sid: string; chips: Chip[] } | null>(null);
   const [editor, setEditor] = useState<EditorChip | null>(null);
+  // The desk's reference index (decision 88), set whole by the host: each one draws the rows that read it again.
+  const [refsV, setRefsV] = useState(0);
   const live = useRef<ChatState | null>(null);
   const frame = useRef(0);
   const scroller = useRef<HTMLDivElement>(null);
@@ -236,6 +240,10 @@ function App() {
         case "editor":
           setEditor(m.editor);
           return;
+        case "refs":
+          setRefs(m.refs);
+          setRefsV((v) => v + 1);
+          return;
       }
     };
     window.addEventListener("message", on);
@@ -273,8 +281,9 @@ function App() {
         : undefined,
       subjects: { uiUrl: ui, own: h ? { itemId: ownId, title: ownTitle, issueKey: ownKey, issueUrl: ownUrl } : null },
     }),
-    // The card's fields, not the header object a desk poll replaces.
-    [cwd, turnRuns, sid, acts, ui, !!h, ownId, ownTitle, ownKey, ownUrl],
+    // The card's fields, not the header object a desk poll replaces; and the desk's index, which a step's
+    // title and link and a key in prose read (decisions 87, 88): rows already drawn take it when it arrives.
+    [cwd, turnRuns, sid, acts, ui, !!h, ownId, ownTitle, ownKey, ownUrl, refsV],
   );
 
   if (empty || !state || !model.view) {
@@ -423,8 +432,9 @@ function App() {
           renderRow(e)
         ) : (
           // A settled row is drawn once (decision 85): of ctx these rows read only its links and cwd, so a turn
-          // starting or ending draws none of them again. A tool's row has its own memo, which also follows its subagent's steps.
-          <Settled deps={[e, view, reply.get(e.id), cwd, offering(e)]} render={() => renderRow(e)} />
+          // starting or ending draws none of them again — the desk's index arriving does, for keys in prose (88).
+          // A tool's row has its own memo, which also follows its subagent's steps.
+          <Settled deps={[e, view, reply.get(e.id), cwd, offering(e), refsV]} render={() => renderRow(e)} />
         )}
       </div>
     );

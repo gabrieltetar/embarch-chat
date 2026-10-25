@@ -2038,10 +2038,12 @@ body.vscode-high-contrast-light .on {
 .bench-detail {
   font-size: 0.88em;
 }
-a.cite {
+a.cite,
+a.ref {
   border-bottom: 1px dotted var(--link);
 }
-a.cite:hover {
+a.cite:hover,
+a.ref:hover {
   text-decoration: none;
 }
 

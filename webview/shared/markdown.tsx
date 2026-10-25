@@ -6,8 +6,9 @@
 // when it is a path, and not at all otherwise; none carries an href
 // (./link.tsx says why). A link's own text holds no other link — a URL, a
 // file path or a citation in it is text — so a click opens one thing.
-// `inlineHooks` is the seam for atlas citation links (decision 16): each may
-// turn a run of plain text into nodes.
+// `inlineHooks` is the seam for atlas citation links (decision 16) and the
+// desk's keys and PRs (88): each may turn a run of plain text into nodes,
+// and the next one reads the text the one before left as text.
 
 import type { ComponentChildren, VNode } from "preact";
 import { memo } from "preact/compat";
@@ -19,7 +20,8 @@ export interface MdCtx {
   openFile(path: string, line?: number): void;
 }
 
-export type InlineHook = (text: string, ctx: MdCtx) => ComponentChildren[] | null;
+/** `key`: a prefix for the keys of the nodes it makes, unique among their siblings. */
+export type InlineHook = (text: string, ctx: MdCtx, key: string) => ComponentChildren[] | null;
 export const inlineHooks: InlineHook[] = [];
 
 const FILE_RE = /^((?:[\w@.~-]+\/)*[\w@.~-]+\.[A-Za-z0-9]{1,8})(?::(\d+))?(?::\d+)?$/;
@@ -27,17 +29,20 @@ const INLINE_RE =
   /(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)|\[([^\]\n]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)|(https?:\/\/[^\s<>()]*[^\s<>().,;:!?'"`])|\*\*([^*\n](?:[\s\S]*?[^*\s])?)\*\*|~~([\s\S]+?)~~|\*([^*\s](?:[^*\n]*?[^*\s])?)\*|(?<![\w])_([^_\s](?:[^_\n]*?[^_\s])?)_(?![\w])/g;
 
 function plain(text: string, ctx: MdCtx, key: string, noLinks: boolean): ComponentChildren[] {
+  let parts: ComponentChildren[] = [text];
   if (!noLinks) {
-    for (const hook of inlineHooks) {
-      const r = hook(text, ctx);
-      if (r) return r;
-    }
+    inlineHooks.forEach((hook, h) => {
+      parts = parts.flatMap((p, i) => (typeof p === "string" && p ? (hook(p, ctx, `${key}h${h}.${i}.`) ?? [p]) : [p]));
+    });
   }
-  const parts = text.split("\n");
+  // Line breaks inside the run stay line breaks.
   const out: ComponentChildren[] = [];
   parts.forEach((p, i) => {
-    if (i) out.push(<br key={`${key}b${i}`} />);
-    if (p) out.push(p);
+    if (typeof p !== "string") return void out.push(p);
+    p.split("\n").forEach((s, k) => {
+      if (k) out.push(<br key={`${key}b${i}.${k}`} />);
+      if (s) out.push(s);
+    });
   });
   return out;
 }

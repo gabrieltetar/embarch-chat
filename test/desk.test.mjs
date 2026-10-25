@@ -249,6 +249,80 @@ test("on a desk that reads ?desk=, a window on another desk shows its own desk's
   }
 });
 
+/** A client that records every route it asks. */
+function counted(c) {
+  const asked = [];
+  const call = c.call.bind(c);
+  c.call = (method, p, ...rest) => (asked.push(p), call(method, p, ...rest));
+  return asked;
+}
+
+test("the window's desk's reference index is read once, as its view is asked, and again only when the view's refs_ms moves (decision 88)", live, async () => {
+  // A desk of its own on the probe port: its refs.json is seeded while it is stopped, as a refresh would leave it.
+  // Each desk's scope is a GitHub repo the scratch desk cannot read (no account): its refresh fails and keeps the index.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "embarch-chat-refs-"));
+  const sd = await new ScratchDesk(path.join(root, "desk"), PROBE_PORT, path.join(root, "claude")).start();
+  let svc = null;
+  try {
+    const c = sd.client;
+    const repo = (n) => (fs.mkdirSync(path.join(root, n), { recursive: true }), path.join(root, n));
+    const idOf = (r) => r.id ?? r.desk?.id;
+    const a = idOf(await c.call("POST", "/desks", { name: "Desk A", firmware_repos: [repo("fw-a")], github_repos: ["owner/docs"] }));
+    const b = idOf(await c.call("POST", "/desks", { name: "Desk B", firmware_repos: [repo("fw-b")], github_repos: ["owner/repo"] }));
+    await c.call("POST", "/open", { desk: a });
+    const issue = (key, title, state = "Done") => ({ key, title, state, url: `https://linear.app/acme/issue/${key}` });
+    const widget = { repo: "owner/repo", number: 36, title: "Widget", state: "merged", draft: false, url: "https://github.com/owner/repo/pull/36", branch: "abc-154-widget", keys: ["ABC-154"] };
+    const seed = async (bIssues, ms) => {
+      await sd.stop();
+      fs.writeFileSync(
+        path.join(root, "desk", "data", "refs.json"),
+        JSON.stringify({
+          [a]: { linear_scope: "", repos: ["owner/docs"], index: { desk_id: a, synced_ms: 500, issues: [issue("ABC-900", "On the open desk")], prs: [] } },
+          [b]: { linear_scope: "", repos: ["owner/repo"], index: { desk_id: b, synced_ms: ms, issues: bIssues, prs: [widget] } },
+        }),
+      );
+      await sd.start();
+    };
+    await seed([issue("ABC-154", "Create the Widget")], 1000);
+    const client = new core.DeskClient({ baseUrl: sd.url, tokenPath: sd.tokenPath });
+    const asked = counted(client);
+    const refsAsked = () => asked.filter((p) => p.startsWith("/refs"));
+    const chats = new core.ChatManager(() => ({ claudePath: "/bin/false", idleMs: 60000, log: () => {} }));
+    svc = new core.DeskService(() => client, chats, () => [path.join(root, "fw-b")], () => {});
+    let events = 0;
+    svc.on("refs", () => events++);
+    for (let i = 0; i < 3; i++) await svc.poll();
+    assert.equal(svc.view.refs_ms, 1000, "the view carries the window's desk's refs_ms");
+    assert.deepEqual(refsAsked(), [`/refs?desk=${encodeURIComponent(b)}`], "once, for the window's own desk, as its view is asked");
+    assert.equal(svc.refs.desk_id, b);
+    assert.deepEqual(svc.refs.issues.map((i) => [i.key, i.title, i.state]), [["ABC-154", "Create the Widget", "Done"]]);
+    assert.deepEqual(svc.refs.prs.map((p) => [p.repo, p.number, p.keys]), [["owner/repo", 36, ["ABC-154"]]]);
+    assert.equal(events, 1);
+    // A refresh that changed the index moves refs_ms: read again on the next poll, once.
+    await seed([issue("ABC-155", "Blink the widget", "In Progress"), issue("ABC-154", "Create the Widget")], 2000);
+    for (let i = 0; i < 3; i++) await svc.poll();
+    assert.equal(refsAsked().length, 2, JSON.stringify(refsAsked()));
+    assert.deepEqual(svc.refs.issues.map((i) => i.key), ["ABC-155", "ABC-154"]);
+    assert.equal(events, 2);
+    // A restart that serves the same index moves nothing.
+    await seed([issue("ABC-155", "Blink the widget", "In Progress"), issue("ABC-154", "Create the Widget")], 2000);
+    await svc.poll();
+    assert.equal(refsAsked().length, 2);
+    // The desk away: the index stays, and nothing is asked until it is back.
+    await sd.stop();
+    await svc.poll();
+    assert.ok(svc.error);
+    assert.equal(svc.refs.issues.length, 2, "kept while the desk is away");
+    await sd.start();
+    await svc.poll();
+    assert.equal(refsAsked().length, 2, "back with the same refs_ms: not read again");
+  } finally {
+    svc?.dispose();
+    await sd.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("on a desk older than the panel: not another desk's cards, and a line to update it", { skip: haveOldDesk ? false : "EMBARCH_DESK_OLD_BIN not set" }, async () => {
   // The probe port is free by now: the old desk takes it for this test only.
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "embarch-chat-olddesk-"));
@@ -257,8 +331,11 @@ test("on a desk older than the panel: not another desk's cards, and a line to up
     const c = old.client;
     assert.equal(await c.readsDeskParam(), false, "it ignores ?desk=");
     assert.equal(await c.markClient("0b0e1a1e-0000-4000-8000-0000000000d1"), false, "it keeps no client");
+    const asked = counted(c);
     const { svc, onA, onB, items } = await twoDesks(c, root);
     try {
+      assert.ok(!asked.some((p) => p.startsWith("/refs")), "a view without refs_ms: no index to read (decision 88)");
+      assert.equal(svc.refs, null);
       assert.ok(!items().includes(onA), `the open desk's card is not shown as this window's: ${JSON.stringify(items())}`);
       assert.ok(!items().includes(onB), "the old desk cannot give the window's desk's cards");
       assert.match(svc.notice, /^Update embarch-desk: the running one predates this panel — only chats in this window's repos show\.$/);
