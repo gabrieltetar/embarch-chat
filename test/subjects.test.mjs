@@ -449,9 +449,11 @@ test("a run lists what its steps touched: each thing once, at most 3, then +N; i
     r.shown.map((s) => s.id),
     ["linear:ABC-154", "github:owner/repo#36", "slack:C0123ABCD"],
   );
-  assert.equal(r.more, 1, "the study; #36 named without its repo is the same #36; the head's card is on the head's line");
+  assert.equal(r.more, 2, "the study, and #36 named without its repo — never taken for owner/repo#36 (87); the head's card is on the head's line");
   // The second sighting of ABC-154 knew its title and link: the entry has them, at the first one's place.
   assert.deepEqual([r.shown[0].title, r.shown[0].url], ["Make the widget blink", ISSUE.url]);
   assert.deepEqual(core.runSubjects(steps.slice(0, 2), env), { shown: [], more: 0 }, "a run of one thing is its head's");
-  assert.deepEqual(core.runSubjects(steps, env, 10).shown.map((s) => s.label), ["ABC-154", "#36", "#general", "study st-42"]);
+  const all = core.runSubjects(steps, env, 10).shown;
+  assert.deepEqual(all.map((s) => s.label), ["ABC-154", "#36", "#general", "study st-42", "#36"]);
+  assert.deepEqual([all[4].id, all[4].url], ["github:#36", undefined], "the bare #36 keeps no link");
 });

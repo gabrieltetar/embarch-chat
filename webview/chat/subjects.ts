@@ -608,7 +608,7 @@ function subjectOf(t: Step, env: SubjectEnv): Subject | null {
 
 /** Two sightings of one thing: what either knows. */
 function merge(a: Subject, b: Subject): Subject {
-  return { ...a, title: a.title ?? b.title, url: a.url ?? b.url, where: a.url ? a.where : (b.where ?? a.where), id: a.id.startsWith("github:#") ? b.id : a.id };
+  return { ...a, title: a.title ?? b.title, url: a.url ?? b.url, where: a.url ? a.where : (b.where ?? a.where) };
 }
 
 /**
@@ -631,9 +631,11 @@ export function runSubjects(steps: readonly Entry[], env: SubjectEnv, max = 3): 
   return { shown: all.slice(0, max), more: Math.max(0, all.length - max) };
 }
 
-/** One thing: the same id, or a PR one step named without its repo and another with it. */
+/**
+ * One thing: the same id. A PR one step named without its repo stays apart
+ * from one another step named with it — taking it for that one is a guess
+ * across steps, and a wrong link is worse than none (87).
+ */
 function same(a: Subject, b: Subject): boolean {
-  if (a.id === b.id) return true;
-  if (a.connector !== "github" || b.connector !== "github") return false;
-  return a.label === b.label && (a.id.startsWith("github:#") || b.id.startsWith("github:#"));
+  return a.id === b.id;
 }
