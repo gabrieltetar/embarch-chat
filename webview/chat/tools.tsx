@@ -7,7 +7,8 @@
 // A step running in the foreground offers "Run in background"; one that runs
 // there shows its output as it goes (port items 70, 71; background.tsx).
 // A step that touches a connector names what it touched, the connector's
-// glyph before it, as a link (decision 87, subjects.ts).
+// glyph before it, as a link (decision 87, subjects.ts); a step on one file
+// names it as a link that opens it beside the chat (decision 93).
 
 import { memo } from "preact/compat";
 import { useEffect, useState } from "preact/hooks";
@@ -86,6 +87,21 @@ export function toolSummary(name: string, input: Record<string, unknown>, cwd: s
       return first ?? "";
     }
   }
+}
+
+/**
+ * The one file a step read or changed, and where in it: a Read's first line
+ * asked for, an edit's first changed hunk (the CLI's own patch); none for a
+ * step without a path.
+ */
+export function stepFile(t: Pick<ToolEntry, "name" | "input" | "structured">): { path: string; line?: number } | null {
+  const key = t.name === "NotebookEdit" ? "notebook_path" : ["Read", "Write", "Edit", "MultiEdit"].includes(t.name) ? "file_path" : null;
+  const p = key ? t.input[key] : undefined;
+  if (typeof p !== "string" || !p) return null;
+  const offset = t.input.offset;
+  if (t.name === "Read") return typeof offset === "number" && offset > 0 ? { path: p, line: Math.floor(offset) } : { path: p };
+  const first = (t.structured as { structuredPatch?: Array<{ newStart?: unknown }> } | undefined)?.structuredPatch?.[0]?.newStart;
+  return typeof first === "number" && first > 0 ? { path: p, line: first } : { path: p };
 }
 
 export function toolLabel(name: string): string {
@@ -174,6 +190,7 @@ function StepLabel({ t, ctx, tag = true }: { t: ToolEntry; ctx: ToolCtx; tag?: b
   const summary = toolSummary(t.name, t.input, ctx.cwd);
   const what = toolIntent(t.name, t.input);
   const subject = stepSubject(t, ctx.subjects ?? {});
+  const file = stepFile(t);
   if (subject)
     return (
       <>
@@ -197,7 +214,13 @@ function StepLabel({ t, ctx, tag = true }: { t: ToolEntry; ctx: ToolCtx; tag?: b
     <>
       <span class="name">{toolLabel(t.name)}</span>
       <span class="summary" title={summary}>
-        {summary}
+        {file ? (
+          <Link class="file-link" title={`Open ${summary}`} onOpen={() => ctx.openFile(file.path, file.line)}>
+            {summary}
+          </Link>
+        ) : (
+          summary
+        )}
       </span>
     </>
   );

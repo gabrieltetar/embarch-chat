@@ -679,6 +679,10 @@ details.report > summary {
   min-width: 0;
   flex: 1;
 }
+/* The file a step read or changed opens beside the chat (decision 93). */
+.tool .summary .file-link {
+  color: var(--link);
+}
 .tool .st {
   font-size: 0.85em;
   white-space: nowrap;

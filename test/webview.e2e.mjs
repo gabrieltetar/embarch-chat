@@ -1021,6 +1021,42 @@ await check("a step that touches a connector shows its glyph and the thing by na
   await shot("chat-subject-run");
 });
 
+await check("a step on one file names it as a link: a click opens it at the step's lines, once, and the row stays shut (decision 93)", async () => {
+  const edited = {
+    t: "event",
+    e: {
+      type: "user",
+      message: { content: [{ type: "tool_result", tool_use_id: "toolu_f2", content: "ok" }] },
+      tool_use_result: { structuredPatch: [{ oldStart: 11, newStart: 12, lines: ["-a", "+b"] }] },
+      parent_tool_use_id: null,
+    },
+  };
+  await send([
+    snapshot(),
+    toolCall("toolu_f1", "Read", { file_path: "/work/rec/x/src/main.c", offset: 40, limit: 20 }),
+    toolResult("toolu_f1", "int x;"),
+    { t: "event", e: { type: "assistant", message: { id: "m-f", content: [{ type: "text", text: "Now the fix." }] }, parent_tool_use_id: null } },
+    toolCall("toolu_f2", "Edit", { file_path: "/work/rec/x/src/hal.c", old_string: "a", new_string: "b" }),
+    edited,
+    toolCall("toolu_f3", "Bash", { command: "make" }),
+  ]);
+  assert.deepEqual(await text(".tool .file-link"), ["src/main.c", "src/hal.c"], "the two file steps link, Bash does not");
+  const want = [
+    { t: "openFile", path: "/work/rec/x/src/main.c", line: 40 },
+    { t: "openFile", path: "/work/rec/x/src/hal.c", line: 12 },
+  ];
+  // An edit shows its diff open already (decision 8): what counts is that no click changes which rows are open.
+  const bodies = await text(".tool .body");
+  const links = await wd("POST", `${S}/elements`, { using: "css selector", value: ".tool .file-link" });
+  for (const [i, el] of links.entries()) {
+    await exec("window.__posts = []; window.__vscode = [];");
+    await realClick(el);
+    assert.deepEqual(await exec("return window.__vscode"), [], "VS Code's own handler opened nothing");
+    assert.deepEqual((await posts()).filter((p) => p.t === "openFile"), [want[i]], "opened once, at its lines");
+  }
+  assert.deepEqual(await text(".tool .body"), bodies, "the clicks opened the files, not the rows");
+});
+
 await check("a key or PR in Claude's prose is a link once the desk's index knows it, and a step row drawn before the index arrived takes its title and link (decision 88)", async () => {
   const DESK = "mcp__plugin_embarch-desk_embarch-desk__";
   const say = {
