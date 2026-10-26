@@ -568,6 +568,37 @@ button.link-button:focus-visible {
   overflow-wrap: anywhere;
   font-family: inherit;
 }
+/* What the CLI sent Claude (90): a task's end, and another session's message folded to its sender. */
+.note.task {
+  align-self: stretch;
+  text-align: left;
+}
+button.note.task.link {
+  background: none;
+  border: 0;
+  font: inherit;
+  font-size: 0.88em;
+  cursor: pointer;
+  color: var(--muted);
+}
+button.note.task.link:hover,
+button.note.task.link:focus-visible {
+  color: var(--vscode-textLink-foreground);
+  text-decoration: underline;
+}
+.note.peer {
+  align-self: stretch;
+}
+.note.peer summary {
+  cursor: pointer;
+}
+.note.peer pre {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: inherit;
+  color: var(--vscode-foreground);
+}
 .note.compact::before,
 .note.compact::after {
   content: " — ";

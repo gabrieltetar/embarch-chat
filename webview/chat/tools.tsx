@@ -289,6 +289,28 @@ function Todos({ input }: { input: Record<string, unknown> }) {
   );
 }
 
+/**
+ * A task's row names its card (decision 89): a click opens the card, whether
+ * it is a row of its own or a step in a folded run, and scrolls to it. The
+ * ask waits in `wanted` for a card that mounts after it (a run just opened).
+ */
+const wanted = new Set<string>();
+const REVEAL = "embarch-reveal-tool";
+export function revealTool(id: string): void {
+  wanted.add(id);
+  window.dispatchEvent(new CustomEvent(REVEAL, { detail: id }));
+  const look = (tries: number) =>
+    setTimeout(() => {
+      const el = Array.from(document.querySelectorAll<HTMLElement>("[data-tool]")).find((x) => x.dataset.tool === id);
+      if (el) {
+        wanted.delete(id);
+        el.scrollIntoView({ block: "center", behavior: "smooth" });
+      } else if (tries > 0) look(tries - 1);
+      else wanted.delete(id);
+    }, 40);
+  look(10);
+}
+
 interface ToolProps {
   t: ToolEntry;
   entries: Record<string, Entry>;
@@ -303,16 +325,21 @@ function ToolViewInner({ t, entries, ctx, render }: ToolProps) {
   // Claude's question stays as a Questions row, opening to the picks once answered (decision 79).
   const asked = t.name === "AskUserQuestion";
   const answered = asked && t.status === "done";
-  const [open, setOpen] = useState<boolean>(editLike || sub || t.name === "TodoWrite" || !!custom || answered);
+  const [open, setOpen] = useState<boolean>(editLike || sub || t.name === "TodoWrite" || !!custom || answered || wanted.has(t.id));
   useEffect(() => {
     if (answered) setOpen(true);
   }, [answered]);
+  useEffect(() => {
+    const on = (ev: Event) => (ev as CustomEvent<string>).detail === t.id && setOpen(true);
+    window.addEventListener(REVEAL, on);
+    return () => window.removeEventListener(REVEAL, on);
+  }, [t.id]);
   const d = editLike ? diffLines(t) : null;
   const bg = backgroundStatus(t);
   // A step that went to the background: its tool result only says so; its output is the task's.
   const output = bg && t.name !== "Agent" && t.name !== "Task";
   return (
-    <div class={`tool ${t.status}`}>
+    <div class={`tool ${t.status}`} data-tool={t.id}>
       <div class="line" onClick={() => setOpen(!open)}>
         {asked ? <QuestionsLine t={t} /> : <StepLabel t={t} ctx={ctx} />}
         {d && (
@@ -393,6 +420,16 @@ function RunViewInner({ steps, entries, ctx, render }: RunProps) {
   const key = steps[0].id;
   const [, redraw] = useState(0);
   const open = openRuns.has(key);
+  useEffect(() => {
+    const on = (ev: Event) => {
+      const id = (ev as CustomEvent<string>).detail;
+      if (!steps.some((e) => e.id === id) || openRuns.has(key)) return;
+      openRuns.add(key);
+      redraw((x) => x + 1);
+    };
+    window.addEventListener(REVEAL, on);
+    return () => window.removeEventListener(REVEAL, on);
+  }, [key, steps]);
   const head = runHead(steps);
   const n = runTally(steps);
   const failed = failedText(n);

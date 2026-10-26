@@ -14,7 +14,7 @@
 // With --transcript it scrubs a transcript Claude wrote instead (a fork's
 // parent, read by the panel): the conversation's chain and its titles stay,
 // an attachment keeps only its kind and its place in the chain — they
-// carry the account's email and organisation — and the CLI's bookkeeping lines go.
+// carry the account's email and organisation — and a queued command its prompt (a notification, decision 89), and the CLI's bookkeeping lines go.
 
 import * as fs from "node:fs";
 
@@ -79,7 +79,7 @@ if (asTranscript) {
     if (!line.trim()) continue;
     const o = JSON.parse(line);
     if (!KEEP.includes(o.type)) continue;
-    const kept = o.type !== "attachment" ? o : { type: o.type, uuid: o.uuid, parentUuid: o.parentUuid, isSidechain: o.isSidechain, sessionId: o.sessionId, cwd: o.cwd, timestamp: o.timestamp, attachment: { type: o.attachment?.type } };
+    const kept = o.type !== "attachment" ? o : { type: o.type, uuid: o.uuid, parentUuid: o.parentUuid, isSidechain: o.isSidechain, sessionId: o.sessionId, cwd: o.cwd, timestamp: o.timestamp, attachment: o.attachment?.type === "queued_command" && typeof o.attachment.prompt === "string" ? { type: o.attachment.type, prompt: o.attachment.prompt } : { type: o.attachment?.type } };
     lines.push(scrub(JSON.stringify(kept)));
   }
   fs.writeFileSync(dst, lines.join("\n") + "\n");

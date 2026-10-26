@@ -164,6 +164,17 @@ export function transcriptEvents(
       events.push({ type: "_title", title });
       continue;
     }
+    // A notification Claude took mid-turn is written as a queued command, not
+    // as the user line it was live; the same row comes back from it (decision 89).
+    // Other queued commands are the owner's own typing, which has its line.
+    if (o.type === "attachment" && !o.isSidechain) {
+      const a = o.attachment as { type?: unknown; prompt?: unknown } | undefined;
+      const prompt = typeof a?.prompt === "string" ? a.prompt.trimStart() : "";
+      if (a?.type === "queued_command" && prompt.startsWith("<task-notification>")) {
+        events.push({ type: "user", message: { role: "user", content: prompt }, origin: { kind: "task-notification" }, ...(typeof o.uuid === "string" ? { uuid: o.uuid } : {}), ...(typeof o.timestamp === "string" ? { timestamp: o.timestamp } : {}) } as WireMessage);
+      }
+      continue;
+    }
     if (o.type !== "user" && o.type !== "assistant" && o.type !== "system") continue;
     if (o.isSidechain) continue;
     if (typeof o.cwd === "string") cwd = o.cwd;

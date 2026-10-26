@@ -2094,6 +2094,33 @@ await check("the status area with everything at once: the usage banner, the back
 });
 
 const U = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+await check("a task's end the CLI replays is one line, not a bubble the owner sent; a click opens its card, a peer's message folds to its sender (decision 89)", async () => {
+  await fresh({}, false);
+  const lines = allowed("notifymid");
+  await send([sent(lines.find((o) => o.type === "user" && !o.origin && typeof o.message.content === "string").message.content), ...events(lines)]);
+  assert.deepEqual(await text(".note.task"), ['Agent "Reply with PING" completed']);
+  assert.equal((await text(".user")).length, 1, "only the owner's own message is a bubble");
+  assert.ok(!(await text(".timeline")).join("").includes("<task-notification>"), "no raw XML");
+  // Close the card the row names, then the row opens it.
+  const agentId = lines.find((o) => o.type === "assistant" && o.message.content.some((b) => b.type === "tool_use" && b.name === "Agent")).message.content.find((b) => b.name === "Agent").id;
+  const body = (id) => exec("const t = [...document.querySelectorAll('[data-tool]')].find((x) => x.dataset.tool === arguments[0]); return !!t.querySelector(':scope > .body')", [id]);
+  assert.equal(await body(agentId), true, "a subagent's card starts open");
+  await exec("[...document.querySelectorAll('[data-tool]')].find((x) => x.dataset.tool === arguments[0]).querySelector(':scope > .line').click()", [agentId]);
+  await settle();
+  assert.equal(await body(agentId), false, "closed");
+  await click("button.note.task");
+  await settle();
+  assert.equal(await body(agentId), true, "the click opened it");
+  // Another session's message: collapsed to its sender.
+  await send([{ t: "event", e: { type: "user", message: { role: "user", content: 'Another Claude session sent a message:\n<agent-message from="build-helper">run the tests please</agent-message>' }, origin: { kind: "peer" } } }]);
+  assert.deepEqual(await text(".note.peer summary"), ["Message from build-helper"]);
+  assert.equal(await exec("return document.querySelector('.note.peer').open"), false, "collapsed");
+  await click(".note.peer summary");
+  assert.deepEqual(await text(".note.peer pre"), ["run the tests please"]);
+  assert.equal((await text(".user")).length, 1, "still no second bubble");
+  await shot("task-row");
+});
+
 const sentU = (n, text) => ({ t: "event", e: { type: "_sent", n, text, uuid: U(n) } });
 
 await check("messages sent while Claude works wait above the input, with Send now and Cancel; one taken back goes to the draft; Claude's echo moves the other into the timeline where it took it (port item 72)", async () => {

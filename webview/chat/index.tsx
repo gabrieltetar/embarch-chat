@@ -21,7 +21,7 @@ import type { LibraryEntry } from "../../src/library/entries";
 import { duration, vscodeApi } from "../shared/vscode";
 import { CompactCard, PendingCards } from "./cards";
 import { Composer, EditorChip, returnToDraft } from "./composer";
-import { RunView, ToolCtx, ToolView, quiet, toolRenderers } from "./tools";
+import { RunView, ToolCtx, ToolView, quiet, revealTool, toolRenderers } from "./tools";
 import { Fold, foldRuns, liveTool } from "./runs";
 import { benchRenderer } from "./bench";
 import { BackgroundPanel, BackgroundToggle } from "./background";
@@ -354,6 +354,22 @@ function App() {
         return <ToolView t={e} entries={entries} ctx={ctx} render={renderEntry} />;
       case "note":
         if (e.tone === "compact") return <CompactCard e={e} ctx={ctx} />;
+        // What the CLI sent Claude, not the owner (decision 89): a task's end as a line that opens its card, another session's message collapsed.
+        if (e.tone === "task")
+          return e.tool && entries[e.tool] ? (
+            <button type="button" class="note task link" title="Show the step it ended" onClick={() => revealTool(e.tool!)}>
+              {e.text}
+            </button>
+          ) : (
+            <div class="note task">{e.text}</div>
+          );
+        if (e.tone === "peer")
+          return (
+            <details class="note peer">
+              <summary>{e.text}</summary>
+              <pre>{e.detail}</pre>
+            </details>
+          );
         return (
           <div class={`note ${e.tone}`}>
             {e.text}

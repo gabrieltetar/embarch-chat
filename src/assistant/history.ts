@@ -9,7 +9,7 @@ import { EventEmitter } from "events";
 import * as fs from "fs";
 import * as path from "path";
 import { projectsRoot } from "../wire/transcript";
-import { readMessage } from "../wire/message";
+import { originKind, readMessage } from "../wire/message";
 import type { PastPrompt } from "./edits";
 
 const DAY = 86_400_000;
@@ -32,10 +32,7 @@ function stripTags(s: string): string {
 /** The text the owner typed, from one transcript line, or null when the line is not a prompt of theirs. */
 export function humanPrompt(o: Record<string, unknown>): string | null {
   if (o.type !== "user" || o.isMeta || o.isSidechain || o.isCompactSummary || o.isVisibleInTranscriptOnly) return null;
-  const origin = o.origin as { kind?: string } | undefined;
-  if (origin) {
-    if (origin.kind !== "human") return null;
-  } else if (o.turnOrigin !== undefined && o.turnOrigin !== "human") return null;
+  if (originKind(o) !== "human") return null;
   if (o.promptSource === "system") return null;
   const content = (o.message as { content?: unknown } | undefined)?.content;
   let text: string;

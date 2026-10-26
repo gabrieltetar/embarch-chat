@@ -269,3 +269,18 @@ export function strippedNotice(n: number, where: "pasted" | "review"): string {
   const what = n === 1 ? "Removed 1 invisible character" : `Removed ${n} invisible characters`;
   return where === "pasted" ? `${what} from the pasted text` : `${what} · review and press Enter to send`;
 }
+
+/**
+ * Who a `user` line is from, by the CLI's own `origin.kind`: "human" for what
+ * the owner typed, anything else for what the CLI sent Claude on its own
+ * account (a background task's notification, another session's message, a
+ * hook). A line with no `origin` falls back to its `turnOrigin`, and has none
+ * when neither is there: the owner's (decision 89). The one rule the panel's
+ * user entries and the assistant's prompt history both apply.
+ */
+export function originKind(line: object): string {
+  const o = line as { origin?: unknown; turnOrigin?: unknown };
+  const origin = o.origin as { kind?: unknown } | undefined | null;
+  if (origin && typeof origin === "object") return origin.kind === undefined ? "" : String(origin.kind);
+  return o.turnOrigin === undefined ? "human" : String(o.turnOrigin);
+}

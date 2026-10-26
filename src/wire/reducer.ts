@@ -10,7 +10,7 @@
 import type { AppliedSettings, ContentBlock, ContextUsage, DialogRequest, ElicitationRequest, ModelInfo, PermissionRequest, RateLimitInfo, WireMessage } from "./types";
 import { answerable, unansweredNote } from "./dialogs";
 import type { ContextItem } from "./message";
-import { readMessage, sameText } from "./message";
+import { originKind, readMessage, sameText } from "./message";
 import type { PlanComment } from "./cards";
 
 export type ProcessState = "none" | "starting" | "running" | "closed" | "error";
@@ -81,7 +81,15 @@ export interface NoteEntry {
   kind: "note";
   id: string;
   text: string;
-  tone: "info" | "error" | "compact" | "interrupt";
+  tone: "info" | "error" | "compact" | "interrupt" | "task" | "peer";
+  /**
+   * "task": the line the CLI sent Claude when a background task ended, as a
+   * one-line row; `tool` is the call that started it, for the row's link.
+   * "peer": another session's message, collapsed to its sender, `detail` its
+   * text (decision 89).
+   */
+  tool?: string;
+  detail?: string;
   /** The owner's message that was not sent, kept with the note to copy. */
   kept?: string;
   /** A compaction's summary, the line the CLI sends after its boundary (decision 76). */
@@ -195,6 +203,11 @@ export interface ChatState {
   background: Array<{ id: string; type: string; description: string }>;
   /** Task id to the tool call that started it, for the background tasks' rows. */
   tasks: Record<string, string>;
+  /**
+   * Top-level tasks that ended while no turn ran: the CLI starts one of its
+   * own for each, and its reply gets their rows ahead of it (decision 89).
+   */
+  noticed?: Array<{ tool: string; text: string }>;
   /** This panel's messages the CLI has not echoed yet, oldest first (the `pending` user entries). */
   unconfirmed: string[];
   /** Messages sent while Claude worked and not yet taken: they wait at the bottom, not in the timeline, until Claude starts on them (port item 72). */
@@ -451,6 +464,59 @@ function note(s: ChatState, text: string, tone: NoteEntry["tone"], kept?: string
   return offer === "rerun" ? { ...n, rerunOffer: id } : n;
 }
 
+function xmlTag(text: string, name: string): string | undefined {
+  return new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(text)?.[1].trim();
+}
+
+const END_WORDS = ["completed", "failed", "stopped"];
+
+/**
+ * The row for a background task's end, worded like the CLI's own line:
+ * `Agent "<what it was asked>" completed`; a shell task's summary as it comes.
+ */
+function taskText(status: string | undefined, summary: string | undefined, agent?: string): string {
+  const word = END_WORDS.includes(status ?? "") ? status! : "completed";
+  const named = /^Agent "([\s\S]*)" (?:completed|finished|failed|stopped|was stopped)$/.exec(summary ?? "")?.[1] ?? agent;
+  if (named) return `Agent "${named}" ${word}`;
+  return summary || `Task ${word}`;
+}
+
+/** Whether a task's end was already put in the timeline by the line the CLI replayed for it. */
+function dropNoticed(s: ChatState, tool: string): ChatState {
+  return s.noticed?.some((n) => n.tool === tool) ? { ...s, noticed: s.noticed.filter((n) => n.tool !== tool) } : s;
+}
+
+/** The rows of tasks that ended while idle, ahead of the turn the CLI started for them. */
+function flushNoticed(s: ChatState): ChatState {
+  const list = s.noticed ?? [];
+  if (!list.length) return s;
+  s = { ...s, noticed: [] };
+  for (const n of list) s = put(s, { kind: "note", id: `n:${s.seq}:${n.tool}`, text: n.text, tone: "task", tool: n.tool }, null);
+  return s;
+}
+
+/**
+ * A `user` line the CLI sent Claude, not the owner (`origin.kind` is not
+ * "human"): never a user entry, so never matched to a pending message,
+ * edited or rewound to (decision 89). A background task's notification is a
+ * row; another session's message a collapsed one; the rest says nothing here.
+ */
+function foldCliLine(s: ChatState, o: WireMessage, kind: string, raw: string): ChatState {
+  if (kind === "task-notification") {
+    const tool = xmlTag(raw, "tool-use-id");
+    const text = taskText(xmlTag(raw, "status"), xmlTag(raw, "summary"));
+    if (tool) s = dropNoticed(s, tool);
+    return put(s, { kind: "note", id: `n:${s.seq}`, text, tone: "task", ...(tool ? { tool } : {}) }, null);
+  }
+  const origin = o.origin as { handback?: unknown } | undefined;
+  if (kind === "peer" && !origin?.handback) {
+    const m = /<agent-message\b([^>]*)>([\s\S]*?)(?:<\/agent-message>|$)/.exec(raw);
+    const from = /\bfrom="([^"]*)"/.exec(m?.[1] ?? "")?.[1];
+    return put(s, { kind: "note", id: `n:${s.seq}`, text: `Message from ${from || "another session"}`, tone: "peer", detail: (m ? m[2] : raw).trim() }, null);
+  }
+  return s;
+}
+
 /** The last thing in the timeline, the owner's own messages aside, is a compaction's card. */
 function justCompacted(s: ChatState): boolean {
   for (let i = s.timeline.length - 1; i >= 0; i--) {
@@ -486,6 +552,7 @@ function foldAssistant(s: ChatState, o: WireMessage): ChatState {
   const parent = (o.parent_tool_use_id as string | null | undefined) ?? null;
   const msgId = msg.id ?? `m:${s.seq}`;
   const at = stamp(o);
+  if (!parent) s = flushNoticed(s);
   // The main thread's prompt cache, as Claude Code's panel reads it: from a
   // reply that wrote or read it, timed by its first line (69). A subagent's
   // prefix is its own; a reply without a lifetime keeps the last one known.
@@ -548,6 +615,10 @@ function foldUser(s: ChatState, o: WireMessage): ChatState {
   }
   if (o.isSynthetic || o.isMeta || o.isCompactSummary || parent) return s;
   const raw = textOf(content);
+  const kind = originKind(o);
+  // The panel's own messages are written to a transcript with no `origin` and a `turnOrigin` of "sdk": the owner's, though the assistant's prefix match skips them.
+  if (kind !== "human" && !(kind === "sdk" && o.origin === undefined)) return foldCliLine(s, o, kind, raw);
+  if (s.noticed?.length) s = { ...s, noticed: [] };
   if (raw.startsWith("[Request interrupted by user")) return note(s, "Interrupted", "interrupt");
   const stdout = /^<local-command-stdout>([\s\S]*)<\/local-command-stdout>$/.exec(raw.trim());
   if (stdout) {
@@ -651,6 +722,11 @@ function foldSystem(s: ChatState, o: WireMessage): ChatState {
       const task = typeof o.task_id === "string" ? o.task_id : undefined;
       if (o.subtype === "task_started" && task) s = { ...s, tasks: { ...(s.tasks ?? {}), [task]: id } };
       const end = o.subtype === "task_notification" && ["completed", "failed", "stopped"].includes(o.status as string) ? (o.status as ToolEntry["taskEnd"]) : undefined;
+      // A call of the main thread's ending while no turn runs: the CLI starts one for it (decision 89).
+      const host = s.entries[id];
+      if (end && !s.busy && host?.kind === "tool" && host.parent === null) {
+        s = { ...s, noticed: [...(s.noticed ?? []).filter((n) => n.tool !== id), { tool: id, text: taskText(end, text, (host.name === "Agent" || host.name === "Task") && typeof host.input.description === "string" ? host.input.description : undefined) }] };
+      }
       return patch(s, id, "tool", () => ({
         progress: text,
         ...(o.subtype === "task_started" ? { background: Boolean(o.is_backgrounded), task } : {}),
@@ -758,7 +834,7 @@ export function reduce(s: ChatState, o: WireMessage): ChatState {
       // background it may be that task's, which the CLI keeps waiting on (66).
       const keep = (p: Pending) => inBackground(s, p.toolUseId) || (!p.toolUseId && (p.form === "elicitation" || p.form === "dialog") && s.background.length > 0);
       const pending = s.pending.some(keep) ? s.pending.filter(keep) : [];
-      let n: ChatState = { ...s, busy: false, compacting: false, streaming: null, pending, lastTurn: { ok, subtype: String(o.subtype ?? "") } };
+      let n: ChatState = { ...s, busy: false, compacting: false, streaming: null, pending, noticed: [], lastTurn: { ok, subtype: String(o.subtype ?? "") } };
       // A local command (/context, /cost, /model …) echoes nothing back: its
       // result, which names it, is what says the CLI took it — else it would
       // wait on Claude for good, and a crash hours later would hand it back.

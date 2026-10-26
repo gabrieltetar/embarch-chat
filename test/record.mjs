@@ -396,6 +396,28 @@ const scenarios = {
     await r.until(isResult, undefined, 20000).catch(() => null);
     await r.close();
   },
+  // A background subagent ends while the turn still runs a foreground step
+  // (decision 89): the CLI replays its notification as a user line of origin
+  // `task-notification`, which is never the owner's.
+  async notifymid() {
+    const r = new Rec("notifymid", ["--tools", "Agent,Bash"], { persist: process.env.REC_PERSIST === "1" });
+    r.user("Use the Agent tool with run_in_background: true (subagent_type general-purpose) to have a subagent reply with exactly the word PING. Then run the bash command `for i in $(seq 1 25); do echo tick $i; sleep 2; done` in the foreground (not in the background), then reply with just: done", uuidOf(1));
+    await r.until(taskEnded, undefined, 90000);
+    await r.result();
+    await r.until(isResult, undefined, 15000).catch(() => null);
+    await r.close();
+  },
+  // The same subagent ends after the turn's result: the CLI starts a turn of
+  // its own (task_notification, init, a reply) with no user line before it.
+  async notifyidle() {
+    const r = new Rec("notifyidle", ["--tools", "Agent,Bash"]);
+    r.user("Use the Agent tool with run_in_background: true (subagent_type general-purpose) to have a subagent run the bash command `sleep 20` and then reply with exactly the word PING. Then reply with just: started", uuidOf(1));
+    await r.result();
+    // The turn is over; the task ends after it, and the CLI's own turn follows.
+    await r.until((o) => o.type === "system" && o.subtype === "init", undefined, 90000);
+    await r.until(isResult, undefined, 60000);
+    await r.close();
+  },
   // Messages sent while Claude works (item 72), each with its uuid: the
   // CLI's command_lifecycle for each, and one taken back before Claude took it.
   async queue() {
