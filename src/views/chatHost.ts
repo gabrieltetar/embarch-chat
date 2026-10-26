@@ -2,7 +2,6 @@
 // editor tab's. The host keeps the state; the webview gets one snapshot and
 // then every event, folding them with the same reducer.
 
-import * as path from "path";
 import * as vscode from "vscode";
 import type { ChatManager } from "../chats";
 import type { DeskService } from "../deskService";
@@ -18,6 +17,7 @@ import { DeskError } from "../desk/client";
 import type { PrRef } from "../desk/client";
 import { deskReferences, prLine } from "../assistant/references";
 import { jump } from "../jump";
+import { openAt, openFileLink } from "../openFile";
 import { mentionItems, mentionOf } from "../mentions";
 import type { WireMessage } from "../wire/types";
 import type { ChatRecord } from "../chats";
@@ -178,6 +178,8 @@ export class ChatHost implements vscode.Disposable {
     private inEditor: boolean,
     /** Brings this page's view or tab forward, with focus. */
     private reveal: () => void = () => {},
+    /** Where what the page opens goes: a tab's own group, else the active one (decision 92). */
+    private column: () => vscode.ViewColumn = () => vscode.ViewColumn.Active,
   ) {
     ctx.chats.on("event", this.onEvent);
     ctx.chats.on("snapshot", this.onSnapshot);
@@ -403,7 +405,7 @@ export class ChatHost implements vscode.Disposable {
       }
       case "openPlan": {
         const p = pending(m.requestId);
-        if (p?.form === "plan") await this.ctx.plans.open(chat.sessionId, p);
+        if (p?.form === "plan") await this.ctx.plans.open(chat.sessionId, p, this.column());
         return;
       }
       case "removePlanComment":
@@ -503,26 +505,14 @@ export class ChatHost implements vscode.Disposable {
       }
       case "openContent": {
         const e = chat.state.entries[m.toolId];
-        if (e?.kind === "tool") await this.ctx.content.open(e, m.part);
+        if (e?.kind === "tool") await this.ctx.content.open(e, m.part, this.column());
         return;
       }
       case "openFile": {
         // A path, never a URI (vscode:, command:, file:, ...); one letter is a Windows drive.
         if (/^[a-z][a-z0-9+.-]+:/i.test(m.path)) return;
-        const cwd = chat.opts.cwd || chat.state.cwd || "";
-        const abs = path.isAbsolute(m.path) ? m.path : path.join(cwd, m.path);
-        const doc = await vscode.workspace.openTextDocument(abs).then(
-          (d) => d,
-          () => null,
-        );
-        if (!doc) return;
-        const ed = await vscode.window.showTextDocument(doc, { preview: true, viewColumn: vscode.ViewColumn.One });
-        if (m.line) {
-          const pos = new vscode.Position(Math.max(0, m.line - 1), 0);
-          ed.selection = new vscode.Selection(pos, pos);
-          ed.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
-        }
-        return;
+        const inputs = Object.values(chat.state.entries).flatMap((e) => (e.kind === "tool" ? [e.input] : []));
+        return openFileLink(m.path, m.line, chat.opts.cwd || chat.state.cwd || "", inputs, this.column());
       }
       case "atlas": {
         const a = atlasInfo(chat.opts.cwd || chat.state.cwd || "");
@@ -531,14 +521,7 @@ export class ChatHost implements vscode.Disposable {
           void vscode.window.showInformationMessage(`The atlas has nothing for ${m.doc ? `${m.doc} p${m.page}` : `${m.board}:${m.ref}`}.`);
           return;
         }
-        const doc = await vscode.workspace.openTextDocument(target.file);
-        const ed = await vscode.window.showTextDocument(doc, { preview: true, viewColumn: vscode.ViewColumn.One });
-        if (target.line) {
-          const pos = new vscode.Position(target.line - 1, 0);
-          ed.selection = new vscode.Selection(pos, pos);
-          ed.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
-        }
-        return;
+        return openAt(target.file, { line: target.line }, this.column());
       }
       case "openLink":
         if (!/^https?:\/\//.test(m.url)) return;

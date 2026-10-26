@@ -67,6 +67,8 @@ before(async () => {
     "embarchChat.deskUrl": desk.url,
     "embarchChat.deskTokenPath": desk.tokenPath,
     "embarchUi.port": 1,
+    // These tests drive the sidebar's chat; chats in tabs, the default, have their own (decision 92).
+    "embarchChat.chatLocation": "sidebar",
   });
   mock.state.folders = [folder];
   ext = require("../dist/extension.js");
@@ -394,19 +396,87 @@ test("a turn that wrote a handoff offers a fresh chat; the chip starts one on th
 
 test("a link opens once, in the browser, and only http(s); a URI is never opened as a file", { skip }, async () => {
   assert.ok(lastSnapshot()?.state.sessionId, "a chat on screen");
+  fs.mkdirSync(path.join(folder, "src"), { recursive: true });
+  fs.writeFileSync(path.join(folder, "src", "main.c"), "int main(void) { return 0; }\n");
   mock.state.external.length = 0;
-  mock.state.opened.length = 0;
+  const opens = () => mock.state.executedArgs.filter(([id]) => id === "vscode.open");
+  const before = opens().length;
   for (const url of ["vscode://anthropic.claude-code/open?prompt=hi", "mailto:someone@example.com", "command:workbench.action.terminal.new", "file:///etc/hostname", "javascript:alert(1)"]) {
     chatView.webview.fromPage({ t: "openLink", url });
     chatView.webview.fromPage({ t: "openFile", path: url });
   }
   chatView.webview.fromPage({ t: "openLink", url: "https://example.com/docs" });
   chatView.webview.fromPage({ t: "openFile", path: "src/main.c" });
-  await waitFor(() => mock.state.external.length && mock.state.opened.length, 3000, "the two that open");
+  await waitFor(() => mock.state.external.length && opens().length > before, 3000, "the two that open");
   await new Promise((r) => setTimeout(r, 200));
   assert.deepEqual(mock.state.external, ["https://example.com/docs"]);
-  assert.equal(mock.state.opened.length, 1);
-  assert.ok(mock.state.opened[0].endsWith("/src/main.c"), mock.state.opened[0]);
+  const got = opens().slice(before);
+  assert.equal(got.length, 1);
+  assert.equal(got[0][1].fsPath, path.join(folder, "src", "main.c"));
+  // The sidebar's chat has no group of its own: the active one (decision 92), a tab of its own.
+  assert.deepEqual([got[0][2].viewColumn, got[0][2].preview], [mock.vscode.ViewColumn.Active, false]);
+});
+
+test("a file link finds what Claude meant: its lines, a bare name from the folder, a choice among several, a message for none (decision 93)", { skip }, async () => {
+  assert.ok(lastSnapshot()?.state.sessionId, "a chat on screen");
+  for (const d of ["apps/one/src", "apps/two/src"]) fs.mkdirSync(path.join(folder, d), { recursive: true });
+  fs.writeFileSync(path.join(folder, "apps/one/src/hal.c"), "");
+  fs.writeFileSync(path.join(folder, "apps/one/src/util.c"), "");
+  fs.writeFileSync(path.join(folder, "apps/two/src/util.c"), "");
+  const opens = () => mock.state.executedArgs.filter(([id]) => id === "vscode.open");
+  const open = async (p) => {
+    const n = opens().length;
+    const m = mock.state.messages.length;
+    chatView.webview.fromPage({ t: "openFile", path: p });
+    await waitFor(() => opens().length > n || mock.state.messages.length > m, 3000, `${p} to open or say why not`);
+    return opens().length > n ? opens().at(-1) : null;
+  };
+  const patterns = [];
+  mock.state.findFiles = async (pat) => {
+    patterns.push(pat.pattern);
+    const name = pat.pattern.replace(/^\*\*\//, "");
+    const hits = [];
+    const walk = (d) => {
+      for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+        const f = path.join(d, e.name);
+        if (e.isDirectory()) walk(f);
+        else if (f.endsWith(`/${name}`)) hits.push(mock.vscode.Uri.file(f));
+      }
+    };
+    walk(pat.base.fsPath);
+    return hits;
+  };
+  try {
+    // A line range is selected through its last line; `#L` is GitHub's way of writing one.
+    const ranged = await open("src/main.c#L1-L3");
+    assert.equal(ranged[1].fsPath, path.join(folder, "src", "main.c"));
+    const sel = (o) => [o.selection.start, o.selection.end].map((p) => [p.line, p.character]);
+    assert.deepEqual(sel(ranged[2]), [[0, 0], [3, 0]]);
+    const at = await open("src/main.c:2:5");
+    assert.deepEqual(sel(at[2]), [[1, 4], [1, 4]]);
+    // A bare name the folder has once.
+    const hal = await open("hal.c");
+    assert.equal(hal[1].fsPath, path.join(folder, "apps/one/src/hal.c"));
+    assert.equal(patterns.at(-1), "**/hal.c");
+    // Two of them: the owner picks, nearest the folder's order.
+    let offered = null;
+    mock.state.quickPick = async (items) => ((offered = items.map((i) => i.label)), items[1]);
+    const util = await open("util.c");
+    assert.deepEqual(offered, ["apps/one/src/util.c", "apps/two/src/util.c"]);
+    assert.equal(util[1].fsPath, path.join(folder, "apps/two/src/util.c"));
+    // None: a message names it, nothing opens.
+    const m = mock.state.messages.length;
+    assert.equal(await open("nowhere.c"), null);
+    assert.match(mock.state.messages[m][1], /No file nowhere\.c under /);
+    // A folder shows in the Explorer.
+    const n = mock.state.executedArgs.length;
+    chatView.webview.fromPage({ t: "openFile", path: "apps/one" });
+    const reveal = await waitFor(() => mock.state.executedArgs.slice(n).find(([id]) => id === "revealInExplorer"), 3000, "the Explorer");
+    assert.equal(reveal[1].fsPath, path.join(folder, "apps/one"));
+  } finally {
+    mock.state.findFiles = async () => [];
+    mock.state.quickPick = async () => undefined;
+  }
 });
 
 test("an open file with unsaved changes is saved before Claude reads it — only under the chat's folder or the window's (decision 61; review r4 L1)", { skip }, async () => {
@@ -1627,4 +1697,47 @@ test("the window's desk's reference index reaches each chat page, and the cards 
     delete process.env.FAKE_HAIKU_CARDS;
   }
   assert.equal(lastSnapshot().state.sessionId, sid);
+});
+
+test("chats open in editor tabs by default: a new chat is a tab, what it opens goes into the tab's group, and the list marks the tab in front (decision 92)", { skip }, async () => {
+  delete mock.state.config["embarchChat.chatLocation"];
+  try {
+    const n = mock.state.panels.length;
+    const sidebar = chatView.webview.posted.length;
+    mock.state.quickPick = async (items) => items.find((i) => i.label.includes("Untracked"));
+    await mock.state.commands.get("embarchChat.newChat")();
+    const tab = await waitFor(() => mock.state.panels.length > n && mock.state.panels.at(-1), 5000, "the chat's tab");
+    tab.webview.fromPage({ t: "ready" });
+    const snap = await waitFor(() => tab.webview.posted.find((m) => m.t === "snapshot"), 3000, "the tab's snapshot");
+    const sid = snap.state.sessionId;
+    assert.equal(snap.view.inEditor, true);
+    assert.ok(!chatView.webview.posted.slice(sidebar).some((m) => m.t === "snapshot" && m.state.sessionId === sid), "not in the sidebar");
+    await waitFor(() => lastGroups()?.selected === sid, 3000, "the list marks it");
+    // Opened from the tab: a tab of its own in the chat's group, beside it.
+    tab.viewColumn = 2;
+    const before = mock.state.executedArgs.length;
+    tab.webview.fromPage({ t: "openFile", path: "src/main.c" });
+    const opened = await waitFor(() => mock.state.executedArgs.slice(before).find(([id]) => id === "vscode.open"), 3000, "the file");
+    assert.deepEqual([opened[1].fsPath, opened[2].viewColumn, opened[2].preview], [path.join(folder, "src", "main.c"), 2, false]);
+    // The list opens it again in its tab, never the sidebar; another tab in front is the list's mark.
+    const panels = mock.state.panels.length;
+    threadsView.webview.fromPage({ t: "open", sid });
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(mock.state.panels.length, panels, "the same tab, brought forward");
+    // A second chat's tab in front is the list's mark; back to the first, its mark again.
+    await mock.state.commands.get("embarchChat.newChat")();
+    const other = await waitFor(() => mock.state.panels.length > panels && mock.state.panels.at(-1), 5000, "the second chat's tab");
+    await waitFor(() => lastGroups()?.selected && lastGroups().selected !== sid, 3000, "the second chat marked");
+    tab.active = true;
+    tab.em.emit("view");
+    await waitFor(() => lastGroups()?.selected === sid, 3000, "the first marked again");
+    tab.active = false;
+    other.dispose();
+    // Closed, it is no longer current.
+    tab.dispose();
+    await waitFor(() => lastGroups()?.selected === null, 3000, "nothing marked");
+  } finally {
+    mock.state.config["embarchChat.chatLocation"] = "sidebar";
+    mock.state.quickPick = async () => undefined;
+  }
 });

@@ -59,7 +59,8 @@
         {
           "type": "webview",
           "id": "embarchChat.chat",
-          "name": "Chat"
+          "name": "Chat",
+          "when": "config.embarchChat.chatLocation == sidebar"
         }
       ]
     },
@@ -301,6 +302,20 @@
       {
         "title": "EmbArch Chat",
         "properties": {
+          "embarchChat.chatLocation": {
+            "type": "string",
+            "enum": [
+              "editor",
+              "sidebar"
+            ],
+            "enumDescriptions": [
+              "Each chat opens as an editor tab of its own, and what it links to opens as a tab beside it.",
+              "The chat opens in the secondary sidebar, where Claude Code's panel is; any chat also opens as a tab from its title bar."
+            ],
+            "default": "editor",
+            "scope": "machine",
+            "description": "Where a chat opens (decision 92). User or Remote settings only — a workspace cannot set it."
+          },
           "embarchChat.claudePath": {
             "type": "string",
             "default": "claude",

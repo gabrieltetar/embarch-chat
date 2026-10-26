@@ -3,7 +3,8 @@
 // fenced code, headings, lists (nested), quotes, tables, rules, and inline
 // code, bold, italic, strike, links. A code span that looks like a file path
 // opens the file. A link opens in the browser when it is http(s), as a file
-// when it is a path, and not at all otherwise; none carries an href
+// when it is a path or a `file:///` URL — the host finds what a bare name or
+// a path from elsewhere means (decision 93) — and not at all otherwise; none carries an href
 // (./link.tsx says why). A link's own text holds no other link — a URL, a
 // file path or a citation in it is text — so a click opens one thing.
 // `inlineHooks` is the seam for atlas citation links (decision 16) and the
@@ -24,7 +25,8 @@ export interface MdCtx {
 export type InlineHook = (text: string, ctx: MdCtx, key: string) => ComponentChildren[] | null;
 export const inlineHooks: InlineHook[] = [];
 
-const FILE_RE = /^((?:[\w@.~-]+\/)*[\w@.~-]+\.[A-Za-z0-9]{1,8})(?::(\d+))?(?::\d+)?$/;
+// A path from the chat's folder, from `~` or from `/`, a `:line`, then `:col` or `-end` (decision 93).
+const FILE_RE = /^((?:~?\/)?(?:[\w@.~-]+\/)*[\w@.~-]+\.[A-Za-z0-9]{1,8})(?::(\d+))?(?:[:-]\d+)?$/;
 const INLINE_RE =
   /(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)|\[([^\]\n]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)|(https?:\/\/[^\s<>()]*[^\s<>().,;:!?'"`])|\*\*([^*\n](?:[\s\S]*?[^*\s])?)\*\*|~~([\s\S]+?)~~|\*([^*\s](?:[^*\n]*?[^*\s])?)\*|(?<![\w])_([^_\s](?:[^_\n]*?[^_\s])?)_(?![\w])/g;
 
@@ -69,7 +71,8 @@ export function inline(text: string, ctx: MdCtx, key = "i", noLinks = false): Co
             title="Open file"
             onClick={(e) => {
               e.stopPropagation();
-              ctx.openFile(f[1], f[2] ? Number(f[2]) : undefined);
+              // The whole span: the host reads its lines, a range's end included.
+              ctx.openFile(code);
             }}
           >
             {code}
@@ -83,6 +86,13 @@ export function inline(text: string, ctx: MdCtx, key = "i", noLinks = false): Co
       else if (isWebLink(url))
         out.push(
           <Link key={k} title={url} onOpen={() => ctx.openLink(url)}>
+            {label}
+          </Link>,
+        );
+      else if (/^file:\/\/\/./i.test(url))
+        // A file on this machine is a path by another name: the host opens it as one, never as a URI.
+        out.push(
+          <Link key={k} title={url} onOpen={() => ctx.openFile(url.slice("file://".length))}>
             {label}
           </Link>,
         );

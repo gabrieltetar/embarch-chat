@@ -43,8 +43,8 @@ export class PlanDocs implements vscode.TextDocumentContentProvider, vscode.Disp
     return this.byPath.get(uri.path)?.text ?? "";
   }
 
-  /** Opens a pending plan's tab; the same plan opens the same tab again, its comments kept. */
-  async open(sid: string, pending: Pending): Promise<void> {
+  /** Opens a pending plan's tab in `column` (the chat's group, decision 92); the same plan opens the same tab again, its comments kept. */
+  async open(sid: string, pending: Pending, column: vscode.ViewColumn = vscode.ViewColumn.Active): Promise<void> {
     let p = [...this.byPath.values()].find((x) => x.requestId === pending.requestId);
     if (!p) {
       const uri = vscode.Uri.from({ scheme: PLAN_SCHEME, path: `/${pending.requestId}/Claude's plan.md` });
@@ -52,7 +52,7 @@ export class PlanDocs implements vscode.TextDocumentContentProvider, vscode.Disp
       this.byPath.set(uri.path, p);
     }
     const doc = await vscode.workspace.openTextDocument(p.uri);
-    await vscode.window.showTextDocument(doc, { preview: false, viewColumn: vscode.ViewColumn.One });
+    await vscode.window.showTextDocument(doc, { preview: false, viewColumn: column });
   }
 
   /** The comment box's submit: one comment on the thread's lines, on the card at once. */

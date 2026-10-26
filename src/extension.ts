@@ -45,6 +45,8 @@ function cfg() {
     assistant: c.get<boolean>("assistant", true),
     attachOpenFile: c.get<boolean>("attachOpenFile", true),
     attachSelection: c.get<boolean>("attachSelection", true),
+    // Where a chat opens (decision 92): an editor tab, unless the owner keeps the sidebar.
+    inTabs: c.get<string>("chatLocation", "editor") !== "sidebar",
   };
 }
 
@@ -197,7 +199,7 @@ export function activate(context: vscode.ExtensionContext): void {
     log,
     show: (sid) => {
       manager.current = sid;
-      chatView.show(sid);
+      if (!cfg().inTabs) chatView.show(sid);
       threads.push();
     },
     openTab: (sid) => panels.open(sid, titleOf(manager.get(sid))),
@@ -279,17 +281,33 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   };
 
+  /** A chat on screen: its own editor tab, or the sidebar's chat when the owner keeps the sidebar (decision 92). */
   const show = async (sid: string) => {
     manager.current = sid;
-    chatView.show(sid);
     threads.push();
-    await reveal();
+    if (cfg().inTabs) openInEditor(sid);
+    else {
+      chatView.show(sid);
+      await reveal();
+    }
     seen();
     refreshCount();
   };
   chatView.onShown = panels.onShown = () => {
     seen();
     refreshCount();
+  };
+  // With chats in tabs, the list marks the one in front, and a closed tab's
+  // chat is no longer current, so a read-only view of it can go.
+  panels.onActive = (sid) => {
+    if (!cfg().inTabs || manager.current === sid) return;
+    manager.current = sid;
+    threads.push();
+  };
+  panels.onGone = (sid) => {
+    if (!cfg().inTabs || manager.current !== sid) return;
+    manager.current = null;
+    threads.push();
   };
 
   /**
@@ -769,10 +787,23 @@ export function activate(context: vscode.ExtensionContext): void {
   // focus, so the chat's are Ctrl+Alt+Esc and Alt+Shift+K; Ctrl+Shift+T
   // stays, each extension's context key being set only when its own tab
   // was the last one closed.
-  /** Where a key goes: the chat tab last focused while it shows, else the sidebar's chat. */
+  /**
+   * Where a key goes: the chat tab last focused while it shows, else the
+   * sidebar's chat — or, with chats in tabs (92), that tab or the current
+   * chat brought forward, and with none a new chat.
+   */
   const keyTarget = async () => {
     const tab = panels.shownHost();
     if (tab) return tab;
+    if (cfg().inTabs) {
+      const sid = panels.last() ?? (manager.current && manager.get(manager.current) ? manager.current : null);
+      if (!sid) {
+        void newChat();
+        return undefined;
+      }
+      openInEditor(sid);
+      return panels.host(sid);
+    }
     await reveal();
     return chatView.host;
   };

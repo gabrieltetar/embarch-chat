@@ -34,8 +34,8 @@ export class ContentDocs implements vscode.TextDocumentContentProvider {
     return this.docs.get(uri.path) ?? "";
   }
 
-  /** Opens it as a preview tab; the same tool's same part opens the same tab again. */
-  async open(t: Pick<ToolEntry, "id" | "name" | "input" | "result">, part: "input" | "output"): Promise<void> {
+  /** Opens it as a preview tab in `column` (the chat's group, decision 92); the same tool's same part opens the same tab again. */
+  async open(t: Pick<ToolEntry, "id" | "name" | "input" | "result">, part: "input" | "output", column: vscode.ViewColumn = vscode.ViewColumn.Active): Promise<void> {
     const c = toolContent(t, part);
     if (!c) return;
     const uri = vscode.Uri.from({ scheme: CONTENT_SCHEME, path: `/${t.id}/${c.name}` });
@@ -44,6 +44,6 @@ export class ContentDocs implements vscode.TextDocumentContentProvider {
     if (this.docs.size > 40) for (const k of [...this.docs.keys()].slice(0, this.docs.size - 40)) this.docs.delete(k);
     let doc = await vscode.workspace.openTextDocument(uri);
     if (doc.languageId !== c.language) doc = await vscode.languages.setTextDocumentLanguage(doc, c.language).then((d) => d, () => doc);
-    await vscode.window.showTextDocument(doc, { preview: true, viewColumn: vscode.ViewColumn.One });
+    await vscode.window.showTextDocument(doc, { preview: true, viewColumn: column });
   }
 }

@@ -98,6 +98,8 @@ const state = {
   external: [],
   /** Paths given to openTextDocument. */
   opened: [],
+  /** What workspace.findFiles answers for a pattern: Uris. */
+  findFiles: async () => [],
   statusItems: [],
   quickPick: async () => undefined,
   inputBox: async () => undefined,
@@ -155,6 +157,12 @@ const vscode = {
       this.command = command;
     }
   },
+  RelativePattern: class {
+    constructor(base, pattern) {
+      this.base = base;
+      this.pattern = pattern;
+    }
+  },
   TabInputTextDiff: class {},
   TabInputText: class {},
   CommentMode: { Editing: 0, Preview: 1 },
@@ -196,7 +204,7 @@ const vscode = {
     createWebviewPanel: (viewType, title) => {
       const em = new EventEmitter();
       // `visible` and `active` are the test's to set; `em.emit("view")` is onDidChangeViewState.
-      const p = { viewType, title, webview: new FakeWebview(), iconPath: undefined, visible: undefined, active: undefined, em, reveal() {}, onDidChangeViewState: event(em, "view"), onDidDispose: event(em, "dispose"), dispose: () => em.emit("dispose") };
+      const p = { viewType, title, webview: new FakeWebview(), iconPath: undefined, visible: undefined, active: undefined, viewColumn: undefined, em, reveal() {}, onDidChangeViewState: event(em, "view"), onDidDispose: event(em, "dispose"), dispose: () => em.emit("dispose") };
       state.panels.push(p);
       return p;
     },
@@ -241,7 +249,7 @@ const vscode = {
       state.contentProviders.set(scheme, provider);
       return disposable(() => state.contentProviders.delete(scheme));
     },
-    findFiles: async () => [],
+    findFiles: (pattern, exclude, max) => state.findFiles(pattern, exclude, max),
     openTextDocument: async (p) => {
       state.opened.push(String(p));
       // A virtual document: its provider's text, as VS Code reads it.

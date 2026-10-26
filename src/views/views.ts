@@ -1,6 +1,7 @@
-// Where things show (decision 17): the thread list behind its own
-// activity-bar icon, the chat in the secondary sidebar where Claude Code's
-// panel is, and any chat also openable as an editor tab.
+// Where things show (decisions 17, 92): the thread list behind its own
+// activity-bar icon, and a chat in an editor tab of its own — or, by
+// setting, in the secondary sidebar where Claude Code's panel is, any chat
+// also openable as a tab.
 
 import * as vscode from "vscode";
 import { ChatHost, HostCtx } from "./chatHost";
@@ -56,6 +57,10 @@ export class ChatPanels implements vscode.Disposable {
   onShown: () => void = () => {};
   /** Called when the owner closed a tab: Ctrl+Shift+T can bring it back (59). */
   onClosed: () => void = () => {};
+  /** Called when a chat's tab becomes the active editor. */
+  onActive: (sid: string) => void = () => {};
+  /** Called as a chat's tab goes, before a read-only view of it may be dropped. */
+  onGone: (sid: string) => void = () => {};
   /** Tabs the owner closed, the latest last (Claude Code keeps its own so). */
   private closed: string[] = [];
   /** The tab last focused, for a key that goes to the chat (59). */
@@ -80,16 +85,24 @@ export class ChatPanels implements vscode.Disposable {
     });
     // The mark in its two colours, a file per theme (decision 54).
     panel.iconPath = this.iconFor("plain");
-    const host = new ChatHost(panel.webview, this.ctx, sid, true, () => panel.reveal(undefined, false));
+    // What the page opens goes into the tab's own group, beside it (decision 92).
+    const host = new ChatHost(panel.webview, this.ctx, sid, true, () => panel.reveal(undefined, false), () => panel.viewColumn ?? vscode.ViewColumn.Active);
     panel.webview.html = webviewHtml(panel.webview, this.extensionUri, "chat", title);
     this.panels.set(sid, { panel, host, icon: "plain" });
+    // A new tab opens active, and VS Code tells no view-state change for that.
+    this.lastActive = sid;
     panel.onDidChangeViewState?.(() => {
-      if (panel.active) this.lastActive = sid;
+      if (panel.active) {
+        this.lastActive = sid;
+        this.onActive(sid);
+      }
       this.onShown();
     });
     panel.onDidDispose(() => {
       host.dispose();
       this.panels.delete(sid);
+      // Not as the window closes: the reload memory keeps which chat was current (63).
+      if (!this.disposing) this.onGone(sid);
       this.ctx.chats.release(sid);
       this.onShown();
       if (this.disposing) return;
@@ -111,6 +124,15 @@ export class ChatPanels implements vscode.Disposable {
   shownHost(): ChatHost | undefined {
     const p = this.lastActive ? this.panels.get(this.lastActive) : undefined;
     return p?.panel.visible ? p.host : undefined;
+  }
+
+  /** The chat of the tab last focused, while its tab is open, shown or not. */
+  last(): string | null {
+    return this.lastActive && this.panels.has(this.lastActive) ? this.lastActive : null;
+  }
+
+  host(sid: string): ChatHost | undefined {
+    return this.panels.get(sid)?.host;
   }
 
   /** The mark, with the state's dot in the corner unless plain. */

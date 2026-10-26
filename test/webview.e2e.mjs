@@ -817,7 +817,8 @@ await check("markdown: lists, code, tables, links, file paths, no HTML", async (
   await clearPosts();
   await click("code.file");
   const p = (await posts()).find((x) => x.t === "openFile");
-  assert.deepEqual([p.path, p.line], ["src/main.c", 42]);
+  // The span whole: the host reads its line (decision 93).
+  assert.deepEqual([p.path, p.line], ["src/main.c:42", undefined]);
   await shot("chat-markdown");
 });
 
@@ -1105,6 +1106,7 @@ await check("no link has an href: VS Code's own handler never opens one, each op
               "See [the docs](https://example.com/docs) and https://example.com/bare.",
               "Then [the PR](vscode://anthropic.claude-code/open?prompt=hello), [mail](mailto:someone@example.com), [run](command:workbench.action.terminal.new) and [a plugin](vscode://anthropic.claude-code/install-plugin?plugin=x).",
               "The fix is in [main.c](src/main.c), per abc123@A p12.",
+              "Also [the spec](file:///work/rec/x/spec.md#L3) and `~/notes/todo.md:7-9`.",
             ].join("\n"),
           },
         ],
@@ -1128,6 +1130,9 @@ await check("no link has an href: VS Code's own handler never opens one, each op
     [".md .link-refused", "run", null],
     [".md .link-refused", "a plugin", null],
     [".md a", "main.c", { t: "openFile", path: "src/main.c" }],
+    // A file:/// link is a path; a span from `~` with a line range is a file (decision 93).
+    [".md a", "the spec", { t: "openFile", path: "/work/rec/x/spec.md#L3" }],
+    [".md code.file", "~/notes/todo.md:7-9", { t: "openFile", path: "~/notes/todo.md:7-9" }],
     ["a.cite", "abc123@A p12", { t: "atlas", doc: "abc123@A", page: 12 }],
     [".bench-link", "Live Study", { t: "openLink", url: "http://127.0.0.1:4890/#live-study?study=st-7" }],
     [".header a", "ABC-123", { t: "openLink", url: "https://linear.example/ABC-123" }],

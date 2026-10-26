@@ -97,6 +97,8 @@ before(async () => {
     "embarchChat.deskTokenPath": desk.tokenPath,
     "embarchChat.assistant": false,
     "embarchUi.port": 1,
+    // These tests drive the sidebar's chat (decision 92).
+    "embarchChat.chatLocation": "sidebar",
   });
   mock.state.folders = [folder];
   // The window starts while the desk is down (VS Code before the desk, or a desk restart).
