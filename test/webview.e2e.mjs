@@ -2035,6 +2035,21 @@ await check("a folded run whose latest step runs in the foreground offers Run in
   assert.equal((await text(".bg-line")).length, 0);
 });
 
+await check("a background agent's card opens to the subagent's report, not the launch reply (decision 90)", async () => {
+  await fresh({}, false);
+  const lines = allowed("notifyidle");
+  const task = lines.find((o) => isTaskStarted(o) && o.task_type === "local_agent").task_id;
+  const report = "Found two files.\n\n- a.txt\n- b.txt";
+  const hand = { type: "user", isMeta: true, message: { role: "user", content: `Another Claude session sent a message:\n<agent-message from="${task}">\n[Subagent hand-back]\n${report}\n</agent-message>` }, origin: { kind: "peer", handback: true, from: task, senderTaskId: task, body: report } };
+  await send([sent("start an agent"), ...events([...lines, hand])]);
+  assert.equal(await exec("return document.querySelectorAll('.tool details.report').length"), 1, "one report on the card");
+  assert.equal(await exec("return document.querySelector('.tool details.report').open"), false, "collapsed");
+  await click(".tool details.report summary");
+  assert.deepEqual(await text(".tool details.report li"), ["a.txt", "b.txt"]);
+  assert.ok(!(await text(".timeline")).join("").includes("Async agent launched"), "the launch reply is not the result");
+  await shot("agent-report");
+});
+
 await check("background tasks open from the status line: a subagent shows its progress and a Stop, no output to read; Stop on the turn says background tasks go on (port item 71)", async () => {
   await fresh({}, false);
   const lines = allowed("agentbg");

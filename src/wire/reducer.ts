@@ -76,6 +76,13 @@ export interface ToolEntry {
   /** How its task ended, and when; until then a call in the background still runs. */
   taskEnd?: "completed" | "failed" | "stopped";
   taskEndAt?: number;
+  /**
+   * Where a background agent's `result` came from once it is the subagent's
+   * report, not the launch reply (decision 90): "handback", the line the CLI
+   * sends Claude with it (`origin.handback`), or "text", the subagent's last
+   * reply, which the wire carries under the card's id.
+   */
+  reportFrom?: "handback" | "text";
 }
 export interface NoteEntry {
   kind: "note";
@@ -517,6 +524,21 @@ function foldCliLine(s: ChatState, o: WireMessage, kind: string, raw: string): C
   return s;
 }
 
+/**
+ * The subagent's report, from the hand-back line: `origin.body` whole, else
+ * the `<agent-message>` text without its `[Subagent hand-back]` frame. It
+ * becomes the Agent card's result, found by the task id in `origin.from`
+ * (decision 90).
+ */
+function foldHandback(s: ChatState, o: WireMessage, raw: string): ChatState {
+  const origin = o.origin as { from?: unknown; senderTaskId?: unknown; body?: unknown };
+  const tool = taskTool(s, origin.from) ?? taskTool(s, origin.senderTaskId);
+  const m = /<agent-message\b[^>]*>([\s\S]*?)(?:<\/agent-message>|$)/.exec(raw);
+  const body = (typeof origin.body === "string" && origin.body.trim() ? origin.body : (m ? m[1] : "").replace(/^\s*\[Subagent hand-back\][^\n]*\n?/, "")).trim();
+  if (!tool || !body || s.entries[tool]?.kind !== "tool") return s;
+  return patch(s, tool, "tool", () => ({ result: body, reportFrom: "handback" }));
+}
+
 /** The last thing in the timeline, the owner's own messages aside, is a compaction's card. */
 function justCompacted(s: ChatState): boolean {
   for (let i = s.timeline.length - 1; i >= 0; i--) {
@@ -574,6 +596,11 @@ function foldAssistant(s: ChatState, o: WireMessage): ChatState {
     if (b.type === "text") {
       const text = (b as { text: string }).text;
       if (text.trim()) s = put(s, { kind: "text", id: `${msgId}:${n}`, text, parent, at }, parent);
+      // A background agent's last reply is its report until the hand-back says it (90).
+      const host = parent ? s.entries[parent] : undefined;
+      if (text.trim() && host?.kind === "tool" && host.parent === null && (host.name === "Agent" || host.name === "Task") && host.background && host.reportFrom !== "handback") {
+        s = patch(s, host.id, "tool", () => ({ result: text, reportFrom: "text" }));
+      }
     } else if (b.type === "thinking") {
       const text = (b as { thinking: string }).thinking ?? "";
       if (text.trim()) s = put(s, { kind: "thinking", id: `${msgId}:${n}`, text, parent, at }, parent);
@@ -598,9 +625,13 @@ function foldUser(s: ChatState, o: WireMessage): ChatState {
       if (b.type !== "tool_result") continue;
       const r = b as { tool_use_id: string; content?: unknown; is_error?: boolean };
       const structured = o.tool_use_result ?? o.toolUseResult;
+      // A background agent's launch reply names its task: the key a hand-back reads, which a reload has no task_started for (90).
+      const launched = structured as { isAsync?: unknown; agentId?: unknown } | undefined;
+      if (launched?.isAsync === true && typeof launched.agentId === "string" && !s.tasks?.[launched.agentId]) s = { ...s, tasks: { ...(s.tasks ?? {}), [launched.agentId]: r.tool_use_id } };
       s = patch(s, r.tool_use_id, "tool", (t) => ({
         status: r.is_error ? (t.status === "denied" ? "denied" : "error") : "done",
-        result: resultText(r.content),
+        // The launch reply never replaces a report already in (90).
+        ...(t.reportFrom && launched?.isAsync === true ? {} : { result: resultText(r.content) }),
         structured: structured ?? t.structured,
         doneAt: stamp(o) ?? t.doneAt,
       }));
@@ -613,6 +644,8 @@ function foldUser(s: ChatState, o: WireMessage): ChatState {
     const last = s.entries[s.timeline[s.timeline.length - 1]];
     if (last?.kind === "note" && last.tone === "compact" && last.summary === undefined) return patch(s, last.id, "note", () => ({ summary: textOf(content) }));
   }
+  // A background agent's report, sent Claude as a meta line: read before the meta drop (90).
+  if (!parent && o.isMeta && originKind(o) === "peer" && (o.origin as { handback?: unknown } | undefined)?.handback) return foldHandback(s, o, textOf(content));
   if (o.isSynthetic || o.isMeta || o.isCompactSummary || parent) return s;
   const raw = textOf(content);
   const kind = originKind(o);

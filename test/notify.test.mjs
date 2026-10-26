@@ -8,6 +8,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -111,4 +112,64 @@ test("the assistant's prompt history and the panel read one rule", () => {
   assert.equal(core.originKind({ ...o, origin: { kind: "human" } }), "human");
   assert.equal(core.originKind(o), "human");
   assert.equal(core.originKind({ ...o, turnOrigin: "sdk" }), "sdk");
+});
+
+// A background agent's card shows the subagent's report (decision 90). The
+// hand-back line is the shape seen in an owner's transcript on CLI 2.1.287:
+// no recording put it on the wire, so the wire test below uses the fallback
+// that was recorded (notifyidle: the subagent's last reply, parent_tool_use_id
+// set to the card), and the hand-back is built by hand from that shape.
+const REPORT = "Found two files.\n\n- a.txt\n- b.txt";
+const handback = (from, extra = {}) => ({
+  type: "user",
+  isMeta: true,
+  message: { role: "user", content: `Another Claude session sent a message:\n<agent-message from="${from}">\n[Subagent hand-back]\n${REPORT}\n</agent-message>` },
+  origin: { kind: "peer", handback: true, from, senderTaskId: from, name: "worker", body: REPORT, ...extra },
+});
+
+test("wire: the card's result is the subagent's last reply, and the launch reply is not", () => {
+  const s = fold(wire("notifyidle"));
+  const a = agentOf(s);
+  assert.equal(a.result, "PING");
+  assert.equal(a.reportFrom, "text");
+  assert.ok(!a.result.includes("Async agent launched"));
+  assert.equal(a.structured.isAsync, true, "the launch reply's record is kept");
+});
+
+test("a hand-back is the report, found by its task id, and wins over the subagent's last reply", () => {
+  const events = wire("notifyidle");
+  const task = events.find((o) => o.type === "system" && o.subtype === "task_started" && o.task_type === "local_agent").task_id;
+  const s = fold([...events, handback(task)]);
+  const a = agentOf(s);
+  assert.equal(a.result, REPORT);
+  assert.equal(a.reportFrom, "handback");
+  assert.equal(kind(s, "user").length, 1, "no bubble for it");
+  assert.equal(rows(s).length, 1, "the notification's row is unchanged");
+  // Without origin.body, the text between the tags, frame removed.
+  const t = fold([...events, handback(task, { body: undefined })]);
+  assert.equal(agentOf(t).result, REPORT);
+  // A late launch reply, or later subagent text, never replaces it.
+  const late = events.find((o) => o.type === "user" && JSON.stringify(o).includes("Async agent launched"));
+  const u = fold([...events.filter((o) => o !== late), handback(task), late]);
+  assert.equal(agentOf(u).result, REPORT);
+  // One for a task nobody knows is dropped.
+  assert.equal(agentOf(fold([...events, handback("zzz")])).result, "PING");
+});
+
+test("reload: a transcript's hand-back line gives the card the same result", () => {
+  const src = path.join(here, "fixtures", "transcripts", "575f17ad-b329-4aa6-8538-514640217fc2.jsonl");
+  const agentId = "ac4da7e8888589400";
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-"));
+  const file = path.join(dir, "575f17ad-b329-4aa6-8538-514640217fc2.jsonl");
+  const line = { ...handback(agentId), uuid: "00000000-0000-4000-8000-0000000000aa", timestamp: "2026-10-26T05:22:30.000Z", sessionId: "575f17ad-b329-4aa6-8538-514640217fc2", isSidechain: false };
+  fs.writeFileSync(file, fs.readFileSync(src, "utf8").replace(/\n?$/, "\n") + JSON.stringify(line) + "\n");
+  try {
+    const s = fold(core.readTranscript(file).events);
+    const a = agentOf(s);
+    assert.equal(a.result, REPORT);
+    assert.equal(a.reportFrom, "handback");
+    assert.equal(kind(s, "user").length, 1);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

@@ -368,7 +368,14 @@ function ToolViewInner({ t, entries, ctx, render }: ToolProps) {
               {foldRuns(t.children, (id) => entries[id], quiet).map((f) => (
                 <div key={f.key}>{f.run ? <RunView steps={f.ids.map((id) => entries[id])} entries={entries} ctx={ctx} render={render} /> : render(entries[f.ids[0]])}</div>
               ))}
-              {t.result && t.status !== "running" && !bg && <Markdown text={t.result} ctx={ctx} />}
+              {t.reportFrom ? (
+                <details class="report" open={false}>
+                  <summary>Report</summary>
+                  <Markdown text={t.result ?? ""} ctx={ctx} />
+                </details>
+              ) : (
+                t.result && t.status !== "running" && !bg && <Markdown text={t.result} ctx={ctx} />
+              )}
             </div>
           ) : (
             <>
