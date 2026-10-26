@@ -824,6 +824,70 @@ await check("markdown: lists, code, tables, links, file paths, no HTML", async (
 const toolCall = (id, name, input) => ({ t: "event", e: { type: "assistant", message: { id: `m-${id}`, content: [{ type: "tool_use", id, name, input }] }, parent_tool_use_id: null } });
 const toolResult = (id, text, isError = false) => ({ t: "event", e: { type: "user", message: { content: [{ type: "tool_result", tool_use_id: id, content: text, is_error: isError }] }, parent_tool_use_id: null } });
 
+await check("the column: a wide pane centres timeline, cards and composer, prose wraps narrower than steps and code, steps and thinking indent; the header and the composer's rule stay full width (decision 91)", async () => {
+  const say = (id, content) => ({ t: "event", e: { type: "assistant", message: { id, content }, parent_tool_use_id: null } });
+  const echo = (text) => ({ t: "event", e: { type: "user", message: { role: "user", content: [{ type: "text", text }] }, parent_tool_use_id: null } });
+  const ask = "Why does the build fail on the new board?";
+  const prose =
+    "The overlay names `led0`, but the new board's devicetree has no such alias, so the build stops at the first use of it. " +
+    "Moving the alias into the board's own overlay keeps the application free of board names, and the old board keeps building as it did.";
+  const code = "```\nwest build -b nrf54l15dk/nrf54l15/cpuapp app -- -DEXTRA_DTC_OVERLAY_FILE=boards/nrf54l15dk_nrf54l15_cpuapp.overlay\n```";
+  await send([
+    snapshot(),
+    sent(ask),
+    echo(ask),
+    say("m-l1", [{ type: "thinking", thinking: "The overlay names a node the board file does not have." }]),
+    say("m-l2", [{ type: "text", text: `${prose}\n\n${code}` }]),
+    toolCall("toolu_l1", "Bash", { command: "west build -b nrf54l15dk/nrf54l15/cpuapp app", description: "Build for the new board" }),
+    toolResult("toolu_l1", "error: 'led0' undeclared"),
+    say("m-l3", [{ type: "text", text: "It builds once the alias is in the board's overlay." }]),
+    { t: "event", e: { type: "result", subtype: "success", is_error: false } },
+    { t: "event", e: { type: "_sent", n: 2, text: "Thanks" } },
+    echo("Thanks"),
+  ]);
+  const measure = () =>
+    exec(`const r = (s) => document.querySelector(s)?.getBoundingClientRect();
+      const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
+      return { vw: document.documentElement.clientWidth, rem,
+        head: r('.header .row').left, composer: r('.composer').width, field: r('.composer .field').left, fieldRight: r('.composer .field').right,
+        p: r('.timeline .reply .md > p'), code: r('.timeline .reply .md > .codeblock'), tool: r('.timeline > div > .tool').left,
+        think: r('.timeline > div > details.thinking').left, user: r('.timeline .user').right, turn: r('.timeline > .turn').width };`);
+  const near = (a, b, what) => assert.ok(Math.abs(a - b) <= 1, `${what}: ${a} vs ${b}`);
+  // Firefox goes no narrower than 500 px; both are measured before either is judged.
+  const seen = [];
+  try {
+    for (const [w, name] of [
+      [500, "layout-narrow"],
+      [1400, "layout-wide"],
+    ]) {
+      await wd("POST", `${S}/window/rect`, { width: w, height: 900 });
+      await settle();
+      await shot(name);
+      seen.push([name, await measure()]);
+    }
+  } finally {
+    await wd("POST", `${S}/window/rect`, { width: 460, height: 900 });
+  }
+  for (const [name, m] of seen) {
+    const gutter = Math.min(16, Math.max(8, 0.025 * m.vw));
+    const col = 56 * m.rem;
+    const left = Math.max(gutter, (m.vw - col) / 2);
+    near(m.p.left, left, `${name}: prose starts at the column's edge`);
+    near(m.field, left, `${name}: the composer's field shares it`);
+    near(m.think, left + gutter, `${name}: thinking indents by the gutter`);
+    near(m.tool, left + gutter, `${name}: a step indents by the gutter`);
+    near(m.head, gutter, `${name}: the header keeps the gutter, full width`);
+    near(m.composer, m.vw, `${name}: the composer's rule runs the pane's width`);
+    if (m.vw > col + 2 * gutter) {
+      assert.ok(m.p.width <= 42 * m.rem + 1, `${name}: prose wraps at 42rem: ${m.p.width}`);
+      near(m.code.width, col, `${name}: code takes the whole column`);
+      near(m.turn, col, `${name}: the turn's rule stops at the column`);
+      near(m.fieldRight, m.vw - left, `${name}: the composer's field ends at the column's edge`);
+      assert.ok(m.user <= m.vw - left + 1 && m.user >= m.vw - left - 20, `${name}: the bubble ends at the column's edge: ${m.user}`);
+    }
+  }
+});
+
 await check("bench results show as cards: pass or fail, board, first error, steps, a link", async () => {
   const failedBuild = {
     success: false,

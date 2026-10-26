@@ -19,6 +19,14 @@
 
 :root {
   --gap: 8px;
+  /* The chat's column (decision 91): the side gutter grows from 8 px to 16 px
+     with the pane; a pane wider than the column centres it, and prose inside
+     wraps narrower than steps and code. --inset is a side's padding for a
+     region as wide as the pane: its % is the pane's width. */
+  --gutter: clamp(8px, 2.5vw, 16px);
+  --column: 56rem;
+  --prose: 42rem;
+  --inset: max(var(--gutter), (100% - var(--column)) / 2);
   --radius: 4px;
   --muted: var(--vscode-descriptionForeground);
   --border: var(--vscode-panel-border, var(--vscode-widget-border, rgba(128, 128, 128, 0.35)));
@@ -207,7 +215,7 @@ button.link-button:focus-visible {
 .warn-line {
   color: var(--warn);
   font-size: 0.92em;
-  padding: 2px var(--gap);
+  padding: 2px var(--inset);
 }
 
 /* ------------------------------------------------------------ markdown */
@@ -305,7 +313,7 @@ button.link-button:focus-visible {
 }
 
 .header {
-  padding: 6px var(--gap) 4px;
+  padding: 6px var(--gutter) 4px;
   border-bottom: 1px solid var(--border);
   display: flex;
   flex-direction: column;
@@ -407,7 +415,7 @@ button.link-button:focus-visible {
   flex: 1;
   min-height: min(25vh, 40%);
   overflow-y: auto;
-  padding: var(--gap);
+  padding: var(--gap) var(--inset);
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -441,6 +449,15 @@ button.link-button:focus-visible {
   margin-top: 2px;
   padding-top: 14px;
   border-top: 1px solid var(--border);
+}
+/* Steps, and the thinking before them, sit one gutter in from Claude's prose,
+   which wraps at --prose while code and tables take the column (decision 91). */
+.timeline > div > .tool,
+.timeline > div > details.thinking {
+  margin-left: var(--gutter);
+}
+.timeline .md > :not(.codeblock, .tablewrap) {
+  max-width: var(--prose);
 }
 /* A text block's own paragraph margins would add to the gap. */
 .timeline > div > .md > :first-child,
@@ -874,7 +891,7 @@ details.report > summary {
    for its title and the command it asks about above them too, where the
    panel has it (review r6 L2). A held card keeps its one line. */
 .cards {
-  padding: 0 var(--gap);
+  padding: 0 var(--inset);
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -1130,7 +1147,7 @@ details.report > summary {
 
 .composer {
   position: relative;
-  padding: 6px var(--gap) 6px;
+  padding: 6px var(--inset) 6px;
   border-top: 1px solid var(--border);
 }
 .composer .field {
@@ -1246,8 +1263,8 @@ details.report > summary {
 }
 .menu {
   position: absolute;
-  left: var(--gap);
-  right: var(--gap);
+  left: var(--inset);
+  right: var(--inset);
   bottom: calc(100% - 4px);
   display: flex;
   max-height: 50vh;
@@ -1442,8 +1459,8 @@ span.pill {
 }
 .pop {
   position: absolute;
-  left: var(--gap);
-  right: var(--gap);
+  left: var(--inset);
+  right: var(--inset);
   bottom: calc(100% - 4px);
   max-height: 50vh;
   overflow-y: auto;
@@ -1559,7 +1576,7 @@ body.vscode-high-contrast-light .on {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin: 0 var(--gap) 4px;
+  margin: 0 var(--inset) 4px;
   padding: 2px 2px 2px 8px;
   border: 1px solid currentColor;
   border-radius: var(--radius);
@@ -1612,7 +1629,7 @@ body.vscode-high-contrast-light .on {
 .status-line {
   font-size: 0.88em;
   color: var(--muted);
-  padding: 0 var(--gap) 2px;
+  padding: 0 var(--inset) 2px;
   display: flex;
   flex-wrap: wrap;
   gap: 0 8px;
@@ -1622,7 +1639,7 @@ body.vscode-high-contrast-light .on {
    row with what it is, what it does, a Stop, and its output's tail. They
    scroll rather than push the input down, as the cards do (55). */
 .bg-tasks {
-  padding: 0 var(--gap) 4px;
+  padding: 0 var(--inset) 4px;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -1673,7 +1690,7 @@ body.vscode-high-contrast-light .on {
 /* Messages that wait for Claude (port item 72): above the input, the owner's
    bubble greyed as a sent one not yet taken, with Cancel and Send now. */
 .queue {
-  padding: 2px var(--gap) 4px;
+  padding: 2px var(--inset) 4px;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
@@ -1726,8 +1743,8 @@ body.vscode-high-contrast-light .on {
 }
 .popup {
   position: absolute;
-  left: var(--gap);
-  right: var(--gap);
+  left: var(--inset);
+  right: var(--inset);
   bottom: calc(100% - 4px);
   max-height: 240px;
   overflow-y: auto;
@@ -1875,7 +1892,7 @@ body.vscode-high-contrast-light .on {
   opacity: 0.7;
 }
 .readonly {
-  padding: 8px var(--gap);
+  padding: 8px var(--inset);
   border-top: 1px solid var(--border);
   display: flex;
   align-items: center;
@@ -2128,7 +2145,7 @@ a.ref:hover {
 }
 /* Side questions (57): above the input, apart from the timeline. */
 .side {
-  margin: 0 var(--gap) 4px;
+  margin: 0 var(--inset) 4px;
   border: 1px solid var(--border);
   border-left: 3px solid var(--accent);
   border-radius: var(--radius);
