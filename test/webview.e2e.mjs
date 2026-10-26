@@ -824,7 +824,7 @@ await check("markdown: lists, code, tables, links, file paths, no HTML", async (
 const toolCall = (id, name, input) => ({ t: "event", e: { type: "assistant", message: { id: `m-${id}`, content: [{ type: "tool_use", id, name, input }] }, parent_tool_use_id: null } });
 const toolResult = (id, text, isError = false) => ({ t: "event", e: { type: "user", message: { content: [{ type: "tool_result", tool_use_id: id, content: text, is_error: isError }] }, parent_tool_use_id: null } });
 
-await check("the column: a wide pane centres timeline, cards and composer, prose wraps narrower than steps and code, steps and thinking indent; the header and the composer's rule stay full width (decision 91)", async () => {
+await check("the column: a wide pane centres timeline, cards and composer in 80 % of it, prose wraps narrower than steps and code, steps and thinking indent; the header and the composer's rule stay full width (decision 91)", async () => {
   const say = (id, content) => ({ t: "event", e: { type: "assistant", message: { id, content }, parent_tool_use_id: null } });
   const echo = (text) => ({ t: "event", e: { type: "user", message: { role: "user", content: [{ type: "text", text }] }, parent_tool_use_id: null } });
   const ask = "Why does the build fail on the new board?";
@@ -870,7 +870,7 @@ await check("the column: a wide pane centres timeline, cards and composer, prose
   }
   for (const [name, m] of seen) {
     const gutter = Math.min(16, Math.max(8, 0.025 * m.vw));
-    const col = 56 * m.rem;
+    const col = Math.max(56 * m.rem, 0.8 * m.vw);
     const left = Math.max(gutter, (m.vw - col) / 2);
     near(m.p.left, left, `${name}: prose starts at the column's edge`);
     near(m.field, left, `${name}: the composer's field shares it`);
@@ -879,7 +879,7 @@ await check("the column: a wide pane centres timeline, cards and composer, prose
     near(m.head, gutter, `${name}: the header keeps the gutter, full width`);
     near(m.composer, m.vw, `${name}: the composer's rule runs the pane's width`);
     if (m.vw > col + 2 * gutter) {
-      assert.ok(m.p.width <= 42 * m.rem + 1, `${name}: prose wraps at 42rem: ${m.p.width}`);
+      assert.ok(m.p.width <= 64 * m.rem + 1 && m.p.width > 56 * m.rem, `${name}: prose wraps at 64rem: ${m.p.width}`);
       near(m.code.width, col, `${name}: code takes the whole column`);
       near(m.turn, col, `${name}: the turn's rule stops at the column`);
       near(m.fieldRight, m.vw - left, `${name}: the composer's field ends at the column's edge`);

@@ -20,12 +20,13 @@
 :root {
   --gap: 8px;
   /* The chat's column (decision 91): the side gutter grows from 8 px to 16 px
-     with the pane; a pane wider than the column centres it, and prose inside
-     wraps narrower than steps and code. --inset is a side's padding for a
-     region as wide as the pane: its % is the pane's width. */
+     with the pane; a pane wider than the column centres it, the column 80 %
+     of the pane and never under 56rem, and prose inside wraps narrower than
+     steps and code. --inset is a side's padding for a region as wide as the
+     pane: its % is the pane's width, here and in --column. */
   --gutter: clamp(8px, 2.5vw, 16px);
-  --column: 56rem;
-  --prose: 42rem;
+  --column: max(56rem, 80%);
+  --prose: 64rem;
   --inset: max(var(--gutter), (100% - var(--column)) / 2);
   --radius: 4px;
   --muted: var(--vscode-descriptionForeground);
