@@ -6,14 +6,14 @@ disable-model-invocation: true
 
 Propose EmbArch's permission split for the open repo, and write it only when I say yes.
 
-**The rule** (suite/user-guide.md §7.1): reading and building are safe and frequent, so they are allowed; anything that reaches a board, or rewrites what EmbArch remembers about one, asks every time.
+**The rule** (suite/agent-guide.md §1.1): reading and building are safe and frequent, so they are allowed; anything that reaches a board, or rewrites what EmbArch remembers about one, asks every time.
 
-**The split, as of 2026-10-23.** The server is registered as `embarch-api`, so each rule is `mcp__embarch-api__<tool>`.
+**The split, as of 2026-10-29.** The server is registered as `embarch-api`, so each rule is `mcp__embarch-api__<tool>`.
 
-- **allow**: reads, and host-side builds that touch no hardware: `alerts`, `build`, `build_dev_bench`, `dev_bench_hello`, `list_projects`, `list_serial_ports`, `list_signals`, `list_study_streams`, `list_targets`, `serial_log`, `show_bootload_ports`, `status`, `study_status`, `study_stream_data`, `study_stream_load`, `study_watch`
-- **ask**: reaches a board, or writes what EmbArch has recorded about one: `bootload`, `build_and_bootload`, `build_and_flash`, `build_and_flash_dev_bench`, `clear_bootload_ports`, `declare_bootload_ports`, `declare_signal`, `dev_bench_link`, `enroll_probe`, `flash`, `flash_dev_bench`, `mem_read`, `remove_signal`, `reset`, `reset_dev_bench`, `run_study`, `set_role_board`, `signal_exchange`, `unenroll_probe`, `validate`
+- **allow**: reads, and host-side builds that touch no hardware: `alerts`, `build`, `build_dev_bench`, `capture_read`, `capture_start`, `capture_stop`, `dev_bench_hello`, `lease_show`, `ledger_pending`, `ledger_show`, `list_instruments`, `list_projects`, `list_serial_ports`, `list_signals`, `list_study_streams`, `list_targets`, `serial_log`, `show_bootload_ports`, `status`, `study_status`, `study_stream_data`, `study_stream_load`, `study_watch`
+- **ask**: reaches a board, or writes what EmbArch has recorded about one: `answer_prompt`, `bench_exchange`, `bootload`, `build_and_bootload`, `build_and_flash`, `build_and_flash_dev_bench`, `clear_bootload_ports`, `core_state`, `declare_bootload_ports`, `declare_instrument`, `declare_signal`, `dev_bench_link`, `enroll_probe`, `flash`, `flash_dev_bench`, `instrument_exchange`, `lease_release`, `lease_renew`, `lease_take`, `ledger_add`, `mem_read`, `remove_instrument`, `remove_signal`, `reset`, `reset_dev_bench`, `run_host_study`, `run_study`, `set_role_board`, `signal_exchange`, `unenroll_probe`, `validate`
 
-`run_study` is the one to be deliberate about: with `reflash` it builds and flashes from the working tree as it stands, on both boards.
+`run_study` is the one to be deliberate about: with `reflash` it builds and flashes from the working tree as it stands, on both boards. `answer_prompt` and `instrument_exchange` ask so the person stays the one deciding.
 
 Steps:
 1. Check the server's live tool list (the `mcp__embarch-api__*` tools this session has). A tool in neither list goes to **ask**, named in the summary so the split can be updated. A listed tool that no longer exists is left out.
