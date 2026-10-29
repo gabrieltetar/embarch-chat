@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 Offer to add EmbArch's block to the open repo's `CLAUDE.md`, and write it only when I say yes.
 
-The block (suite/user-guide.md §7.1):
+The block (suite/agent-guide.md §1.1):
 
 ```markdown
 <!-- embarch:begin -->
