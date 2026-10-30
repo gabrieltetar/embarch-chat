@@ -112,14 +112,15 @@ code cites.
   transcripts at runtime, kept in memory only); after a 300 ms pause,
   Haiku's ghost text, streamed — Tab takes it; after a 2 s pause, or just
   before a longer draft goes, Haiku's cards behind the 💡, one submenu per
-  kind: missing context, improvements, context handling. **Every card is an
-  edit to the draft**: hovering previews it in place (added words grey,
+  kind: the desk's references, context handling (what a prompt lacks is
+  Promptu's, below). **Every card is an edit to the draft**: hovering previews it in place (added words grey,
   removed ones struck through), a click applies it, Ctrl+Z restores. The
   compact card adds `/compact focus on: …` as a first line, and Enter sends
   that, waits for the compaction, then sends the rest (Stop, or a failed
   compaction, puts the rest back in the draft instead); the handoff card
-  turns the draft into a request for a handoff; the background card asks
-  for a background subagent. The next keystroke cancels a stale call.
+  opens Promptu's handoff questions (without Promptu, it turns the draft
+  into a request for a handoff); the background card asks for a background
+  subagent. The next keystroke cancels a stale call.
 - **Reply chips after each turn**: two to four, Claude Code's own guess
   (`--prompt-suggestions`) among them; a click sends one. After a turn that
   wrote a handoff, **Fresh chat with this handoff** starts a new chat on the
@@ -130,7 +131,22 @@ code cites.
   stdin, `EMBARCH_DESK_INTERNAL=1`), about $0.002; it sees the draft,
   Claude's last reply, the work item's card, the library's names and the
   context usage. The calls and their cost are in the log.
-- **The 📚 library** beside the 💡: this repo's own plugin (`plugin/`) and
+- **Promptu** ([embarch-promptu](https://github.com/gabrieltetar/embarch-promptu)),
+  when its `promptu` CLI is on PATH (or `embarchChat.promptuPath`): a rail
+  down the chat's left edge holds **Memory, Promptu, the 📚 and the 💡**,
+  folded to their icons until the pointer is on it. At the start of a task
+  — a chat's first prompt, or a Start work chat — the Promptu icon lights,
+  and **Enter runs Promptu's pass instead of sending**: a dialog over the
+  chat asks only what the prompt, the work item, memory and last time leave
+  open, recommended answers picked (Enter answers a page, Ctrl+Enter takes
+  every recommendation, Esc stops with the rest as assumptions), and **the
+  prompt it writes lands in the draft, not sent** — Enter again sends it,
+  Ctrl+Z puts yours back. Hover the icon for its card: on or off, a pattern
+  for the next prompt, Quick mode (no questions). A failure is one line and
+  your draft as typed. **Memory** shows what loads in the chat's folder by
+  scope, domain and kind, with stale flags and where each memory was used;
+  a click opens it beside the chat.
+- **The 📚 library** in the rail: this repo's own plugin (`plugin/`) and
   your `~/.claude/commands`, one submenu per `category:` in each entry's
   frontmatter (none is Other); a click puts `/<name> ` at the head of the
   draft, as the session knows it (`/embarch-chat:<name>` for the plugin's).
@@ -253,6 +269,7 @@ The extension does not run in an untrusted workspace.
 | `embarchChat.diagnosticsTool` | `false` | Give Claude `getDiagnostics`, the Problems panel (its definition rides in every chat's tool list). |
 | `embarchChat.attachOpenFile` | `true` | The file open in the editor goes with each message. Off, a file goes only with selected lines. |
 | `embarchChat.attachSelection` | `true` | The selected lines, with their text, go with each message. Off, `@` still inserts them. |
+| `embarchChat.promptuPath` | `"promptu"` | Promptu's CLI. Not found, the Promptu icon stays dark and Enter sends as always. |
 | `embarchUi.binaryPath` | `"embarch-ui"` | The embarch-ui binary the launcher starts. |
 | `embarchUi.host` / `embarchUi.port` | `127.0.0.1` / `4890` | Where embarch-ui serves (also the Desk link). |
 | `embarchUi.configPath` | `""` | An embarch-ui TOML config, as `EMBARCH_UI_CONFIG`. |
@@ -275,7 +292,8 @@ npm run test:webview # both webviews in headless Firefox over geckodriver
 - **The desk, host and resume tests** run against a scratch `embarch-desk`
   built from `../embarch-desk` — set `EMBARCH_DESK_BIN` to the binary; they
   skip without it. They use ports 4980–4989 only (`test/scratch-desk.mjs`
-  says which test takes which), their own data, config and
+  says which test takes which; `EMBARCH_CHAT_TEST_PORT_BASE` moves the ten
+  when other work holds them), their own data, config and
   `CLAUDE_CONFIG_DIR`, and never touch the live desk on :4891. A `start`
   mailbox entry is seeded into the scratch desk's store, as Start work
   would leave it: the desk refuses one posted to `/mailbox`.
@@ -284,6 +302,10 @@ npm run test:webview # both webviews in headless Firefox over geckodriver
   — is made from the mark (`tools/embarch-mark.svg`, embarch-ui's) by
   `tools/make_glyph.py`, which needs fontTools and skia-pathops in a scratch
   venv; its docstring says how to run it.
+- **The Promptu tests** run against `test/fake-promptu.mjs`, never a model;
+  set `PROMPTU_BIN` to a build of embarch-promptu and one more runs the real
+  CLI offline in scratch folders. The host tests point
+  `embarchChat.promptuPath` at the fake, never at your own binary.
 - `node test/live.smoke.mjs <scratch-dir> [claude]` runs one real, stripped
   Haiku chat through the wire layer (about three cents).
 - **The assistant tests** replay real recorded Haiku calls
