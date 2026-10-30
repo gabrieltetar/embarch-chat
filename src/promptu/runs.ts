@@ -48,8 +48,10 @@ export interface PromptuResult {
   error?: string;
   /** The owner stopped it before a prompt came back (Esc while it read the prompt). */
   cancelled?: boolean;
-  /** What the draft gets instead when there is no prompt: Start work's old starter (96). */
+  /** What the draft gets instead when there is no prompt (96). */
   fallback?: string;
+  /** Start work's starter went to Claude instead, as decision 11 sent it (the owner's P2). */
+  fallbackSent?: boolean;
   /** For the footer's pattern, shown in the notice. */
   pattern?: string | null;
 }
@@ -76,7 +78,14 @@ export interface BeginOpts {
   start?: boolean;
   /** The work item, or how to read it: read after the dialog shows, so the owner sees the pass begin at once. */
   desk?: DeskItem | null | (() => Promise<DeskItem | null>);
+  /** Start work's old starter, for when the pass gives no prompt. */
   fallback?: string;
+  /**
+   * Sends the fallback instead of leaving it in the draft: a Start work pass
+   * that fails or is skipped sends the desk's starter, as decision 11 did
+   * (the owner's P2).
+   */
+  sendFallback?: (text: string) => void;
 }
 
 interface Active {
@@ -84,6 +93,7 @@ interface Active {
   ac: AbortController;
   cwd: string;
   fallback?: string;
+  sendFallback?: (text: string) => void;
 }
 
 /** The brief the pass reads, cut as the terminal skill cuts it: about 2,000 characters (SYNTHESIS §2.3). */
@@ -157,7 +167,17 @@ export class PromptuRuns extends EventEmitter {
     if (this.active.get(sid) !== a) return;
     this.active.delete(sid);
     const result: PromptuResult = { sid, seq: a.view.seq, origin: a.view.origin, rough: a.view.rough, ...r };
-    if (!result.prompt && a.fallback) result.fallback = a.fallback;
+    if (!result.prompt && a.fallback) {
+      if (a.sendFallback) {
+        try {
+          a.sendFallback(a.fallback);
+          result.fallbackSent = true;
+        } catch (e) {
+          this.log(`[${sid.slice(0, 8)}] promptu: the starter could not be sent (${(e as Error).message}); it waits in the draft`);
+          result.fallback = a.fallback;
+        }
+      } else result.fallback = a.fallback;
+    }
     this.log(`[${sid.slice(0, 8)}] promptu ${a.view.origin}: ${result.prompt ? "a prompt in the draft" : result.cancelled ? "cancelled" : `no prompt (${result.error})`}`);
     this.results.set(sid, result);
     this.show(sid, null);
@@ -195,6 +215,7 @@ export class PromptuRuns extends EventEmitter {
       ac: new AbortController(),
       cwd: o.cwd,
       fallback: o.fallback,
+      sendFallback: o.sendFallback,
     };
     this.active.set(sid, a);
     this.show(sid, a);

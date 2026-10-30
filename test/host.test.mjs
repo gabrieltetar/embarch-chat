@@ -1797,7 +1797,7 @@ test("Start work with Promptu: the pass on the issue, its dialog over the empty 
   }
 });
 
-test("Start work with Promptu failing: one line, and the desk's starter waits in the draft, unsent", { skip }, async () => {
+test("Start work with Promptu failing: one line, and the desk's starter is sent as decision 11 sent it (the owner's P2)", { skip }, async () => {
   mock.state.config["embarchChat.promptuPath"] = FAKE_PROMPTU;
   process.env.FAKE_PROMPTU_FAIL = "prep:1:the pass broke";
   try {
@@ -1807,8 +1807,9 @@ test("Start work with Promptu failing: one line, and the desk's starter waits in
     await desk.withStart({ item_id: item, folder, prompt: starter });
     const res = await waitFor(() => chatView.webview.posted.slice(before).find((m) => m.t === "promptuResult"), 10000, "the result");
     assert.equal(res.result.error, "promptu prep failed (exit 1): the pass broke");
-    assert.equal(res.result.fallback, starter);
-    assert.equal(res.result.prompt, undefined);
+    assert.deepEqual([res.result.fallbackSent, res.result.fallback, res.result.prompt], [true, undefined, undefined]);
+    await waitFor(() => chatView.webview.posted.slice(before).some((m) => m.t === "event" && m.e.type === "_sent" && m.e.text === starter), 5000, "the starter sent");
+    assert.ok(!chatView.webview.posted.slice(before).some((m) => m.t === "draft"), "nothing in the draft");
   } finally {
     delete process.env.FAKE_PROMPTU_FAIL;
     mock.state.config["embarchChat.promptuPath"] = path.join(dir, "no-promptu");

@@ -399,12 +399,13 @@ export function Composer(p: Props) {
       if (r.fallback && !textRef.current.trim()) setText(r.fallback);
       // Back to the draft, whatever became of the pass (review F5): the chat was inert while it ran.
       window.setTimeout(() => focusAt(textRef.current.length));
+      const instead = r.fallbackSent ? "the desk's starter went to Claude instead" : r.fallback ? "the desk's starter is in the draft" : null;
       setNotice(
         r.cancelled
-          ? r.fallback
-            ? "Promptu skipped: the desk's starter is in the draft."
+          ? instead
+            ? `Promptu skipped: ${instead}.`
             : "Promptu skipped: Enter sends your draft as it is."
-          : `Promptu: ${r.error ?? "no prompt"} — ${r.fallback ? "the desk's starter is in the draft" : "your draft is as you typed it"}.`,
+          : `Promptu: ${r.error ?? "no prompt"} — ${instead ?? "your draft is as you typed it"}.`,
       );
     };
     const on = (e: Event) => (e as CustomEvent<string>).detail === sid && take();

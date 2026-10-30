@@ -767,12 +767,12 @@ export function activate(context: vscode.ExtensionContext): void {
           // Promptu's pass on the issue instead of the read-and-summarize
           // starter (decision 96, reversing 11 at the owner's word): the
           // dialog opens over the empty chat, the prompt lands in the draft,
-          // nothing is sent. Without a prompt, the desk's starter waits there.
+          // nothing is sent. A pass that fails or is skipped sends the desk's
+          // starter, as 11 did (the owner's P2).
           const rough = startRough(card?.issue?.key, card?.issue?.title ?? card?.title, rec.itemTitle ?? m.item_id);
-          void beginPromptu(ctx, rec, { rough, origin: "start", start: true, fallback: m.prompt || undefined }).catch((e) => log(`[${rec.chat.sessionId.slice(0, 8)}] promptu: ${(e as Error).message}`));
+          void beginPromptu(ctx, rec, { rough, origin: "start", start: true, fallback: m.prompt || undefined, sendFallback: (t) => rec.chat.send(t) }).catch((e) => log(`[${rec.chat.sessionId.slice(0, 8)}] promptu: ${(e as Error).message}`));
         } else if (rec && m.prompt) {
-          // Promptu off or not installed: the starter waits in the draft, unsent (11
-          // reversed; sending it as before is the owner's pick, docs/forks.md step 3 P1).
+          // Promptu off or not installed: the starter waits in the draft, unsent (11 reversed; the owner's P1).
           manager.setDraft(rec.chat.sessionId, m.prompt);
         }
       } else if (m.kind === "focus" && m.session_id) {

@@ -135,7 +135,7 @@ export function assistInput(ctx: HostCtx, rec: ChatRecord, draft: string, opts: 
  * host reads from the desk, so the token never reaches a page (20). A brief
  * that cannot be read leaves the source out; the pass goes on.
  */
-export async function beginPromptu(ctx: HostCtx, rec: ChatRecord, o: Pick<BeginOpts, "rough" | "origin" | "pattern" | "start" | "fallback">): Promise<void> {
+export async function beginPromptu(ctx: HostCtx, rec: ChatRecord, o: Pick<BeginOpts, "rough" | "origin" | "pattern" | "start" | "fallback" | "sendFallback">): Promise<void> {
   const h = headerFor(ctx, rec);
   const desk = async (): Promise<DeskItem | null> => {
     if (!h.itemId || h.untracked) return null;

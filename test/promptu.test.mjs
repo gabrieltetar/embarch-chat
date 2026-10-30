@@ -163,6 +163,20 @@ test("a failure is one line and no prompt; Start work's starter comes back inste
   const r2 = missing.runs.take(SID);
   assert.match(r2.error, /^promptu is not installed here/);
   assert.equal(r2.fallback, undefined, "Enter's own draft stays as typed: nothing to put in it");
+  // Start work with sendFallback (the owner's P2): a pass that fails or is skipped sends the starter.
+  const sent = [];
+  const t = setup({ FAKE_PROMPTU_FAIL: "prep:1:the pass broke" });
+  await t.runs.begin(SID, { ...BEGIN, cwd: ROOT, origin: "start", start: true, fallback: "Read ABC-7 — the old starter", sendFallback: (x) => sent.push(x) });
+  const r3 = t.runs.take(SID);
+  assert.deepEqual(sent, ["Read ABC-7 — the old starter"]);
+  assert.deepEqual([r3.fallbackSent, r3.fallback, r3.error], [true, undefined, "promptu prep failed (exit 1): the pass broke"]);
+  const u = setup({ FAKE_PROMPTU_SLEEP_MS: "3000" });
+  const p = u.runs.begin(SID, { ...BEGIN, cwd: ROOT, origin: "start", start: true, fallback: "Read ABC-7", sendFallback: (x) => sent.push(x) });
+  await new Promise((res) => setTimeout(res, 100));
+  u.runs.cancel(SID, u.runs.view(SID).seq);
+  await p;
+  assert.deepEqual(sent.at(-1), "Read ABC-7", "skipped: sent too");
+  assert.equal(u.runs.take(SID).fallbackSent, true);
 });
 
 test("Esc while the pass reads the prompt cancels it: no prompt, the draft as typed; stale answers do nothing", async () => {

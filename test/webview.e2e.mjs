@@ -3824,12 +3824,17 @@ await check("a failure is one line and the draft stays as typed, Enter then send
     assert.ok(!(await posts()).some((p) => p.t === "interrupt"));
     await send([{ t: "promptu", sid, view: null }]);
     assert.equal(await exec("return document.querySelector('.body').inert"), false);
-    // Start work: the dialog over the empty chat, reading the issue; no prompt, the desk's starter waits in the draft.
+    // Start work: the dialog over the empty chat, reading the issue; no prompt, the desk's starter went instead (P2).
     sid = await fresh();
     await send([PSTATE(), { t: "promptu", sid, view: { sid, seq: 6, origin: "start", rough: "Work on ABC-123 — Make the widget blink", phase: "working", doing: "prep", quick: false } }]);
     assert.match((await text(".dialog.promptu.working .dialog-title"))[0], /reading the issue/);
+    await send([{ t: "promptu", sid, view: null }, { t: "promptuResult", result: { sid, seq: 6, origin: "start", rough: "Work on ABC-123 — Make the widget blink", error: "promptu prep took over 40 s", fallbackSent: true } }]);
+    assert.equal(await value(), "", "the starter went to Claude; the draft stays empty");
+    assert.ok((await text(".paste-notice"))[0].includes("the desk's starter went to Claude instead"));
+    // An older host's fallback for the draft still fills an empty one.
     const starter = "Read ABC-123 — Make the widget blink with the desk's linear_get_issue tool, then wait.";
-    await send([{ t: "promptu", sid, view: null }, { t: "promptuResult", result: { sid, seq: 6, origin: "start", rough: "Work on ABC-123 — Make the widget blink", error: "promptu prep took over 40 s", fallback: starter } }]);
+    sid = await fresh();
+    await send([PSTATE(), { t: "promptuResult", result: { sid, seq: 7, origin: "start", rough: "Work on ABC-123", error: "x", fallback: starter } }]);
     assert.equal(await value(), starter);
     assert.ok((await text(".paste-notice"))[0].includes("the desk's starter is in the draft"));
     assert.equal(await focused(), "TEXTAREA", "and the focus with it (review F5)");
