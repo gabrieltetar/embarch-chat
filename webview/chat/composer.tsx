@@ -1050,6 +1050,17 @@ export function Composer(p: Props) {
     return () => ro.disconnect();
   }, [bulbShown]);
 
+  /** ↑/↓, Home and End move between the rail's entries, as in a toolbar (review F9). */
+  const railKeys = (e: KeyboardEvent) => {
+    if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(e.key)) return;
+    const btns = Array.from(p.rail?.querySelectorAll<HTMLButtonElement>(".rail-col .rail-entry:not(:disabled)") ?? []);
+    const at = btns.indexOf(document.activeElement as HTMLButtonElement);
+    if (at < 0 || !btns.length) return;
+    e.preventDefault();
+    const to = e.key === "Home" ? 0 : e.key === "End" ? btns.length - 1 : (at + (e.key === "ArrowDown" ? 1 : btns.length - 1)) % btns.length;
+    btns[to].focus();
+  };
+
   /** The Memory menu's data, read again each time it opens (98). */
   const loadMemory = () => {
     setMemory((m) => ({ ...m, loading: true, error: undefined }));
@@ -1247,7 +1258,7 @@ export function Composer(p: Props) {
       {p.rail &&
         createPortal(
           <>
-            <div class={`rail-col ${railPop ? "popped" : ""}`}>
+            <div class={`rail-col ${railPop ? "popped" : ""}`} onKeyDown={railKeys}>
               <RailEntry
                 icon="🧠"
                 label="Memory"

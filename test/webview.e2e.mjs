@@ -3579,6 +3579,10 @@ const promptuPosts = async (op) => (await posts()).filter((p) => p.t === "prompt
 await check("the rail: Memory, Promptu, the 📚 and the 💡 down the chat's left edge, folded to their icons until the pointer is on it, which shows their names over the timeline without moving it; the 💡 and 📚 left the input's bar (94)", async () => {
   await fresh();
   assert.deepEqual(await text(".rail .rail-entry .rail-label"), ["Memory", "Promptu", "Library", "Suggestions"]);
+  assert.deepEqual(await exec("const r=document.querySelector('.rail'); return [r.getAttribute('role'), r.getAttribute('aria-label'), r.getAttribute('aria-orientation')]"), ["toolbar", "Chat tools", "vertical"], "named, a toolbar (review F9)");
+  await exec("document.querySelector('.rail .rail-entry.memory').focus()");
+  await keys("\uE015");
+  assert.equal(await exec("return document.activeElement.classList.contains('promptu')"), true, "↓ moves to the next entry");
   assert.deepEqual(await text(".composer .bar .bulb, .composer .bar .library"), [], "not in the bar any more");
   assert.deepEqual(await text(".composer .bar .btw"), ["💬"], "the side question stays by the input");
   const width = () => exec("return Math.round(document.querySelector('.rail-col').getBoundingClientRect().width)");

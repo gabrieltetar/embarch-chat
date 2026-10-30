@@ -485,7 +485,8 @@ function App() {
       <HeaderBar h={model.header} state={state} view={view} />
       {/* Inert while Promptu's run holds the chat (96; review F4): its dialog's, or Quick mode's with none. */}
       <div class="body" inert={!!pv && !view.readOnly}>
-        {!view.readOnly && <div class="rail" ref={setRail} />}
+        {/* A toolbar of its own, named, ↑/↓ between its entries (94; review F9). */}
+        {!view.readOnly && <div class="rail" ref={setRail} role="toolbar" aria-label="Chat tools" aria-orientation="vertical" />}
         <div class="main">
           {/* What gives way in a short panel, so the input and Send never leave it (style.css; review r5 N1). */}
           <div class="middle">
