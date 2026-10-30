@@ -1999,32 +1999,17 @@ await check("a request the panel cannot show leaves one line in the timeline, an
   assert.equal((await text(".card")).length, 0);
 });
 
-// Decision 67: the account's usage limit — the recorded line (elicit), and
-// the same line as the CLI writes it nearer a limit.
+// Decision 67's banner is retired for the rail's Usage icon (99): a chat's
+// usage-limit line shows nothing in its page any more — the host reads it.
 const limitLine = elicitLines.find((o) => o.type === "rate_limit_event");
 const limit = (info) => ({ t: "event", e: { ...limitLine, rate_limit_info: info } });
 const inH = (h) => Math.floor(Date.now() / 1000 + h * 3600 + 60);
 
-await check("the usage-limit banner: nothing while allowed; from 70 % the percent and the reset; the limit hit, wrapping up; × hides it until the limit changes", async () => {
-  // One reset time: the banner knows a limit by it, and two reads a second apart would be two limits.
-  const week = inH(50);
+await check("no usage-limit banner any more: a limit line, near or at the limit, adds nothing to the chat — the rail's Usage icon shows it (67 retired, 99)", async () => {
   await fresh({}, false);
-  await send([sent("flash it"), limit(limitLine.rate_limit_info)]);
-  assert.deepEqual(await text(".limit-banner"), [], "allowed: nothing");
-  await send([limit({ status: "allowed_warning", rateLimitType: "seven_day", utilization: 0.69, resetsAt: week })]);
-  assert.deepEqual(await text(".limit-banner"), [], "under 70 %: nothing");
-  await send([limit({ status: "allowed_warning", rateLimitType: "seven_day", utilization: 0.86, resetsAt: week })]);
-  assert.deepEqual(await text(".limit-banner.warn span"), ["You've used 86% of your weekly limit · resets in 2d"]);
-  await shot("limit-warning");
-  await click(".limit-banner button");
-  assert.deepEqual(await text(".limit-banner"), [], "hidden");
-  await send([limit({ status: "allowed_warning", rateLimitType: "seven_day", utilization: 0.9, resetsAt: week })]);
-  assert.deepEqual(await text(".limit-banner"), [], "the same limit stays hidden");
-  await send([limit({ status: "rejected", rateLimitType: "five_hour", resetsAt: inH(2), rateLimitGraceActive: true })]);
-  assert.deepEqual(await text(".limit-banner.err span"), ["Usage limit reached · wrapping up"], "a new limit shows; the turn under way finishes");
-  await shot("limit-wrapping-up");
-  await send([{ t: "event", e: { type: "result", subtype: "success", is_error: false } }]);
-  assert.deepEqual(await text(".limit-banner.err span"), ["Usage limit reached · session limit resets in 2h"]);
+  await send([sent("flash it"), limit(limitLine.rate_limit_info), limit({ status: "allowed_warning", rateLimitType: "seven_day", utilization: 0.86, resetsAt: inH(50) }), limit({ status: "rejected", rateLimitType: "five_hour", resetsAt: inH(2), rateLimitGraceActive: true })]);
+  assert.deepEqual(await text(".limit-banner"), []);
+  assert.ok(!(await text(".chat"))[0].includes("of your weekly limit"));
 });
 
 // Decision 68: time on screen.
@@ -2189,26 +2174,22 @@ await check("background tasks open from the status line: a subagent shows its pr
   assert.match(await exec("return document.querySelector('.composer .bar button[title^=\"Stop\"]').title"), /background tasks go on/);
 });
 
-await check("the status area with everything at once: the usage banner, the background tasks open, the status line's switch and the prompt cache clock, in that order; Not responding with a task in the background (67, 68, 69, port item 71)", async () => {
+await check("the status area with everything at once: the background tasks open, the status line's switch and the prompt cache clock, in that order; Not responding with a task in the background (68, 69, port item 71)", async () => {
   await fresh({}, false);
   const lines = allowed("bgstop");
   const first = lines.findIndex(isResultLine);
-  // Between turns: a shell runs in the background, the cache warm, the weekly limit at 86 %.
-  await send([
-    sent("count the ticks"),
-    ...events(lines.slice(0, first + 1).map((o) => (o.type === "assistant" ? { ...o, timestamp: ago(60_000) } : o))),
-    limit({ status: "allowed_warning", rateLimitType: "seven_day", utilization: 0.86, resetsAt: inH(50) }),
-  ]);
+  // Between turns: a shell runs in the background, the cache warm.
+  await send([sent("count the ticks"), ...events(lines.slice(0, first + 1).map((o) => (o.type === "assistant" ? { ...o, timestamp: ago(60_000) } : o)))]);
   await click(".bg-toggle");
   await settle();
   const task = lines.find(isTaskStarted).task_id;
   await send([taskOut(task, "tick 1\ntick 2\ntick 3\n")]);
   assert.deepEqual(await text(".bg-task pre.out"), ["tick 1\ntick 2\ntick 3\n"]);
   const order = await exec(
-    "const at = (s) => { const e = document.querySelector(s); return e ? Math.round(e.getBoundingClientRect().top) : null; }; return [at('.limit-banner'), at('.bg-tasks'), at('.status-line'), at('.composer')]",
+    "const at = (s) => { const e = document.querySelector(s); return e ? Math.round(e.getBoundingClientRect().top) : null; }; return [at('.bg-tasks'), at('.status-line'), at('.composer')]",
   );
   assert.ok(order.every((x) => x !== null), `all present: ${order}`);
-  assert.deepEqual([...order].sort((a, b) => a - b), order, "banner, tasks, status line, input, top to bottom");
+  assert.deepEqual([...order].sort((a, b) => a - b), order, "tasks, status line, input, top to bottom");
   assert.deepEqual(await text(".status-line > span"), ["▾ 1 background task", "Prompt cache warm, about 59 min left"]);
   assert.equal(await exec("const l = document.querySelector('.status-line'); return l.scrollWidth <= l.clientWidth"), true, "one line, nothing cut");
   await shot("status-all");
@@ -3314,7 +3295,7 @@ await check("a 300 px sidebar with everything above the input: the side answers,
   try {
     await fresh({ model: "opus", effort: "xhigh", ultracode: true, mcp: [{ name: "embarch-api", status: "failed", error: "MCP error -32000: Connection closed" }], remote: { status: "connected", url: "https://claude.ai/code/session_x" }, capabilities: ["interrupt_send_now_v1"] }, false);
     const lines = allowed("bgstop");
-    await send([sentU(1, "count the ticks"), ...events(lines.slice(0, lines.findIndex(isResultLine) + 1)), limit({ status: "allowed_warning", rateLimitType: "seven_day", utilization: 0.86, resetsAt: inH(50) })]);
+    await send([sentU(1, "count the ticks"), ...events(lines.slice(0, lines.findIndex(isResultLine) + 1))]);
     await send([sentU(2, "now flash the dev bench with the new build and run the study"), toolCall("tf9", "mcp__embarch-api__flash", { project: "demo" })]);
     await send([sentU(3, "use the other board instead")]);
     await send(events([{ type: "_side", id: "q:1", question: "which port did it pick?" }, { type: "_side", id: "q:1", response: "`/dev/ttyACM0`, the first one it found." }]));
@@ -3364,7 +3345,7 @@ for (const h of [520, 420, 340, 324]) {
     try {
       await fresh({ model: "opus", effort: "xhigh", ultracode: true, mcp: [{ name: "embarch-api", status: "failed", error: "MCP error -32000: Connection closed" }], remote: { status: "connected", url: "https://claude.ai/code/session_x" }, capabilities: ["interrupt_send_now_v1"] }, false);
       const lines = allowed("bgstop");
-      await send([sentU(1, "count the ticks"), ...events(lines.slice(0, lines.findIndex(isResultLine) + 1)), limit({ status: "allowed_warning", rateLimitType: "seven_day", utilization: 0.86, resetsAt: inH(50) })]);
+      await send([sentU(1, "count the ticks"), ...events(lines.slice(0, lines.findIndex(isResultLine) + 1))]);
       await send([sentU(2, "now flash the dev bench with the new build and run the study"), toolCall("tf9", "mcp__embarch-api__flash", { project: "demo" })]);
       await send([sentU(3, "use the other board instead")]);
       await send(events([{ type: "_side", id: "q:1", question: "which port did it pick?" }, { type: "_side", id: "q:1", response: "`/dev/ttyACM0`, the first one it found." }]));

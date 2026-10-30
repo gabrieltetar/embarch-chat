@@ -1,15 +1,22 @@
 // The Claude plan's usage, for the rail's Usage icon (decision 99): the
 // 5-hour session's and the week's share used, with their reset times, from
-// the one place the chat already hears it — the `rate_limit_event` a chat's
-// CLI sends on a turn when the account's limit changes, and on a process's
-// first turn at least (decision 67's source). Claude Code 2.1.287 carries
-// both windows there, as `unifiedWindows.five_hour` and `.seven_day`
+// the one place the chat hears it — the `rate_limit_event` a chat's CLI
+// sends on a turn when the account's limit changes, and on a process's first
+// turn at least (what decision 67's banner read; it is retired for this
+// icon). Claude Code 2.1.287 carries both windows there, as `unifiedWindows.five_hour` and `.seven_day`
 // (`{utilization 0..1, resetsAt}`, an `@internal` field) [measured
 // 2026-10-30 from its bundle; the recorded sessions carry it]. The reading is
 // the account's, so the window keeps the newest any of its chats heard
 // (usageStore.ts). Pure, for the host and the page alike.
 
-export { resetsIn } from "./wire/limits";
+/** A reset time as "in 12m", "in 3h", "in 2d", or "soon". */
+export function resetsIn(resetsAtSec: number, now = Date.now()): string {
+  const min = Math.floor((resetsAtSec * 1000 - now) / 60000);
+  if (min < 1) return "soon";
+  if (min < 60) return `in ${min}m`;
+  const h = Math.floor(min / 60);
+  return h < 24 ? `in ${h}h` : `in ${Math.floor(h / 24)}d`;
+}
 
 /** One window: the share used, 0..1, and when it resets (seconds since the epoch), when said. */
 export interface UsageWindow {
@@ -32,7 +39,7 @@ export interface Usage {
   at: number;
 }
 
-/** From 70 % used the icon is amber (Claude Code warns from 0.7, decision 67's threshold), from 90 % red. */
+/** From 70 % used the icon is amber (where Claude Code starts to warn, 0.7), from 90 % red. */
 export const USAGE_AMBER = 0.7;
 export const USAGE_RED = 0.9;
 

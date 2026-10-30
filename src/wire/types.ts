@@ -79,18 +79,6 @@ export interface DialogRequest {
   tool_use_id?: string;
 }
 
-/** `rate_limit_event`'s `rate_limit_info`, trimmed to what the banner reads (decision 67). */
-export interface RateLimitInfo {
-  status: "allowed" | "allowed_warning" | "rejected" | string;
-  /** Seconds since the epoch. */
-  resetsAt?: number;
-  rateLimitType?: string;
-  /** 0..1 of the limit used; absent while allowed. */
-  utilization?: number;
-  /** The limit is reached, and the turn under way may finish. */
-  rateLimitGraceActive?: boolean;
-}
-
 /** What the owner answers a `can_use_tool` with. */
 export type PermissionDecision =
   | { behavior: "allow"; updatedInput: Record<string, unknown>; updatedPermissions?: unknown[] }

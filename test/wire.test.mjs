@@ -982,32 +982,19 @@ test("a request the panel cannot show is answered at once — an error, or a dia
   chat.dispose();
 });
 
-// ---- the account's usage limit (decision 67)
+// ---- the account's usage, for the rail's Usage icon (decision 99; 67's banner retired)
 
-test("the account's usage limit rides an ordinary turn: folded as reported, and a banner only past 70 %, at the limit, or wrapping up", async () => {
+test("the account's usage rides an ordinary turn: the CLI's rate_limit_event, both windows, read for the Usage icon; no chat keeps its own copy", async () => {
   const { chat } = makeChat("elicit");
+  const seen = [];
+  chat.on("event", (e) => e.type === "rate_limit_event" && seen.push(e.rate_limit_info));
   chat.send("Call the pick_port tool once, then reply with just the tool's result text.");
-  await waitFor(() => chat.state.rateLimit !== null);
-  // Recorded, numbers neutral (sanitize.mjs): allowed, so nothing shows.
-  assert.deepEqual(chat.state.rateLimit, { status: "allowed", resetsAt: 1900000000, rateLimitType: "five_hour" });
-  assert.equal(core.limitBanner(chat.state.rateLimit, true), null);
+  await waitFor(() => seen.length > 0);
+  // Recorded, numbers neutral (sanitize.mjs): both windows, with their resets.
+  const u = core.usageOf(seen[0], 1);
+  assert.deepEqual([u.session, u.weekly, u.status], [{ used: 0.5, resetsAt: 1900000000 }, { used: 0.5, resetsAt: 1900000000 }, "allowed"]);
+  assert.equal("rateLimit" in chat.state, false, "the banner's per-chat copy is gone");
   chat.dispose();
-  // The same line as the CLI writes it nearer a limit (its schema, 2.1.287).
-  const now = Date.UTC(2026, 9, 23, 12, 0, 0);
-  const line = (info) => core.reduce(core.initialState("s"), { type: "rate_limit_event", rate_limit_info: info, uuid: "u", session_id: "s" }).rateLimit;
-  const at = (h) => now / 1000 + h * 3600;
-  assert.equal(core.limitBanner(line({ status: "allowed_warning", rateLimitType: "seven_day", utilization: 0.69, resetsAt: at(80) }), false, now), null, "under 70 %");
-  assert.deepEqual(core.limitBanner(line({ status: "allowed_warning", rateLimitType: "seven_day", utilization: 0.823, resetsAt: at(80) }), false, now), {
-    text: "You've used 82% of your weekly limit · resets in 3d",
-    tone: "warn",
-    key: `allowed_warning:seven_day:${at(80)}`,
-  });
-  assert.equal(core.limitBanner(line({ status: "allowed_warning", rateLimitType: "five_hour", resetsAt: at(0.5) }), false, now).text, "Approaching session limit · resets in 30m");
-  assert.equal(core.limitBanner(line({ status: "rejected", rateLimitType: "five_hour", resetsAt: at(2.2) }), false, now).text, "You've hit your session limit · resets in 2h");
-  const grace = line({ status: "rejected", rateLimitType: "five_hour", resetsAt: at(2.2), rateLimitGraceActive: true });
-  assert.equal(core.limitBanner(grace, true, now).text, "Usage limit reached · wrapping up");
-  assert.equal(core.limitBanner(grace, false, now).text, "Usage limit reached · session limit resets in 2h");
-  assert.equal(core.limitBanner(line({ status: "allowed", rateLimitType: "five_hour" }), true, now), null, "allowed again: gone");
 });
 
 // ---- time on screen (decision 68)

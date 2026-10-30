@@ -34,7 +34,6 @@ import { Queued } from "./queue";
 import { setAtlas } from "./atlas";
 import "./reflinks";
 import { setChatRepo, setRefs } from "./refs";
-import { LimitBannerView } from "./limits";
 import { FOOTER_COMMANDS, McpPill, ModelPill, RemotePill, footerCommand } from "./footer";
 import { KeepReply } from "./keep";
 import { Stamp, useNow } from "./clock";
@@ -533,7 +532,6 @@ function App() {
                 if (u?.kind === "user" && u.text.trim()) returnToDraft(state.sessionId, u.text);
               }}
             />
-            <LimitBannerView info={state.rateLimit} busy={busy} />
             {bgOpen[sid] && <BackgroundPanel state={state} readOnly={view.readOnly} />}
             <StatusLine
               state={state}

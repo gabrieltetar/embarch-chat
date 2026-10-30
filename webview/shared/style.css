@@ -1590,26 +1590,6 @@ body.vscode-high-contrast-light .on {
   font-size: 0.86em;
   white-space: pre-wrap;
 }
-/* The account's usage limit (67): amber from 70 %, red once hit. */
-.limit-banner {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 0 var(--inset) 4px;
-  padding: 2px 2px 2px 8px;
-  border: 1px solid currentColor;
-  border-radius: var(--radius);
-  font-size: 0.92em;
-}
-.limit-banner span {
-  flex: 1;
-}
-.limit-banner.warn {
-  color: var(--warn);
-}
-.limit-banner.err {
-  color: var(--err);
-}
 /* Time on screen (68): a message's time, a date line, a step's time. */
 .stamp {
   font-size: 0.8em;
