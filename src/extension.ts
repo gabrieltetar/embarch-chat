@@ -97,7 +97,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
 
-  chats = new ChatManager(() => ({ claudePath: cfg().claudePath, idleMs: cfg().idleMs, log, hooks: (cwd) => hostHooks(log, cwd) }));
+  chats = new ChatManager(() => ({ claudePath: cfg().claudePath, idleMs: cfg().idleMs, log, hooks: (cwd) => hostHooks(log, cwd), hold: (sid) => promptuRuns?.holdReason(sid) ?? null }));
   const manager = chats;
   deskService = new DeskService(() => client, manager, folders, log);
   const desk = deskService;
@@ -156,6 +156,9 @@ export function activate(context: vscode.ExtensionContext): void {
   const promptu = new PromptuService(promptuCli, context.globalState, log);
   promptuRuns = new PromptuRuns(promptuCli, log);
   const runs = promptuRuns;
+  // A run goes with its chat (96): an idle close (held while a run or its prompt waits on the owner), a crash, a dropped view.
+  manager.on("closed", (sid: string) => runs.forget(sid));
+  manager.on("released", (sid: string) => runs.forget(sid));
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration("embarchChat.promptuPath")) promptu.emit("state");

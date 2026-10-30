@@ -210,6 +210,66 @@ test("a chat that goes takes its run with it", async () => {
   assert.equal(s.runs.take(SID), null);
 });
 
+test("a run goes with its chat: an idle close waits while its dialog or its prompt is the owner's, then nothing of it is left; a crash and a dropped view take it too (41, 96)", async () => {
+  const FAKE_CLAUDE = path.join(here, "fake-claude.mjs");
+  fs.chmodSync(FAKE_CLAUDE, 0o755);
+  const was = process.env.FAKE_CLAUDE_FIXTURE;
+  process.env.FAKE_CLAUDE_FIXTURE = path.join(here, "fixtures", "wire", "basic.jsonl");
+  const s = setup();
+  const manager = new core.ChatManager(() => ({ claudePath: FAKE_CLAUDE, idleMs: 300, log: () => {}, hold: (sid) => s.runs.holdReason(sid) }));
+  manager.on("closed", (sid) => s.runs.forget(sid));
+  manager.on("released", (sid) => s.runs.forget(sid));
+  const until = async (pred, ms = 5000, what = "it") => {
+    const t0 = Date.now();
+    while (!pred()) {
+      if (Date.now() - t0 > ms) throw new Error(`timed out waiting for ${what}`);
+      await new Promise((r) => setTimeout(r, 30));
+    }
+  };
+  try {
+    const rec = manager.create(SID, scratch(), null, null);
+    const turned = new Promise((r) => manager.once("turn", r));
+    rec.chat.send("Run the bash command `echo hello-from-bash` and then reply with just: done");
+    await turned;
+    // A pass mid-task (a forced pattern): its dialog keeps the process past its idle time.
+    await s.runs.begin(SID, { ...BEGIN, cwd: ROOT });
+    const seq = s.runs.view(SID).seq;
+    await new Promise((r) => setTimeout(r, 900));
+    assert.ok(rec.chat.running, "held while the dialog is open");
+    assert.equal(rec.chat.holdReason(), "a Promptu dialog is open");
+    // Done, its prompt not taken by a page yet: still the owner's.
+    await s.runs.finish(SID, seq, {}, "recommended");
+    await new Promise((r) => setTimeout(r, 900));
+    assert.ok(rec.chat.running, "held while its prompt waits");
+    assert.ok(s.runs.take(SID).prompt);
+    await until(() => !rec.chat.running, 5000, "the idle close once nothing is the owner's");
+    // A crash with a prompt waiting: forgotten, so it never lands in the chat resumed later.
+    const turned2 = new Promise((r) => manager.once("turn", r));
+    rec.chat.send("Run the bash command `echo hello-from-bash` and then reply with just: done");
+    await turned2;
+    await s.runs.begin(SID, { ...BEGIN, cwd: ROOT });
+    const views = s.views.length;
+    process.kill(rec.chat.pid, "SIGKILL");
+    await until(() => !rec.chat.running, 5000, "the crash");
+    assert.equal(s.runs.view(SID), null);
+    assert.equal(s.runs.take(SID), null);
+    assert.equal(s.views.at(-1), null, "the page is told the dialog went");
+    assert.ok(s.views.length > views);
+    // A read-only view dropped: its run goes with it.
+    const other = "33333333-0000-4000-8000-000000000009";
+    manager.openViewer(other, scratch(), null, null, true);
+    await s.runs.begin(other, { ...BEGIN, cwd: ROOT });
+    assert.ok(s.runs.view(other));
+    manager.release(other);
+    assert.equal(s.runs.view(other), null);
+    assert.equal(s.runs.take(other), null);
+  } finally {
+    manager.dispose();
+    if (was === undefined) delete process.env.FAKE_CLAUDE_FIXTURE;
+    else process.env.FAKE_CLAUDE_FIXTURE = was;
+  }
+});
+
 test("answers from a page keep to the forms next and render take", () => {
   assert.deepEqual(
     core.cleanInput({

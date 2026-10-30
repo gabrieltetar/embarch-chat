@@ -257,12 +257,30 @@ export class PromptuRuns extends EventEmitter {
     this.end(sid, a, { cancelled: true });
   }
 
-  /** The chat went (its window closed it): nothing more for it. */
+  /**
+   * Why a chat's process stays up for Promptu (decision 41's "it waits on the
+   * owner"): a dialog open, or a prompt no page has taken yet. So an idle
+   * close never drops either.
+   */
+  holdReason(sid: string): string | null {
+    if (this.active.has(sid)) return "a Promptu dialog is open";
+    if (this.results.has(sid)) return "a Promptu prompt waits for its draft";
+    return null;
+  }
+
+  /**
+   * The chat's process closed, or its view was dropped: nothing of a run
+   * outlives it, so none lands in the chat resumed or opened again later.
+   */
   forget(sid: string): void {
     const a = this.active.get(sid);
-    if (a) a.ac.abort();
     this.active.delete(sid);
     this.results.delete(sid);
+    if (a) {
+      a.ac.abort();
+      this.log(`[${sid.slice(0, 8)}] promptu: dropped with its chat`);
+      this.show(sid, null);
+    }
   }
 
   dispose(): void {

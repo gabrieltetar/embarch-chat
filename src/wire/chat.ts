@@ -40,6 +40,8 @@ export interface ChatOptions {
    * looks, as one after a crash in the first turn does.
    */
   settle?: boolean;
+  /** Why something outside the process keeps it up — a Promptu dialog or prompt still the owner's (96) — or null. */
+  hold?: () => string | null;
 }
 
 /**
@@ -1091,7 +1093,7 @@ export class Chat extends EventEmitter {
     if (this.state.remote && this.state.remote.status !== "failed" && !this.state.remote.auto) return "Remote Control is on";
     if (this.state.busy || this.state.compacting) return "a turn is running";
     if ((this.state.side ?? []).some((q) => q.pending)) return "a side question is out";
-    return null;
+    return this.opts.hold?.() ?? null;
   }
 
   private idleCheck(): void {

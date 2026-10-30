@@ -63,6 +63,8 @@ export interface ChatSettings {
   log: (line: string) => void;
   /** What the panel does for the CLI (decisions 61, 65), for a chat in the folder `cwd`. */
   hooks?: (cwd: string) => HostHooks;
+  /** Why a chat's process stays up from outside it — a Promptu run of its own (96) — or null. */
+  hold?: (sessionId: string) => string | null;
 }
 
 /**
@@ -70,7 +72,10 @@ export interface ChatSettings {
  * event — for webviews showing it), `snapshot` (sid — a webview must reload
  * the whole state), `turn` (sid, result, turns so far) and `suggestion`
  * (sid, the CLI's guess at the next prompt) for the assistant, `draft` (sid:
- * text waits for its draft, `rec.draft`).
+ * text waits for its draft, `rec.draft`), `closed` (sid: its process ended
+ * — an idle close, a crash, a spawn that failed) and `released` (sid: a
+ * read-only view dropped), for what the window holds per chat (Promptu's
+ * runs, 96).
  */
 export class ChatManager extends EventEmitter {
   readonly records = new Map<string, ChatRecord>();
@@ -93,7 +98,10 @@ export class ChatManager extends EventEmitter {
       else this.emit("event", sid, e);
     });
     rec.chat.on("status", () => this.emit("changed"));
-    rec.chat.on("closed", () => this.emit("changed"));
+    rec.chat.on("closed", () => {
+      this.emit("closed", sid);
+      this.emit("changed");
+    });
     rec.chat.on("turn", (o: WireMessage, n: number) => this.emit("turn", sid, o, n));
     rec.chat.on("suggestion", (text: string) => this.emit("suggestion", sid, text));
     rec.chat.on("unsent", (text: string) => this.setDraft(sid, text));
@@ -134,7 +142,7 @@ export class ChatManager extends EventEmitter {
     opts: { untracked?: boolean; deskDue?: DeskDue | null; fork?: { from: string; at: string }; mode?: string; settle?: boolean } = {},
   ): ChatRecord {
     const s = this.settings();
-    const chat = new Chat({ sessionId, cwd, claudePath: s.claudePath, existing: false, idleMs: s.idleMs, log: s.log, hooks: s.hooks, fork: opts.fork, mode: opts.mode, settle: opts.settle });
+    const chat = new Chat({ sessionId, cwd, claudePath: s.claudePath, existing: false, idleMs: s.idleMs, log: s.log, hooks: s.hooks, fork: opts.fork, mode: opts.mode, settle: opts.settle, hold: s.hold && (() => s.hold!(sessionId)) });
     const rec: ChatRecord = {
       chat,
       ours: true,
@@ -175,7 +183,7 @@ export class ChatManager extends EventEmitter {
     const s = this.settings();
     const ran = file ? transcriptMode(file) : null;
     const m = mode ?? (ran && (PERMISSION_MODES as string[]).includes(ran) ? ran : "default");
-    const chat = new Chat({ sessionId, cwd: cwd ?? "", claudePath: s.claudePath, existing: true, idleMs: s.idleMs, log: s.log, hooks: s.hooks, mode: m });
+    const chat = new Chat({ sessionId, cwd: cwd ?? "", claudePath: s.claudePath, existing: true, idleMs: s.idleMs, log: s.log, hooks: s.hooks, mode: m, hold: s.hold && (() => s.hold!(sessionId)) });
     const rec: ChatRecord = { chat, ours: false, viewer: true, resumable, itemId, itemTitle, untracked: false, deskDue: null, createdMs: Date.now(), lastMs: Date.now() };
     this.records.set(sessionId, rec);
     this.wire(sessionId, rec);
@@ -249,6 +257,7 @@ export class ChatManager extends EventEmitter {
     if (rec && rec.viewer && this.current !== sessionId) {
       rec.chat.dispose();
       this.records.delete(sessionId);
+      this.emit("released", sessionId);
     }
   }
 
@@ -275,7 +284,10 @@ export class ChatManager extends EventEmitter {
   }
 
   dispose(): void {
-    for (const r of this.records.values()) r.chat.dispose();
+    for (const [sid, r] of this.records) {
+      r.chat.dispose();
+      this.emit("released", sid);
+    }
     this.records.clear();
     this.kept.clear();
   }
