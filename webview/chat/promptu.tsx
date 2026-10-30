@@ -143,7 +143,9 @@ function Page({ view, step, page, choose }: { view: PromptuView; step: PrepOut; 
   const [touched, setTouched] = useState<boolean[]>(() => qs.map(() => false));
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    box.current?.querySelector<HTMLInputElement>("input:checked, input")?.focus();
+    // The option picked already — the first question's recommendation — else the first one (review F6).
+    const b = box.current;
+    (b?.querySelector<HTMLInputElement>("input:checked") ?? b?.querySelector<HTMLInputElement>("input"))?.focus();
   }, []);
   const answers = qs.map((q, i) => answerOf(q, picked[i], other[i]));
   const complete = answers.every((a) => a !== null);

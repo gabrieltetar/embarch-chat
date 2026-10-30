@@ -3668,6 +3668,11 @@ await check("Enter at a task start runs Promptu instead of sending; its dialog o
     await send([pView(sid, 7)]);
     assert.deepEqual(await text(".dialog.promptu .q > .q-head"), ["Done when", "Goal"]);
     assert.ok((await text(".dialog.promptu .promptu-title"))[0].includes("implement-issue"));
+    assert.equal(await exec("const a=document.activeElement; return a.checked && a.closest('.opt').textContent.includes('Build and tests pass')"), true, "the focus starts on the option picked (review F6)");
+    // Even when a question with nothing picked comes first: the picked option, not the first input.
+    await send([pView(sid, 6, {}, { pages: [{ ids: ["goal", "done"], questions: [Q_GOAL, Q_DONE] }] })]);
+    assert.equal(await exec("const a=document.activeElement; return !!a.checked && a.closest('.q').textContent.includes('Done when')"), true, "not Goal's first option");
+    await send([pView(sid, 7)]);
     const checked = await exec("return [...document.querySelectorAll('.dialog.promptu .opt')].filter((o) => o.querySelector('input').checked).map((o) => o.querySelector('span > div').textContent)");
     assert.deepEqual(checked, ["Build and tests pass (Recommended)"], "the recommendation is picked; Goal has none");
     assert.equal(await exec("return document.querySelector('.dialog.promptu .dialog-buttons button.primary').disabled"), true, "Goal still needs an answer");
