@@ -3715,6 +3715,31 @@ await check("Esc ends the dialog with what the owner touched, the rest as assump
   }
 });
 
+await check("the dialog is modal: aria-modal, Tab kept inside it, the chat behind inert, and a click on the backdrop keeps Esc and Enter working (review F4)", async () => {
+  try {
+    const sid = await fresh();
+    await send([PSTATE(), pView(sid, 21)]);
+    assert.equal(await exec("return document.querySelector('.dialog.promptu').getAttribute('aria-modal')"), "true");
+    assert.equal(await exec("return document.querySelector('.body').inert"), true, "the chat behind is inert");
+    // Tab from the last control comes back to the first, Shift+Tab from the first goes to the last.
+    await exec("const b=[...document.querySelectorAll('.dialog.promptu button')]; b[b.length-1].focus()");
+    await keys("\uE004");
+    const first = await exec("const f=document.activeElement; return f.tagName + ':' + (f.closest('.dialog.promptu') ? 'in' : 'out') + ':' + (f === document.querySelector('.dialog.promptu input') ? 'first' : 'other')");
+    assert.equal(first, "INPUT:in:first");
+    // A click on the backdrop: the focus stays in the dialog, Esc still ends it.
+    const backdrop = Object.values(await wd("POST", `${S}/element`, { using: "css selector", value: ".promptu-back" }))[0];
+    await wd("POST", `${S}/actions`, { actions: [{ type: "pointer", id: "mouse", parameters: { pointerType: "mouse" }, actions: [{ type: "pointerMove", duration: 0, origin: { "element-6066-11e4-a52e-4f735466cecf": backdrop }, x: -200, y: -400 }, { type: "pointerDown", button: 0 }, { type: "pointerUp", button: 0 }] }] });
+    await wd("DELETE", `${S}/actions`);
+    await settle();
+    assert.equal(await exec("return !!document.activeElement.closest('.dialog.promptu')"), true, "the focus stayed in the dialog");
+    await clearPosts();
+    await keys(ESC_KEY);
+    assert.deepEqual((await promptuPosts()).map((p) => [p.op, p.rest]), [["finish", "assume"]]);
+  } finally {
+    await send([PROMPTU_OFF]);
+  }
+});
+
 await check("the prompt lands in the draft, not sent; Ctrl+Z puts the owner's back; this task start had its pass, so the next Enter sends (96)", async () => {
   try {
     const sid = await fresh();
@@ -3764,10 +3789,14 @@ await check("a failure is one line and the draft stays as typed, Enter then send
     await send([PSTATE({ quick: true }), { t: "promptu", sid, view: { sid, seq: 5, origin: "enter", rough: ROUGH, phase: "working", doing: "prep", quick: true } }]);
     assert.equal((await text(".dialog.promptu")).length, 0);
     assert.equal((await text(".rail .rail-entry.promptu .spinner")).length, 1);
+    assert.equal(await exec("return document.querySelector('.body').inert"), true, "the chat is inert during Quick mode's pass too (review F4)");
+    assert.match((await text(".promptu-quick"))[0], /Esc skips it/);
     await clearPosts();
-    await type(ESC_KEY);
+    await keys(ESC_KEY);
     assert.deepEqual(await promptuPosts(), [{ t: "promptu", op: "cancel", seq: 5 }], "Esc stops Quick mode's pass, not Claude");
     assert.ok(!(await posts()).some((p) => p.t === "interrupt"));
+    await send([{ t: "promptu", sid, view: null }]);
+    assert.equal(await exec("return document.querySelector('.body').inert"), false);
     // Start work: the dialog over the empty chat, reading the issue; no prompt, the desk's starter waits in the draft.
     sid = await fresh();
     await send([PSTATE(), { t: "promptu", sid, view: { sid, seq: 6, origin: "start", rough: "Work on ABC-123 — Make the widget blink", phase: "working", doing: "prep", quick: false } }]);

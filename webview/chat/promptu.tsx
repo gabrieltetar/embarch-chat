@@ -49,6 +49,56 @@ function what(v: unknown): string {
   return String(v ?? "");
 }
 
+/** What Tab can reach in the dialog, in order. */
+const FOCUSABLE = "button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex='-1'])";
+
+/**
+ * Tab stays in the dialog (review F4): from its last control to its first,
+ * and back. True when it took the key.
+ */
+export function trapTab(e: KeyboardEvent, box: HTMLElement | null): boolean {
+  if (e.key !== "Tab" || !box) return false;
+  const els = Array.from(box.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((el) => el.offsetParent !== null || el === document.activeElement);
+  if (!els.length) {
+    e.preventDefault();
+    box.focus();
+    return true;
+  }
+  const first = els[0];
+  const last = els[els.length - 1];
+  const at = document.activeElement;
+  if (e.shiftKey && (at === first || at === box)) {
+    e.preventDefault();
+    last.focus();
+    return true;
+  }
+  if (!e.shiftKey && at === last) {
+    e.preventDefault();
+    first.focus();
+    return true;
+  }
+  return false;
+}
+
+/**
+ * The backdrop: a click on it keeps the focus in the dialog (review F4), so
+ * Esc and Enter still reach it — the chat behind is inert while it shows.
+ */
+function Backdrop({ box, children }: { box: { current: HTMLDivElement | null }; children: preact.ComponentChildren }) {
+  return (
+    <div
+      class="dialog-back promptu-back"
+      onMouseDown={(e) => {
+        if (e.target !== e.currentTarget) return;
+        e.preventDefault();
+        if (!box.current?.contains(document.activeElement)) box.current?.focus();
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
 const SOURCE: Record<string, string> = { prompt: "your prompt", desk: "the work item", memory: "memory", last: "last time", context: "the checkout" };
 
 function Working({ view }: { view: PromptuView }) {
@@ -57,14 +107,17 @@ function Working({ view }: { view: PromptuView }) {
   const reading = view.doing === "prep";
   const label = reading ? (view.origin === "start" ? "Promptu is reading the issue…" : view.origin === "handoff" ? "Promptu is setting up the handoff…" : "Promptu is reading your prompt…") : view.doing === "render" ? "Writing the prompt…" : "…";
   return (
-    <div class="dialog-back promptu-back">
+    <Backdrop box={box}>
       <div
         class="dialog promptu working"
         ref={box}
         role="dialog"
+        aria-modal="true"
         aria-label="Promptu"
+        aria-busy="true"
         tabIndex={-1}
         onKeyDown={(e) => {
+          if (trapTab(e, box.current)) return;
           if (e.key !== "Escape") return;
           e.preventDefault();
           e.stopPropagation();
@@ -78,7 +131,7 @@ function Working({ view }: { view: PromptuView }) {
         <div class="promptu-rough muted">{view.rough}</div>
         {reading && <div class="promptu-hint muted">Esc: skip it — your draft stays as typed and Enter sends it.</div>}
       </div>
-    </div>
+    </Backdrop>
   );
 }
 
@@ -122,14 +175,16 @@ function Page({ view, step, page, choose }: { view: PromptuView; step: PrepOut; 
   const filled = step.filled ?? [];
   const defaults = step.defaults ?? [];
   return (
-    <div class="dialog-back promptu-back">
+    <Backdrop box={box}>
       <div
         class="dialog promptu"
         ref={box}
         role="dialog"
-        aria-label="Promptu"
+        aria-modal="true"
+        aria-label={`Promptu${p ? `: ${p.id}` : ""}`}
         tabIndex={-1}
         onKeyDown={(e) => {
+          if (trapTab(e, box.current)) return;
           if (e.key === "Escape") {
             e.preventDefault();
             e.stopPropagation();
@@ -223,7 +278,7 @@ function Page({ view, step, page, choose }: { view: PromptuView; step: PrepOut; 
           {left > 0 ? `${left} more page${left > 1 ? "s" : ""} after this one, as planned now. ` : ""}The prompt goes into your draft; nothing is sent.
         </div>
       </div>
-    </div>
+    </Backdrop>
   );
 }
 
@@ -231,6 +286,19 @@ function Page({ view, step, page, choose }: { view: PromptuView; step: PrepOut; 
 export function PromptuDialog({ view }: { view: PromptuView }) {
   const step = view.phase === "ask" ? view.step : undefined;
   const shown = useMemo(() => (step ? pageOf(step) : null), [step]);
+  // Quick mode shows no dialog and the chat is inert meanwhile: Esc, wherever the focus is, skips the pass while it reads.
+  const quickReading = view.quick && view.phase === "working" && view.doing === "prep";
+  useEffect(() => {
+    if (!quickReading) return;
+    const esc = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      post({ t: "promptu", op: "cancel", seq: view.seq });
+    };
+    window.addEventListener("keydown", esc, true);
+    return () => window.removeEventListener("keydown", esc, true);
+  }, [quickReading, view.seq]);
   if (view.quick && view.phase === "working") return null;
   if (!step || !shown) return <Working view={view} />;
   // A new page is a new form: its picks start from its recommendations.

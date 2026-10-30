@@ -2534,3 +2534,13 @@ body.in-editor .rail-col {
   font-size: 0.85em;
   margin-top: 6px;
 }
+
+/* Quick mode's pass (95): no dialog, the chat inert, one line saying so (review F4). */
+.promptu-quick {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.88em;
+  padding: 3px var(--gutter);
+  border-top: 1px solid var(--border);
+}

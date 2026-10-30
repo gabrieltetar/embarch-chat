@@ -483,7 +483,8 @@ function App() {
     // A chat of this window's gets Mark as Unread on right-click (package.json, webview/context).
     <div class="chat" data-vscode-context={view.ours ? JSON.stringify({ webviewSection: "embarchChat", sid: state.sessionId }) : undefined}>
       <HeaderBar h={model.header} state={state} view={view} />
-      <div class="body">
+      {/* Inert while Promptu's run holds the chat (96; review F4): its dialog's, or Quick mode's with none. */}
+      <div class="body" inert={!!pv && !view.readOnly}>
         {!view.readOnly && <div class="rail" ref={setRail} />}
         <div class="main">
           {/* What gives way in a short panel, so the input and Send never leave it (style.css; review r5 N1). */}
@@ -582,6 +583,11 @@ function App() {
           )}
         </div>
       </div>
+      {pv && !view.readOnly && pv.quick && pv.phase === "working" && (
+        <div class="promptu-quick muted" role="status">
+          <span class="spinner" /> Promptu is writing your prompt (Quick mode){pv.doing === "prep" ? " — Esc skips it" : ""}
+        </div>
+      )}
       {pv && !view.readOnly && <PromptuDialog view={pv} />}
     </div>
   );

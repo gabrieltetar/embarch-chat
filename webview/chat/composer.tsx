@@ -904,10 +904,7 @@ export function Composer(p: Props) {
       return;
     }
     if (e.key === "Escape") {
-      // Quick mode's pass has no dialog to take the Esc: here it stops the pass while it reads, never Claude.
-      const pv = p.promptuView;
-      if (pv && pv.quick && pv.phase === "working" && pv.doing === "prep") post({ t: "promptu", op: "cancel", seq: pv.seq });
-      else if (railPop) setRailPop(null);
+      if (railPop) setRailPop(null);
       else if (menu) setMenu(null);
       // Leaving the mode never stops Claude: that is the next Esc.
       else if (aside) setAsideMode(false);
