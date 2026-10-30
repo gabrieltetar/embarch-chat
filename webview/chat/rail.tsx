@@ -5,7 +5,8 @@
 // this file holds what they open beside the rail: Promptu's card (95) and
 // the Memory menu (98).
 
-import type { Ref } from "preact";
+import type { ComponentChildren, Ref } from "preact";
+import { useEffect, useRef } from "preact/hooks";
 import type { MemoryEntry, MemoryOut, MemoryUse, PatternInfo } from "../../src/promptu/cli";
 import type { PromptuState } from "../../src/promptu/service";
 import { vscodeApi } from "../shared/vscode";
@@ -26,7 +27,8 @@ export function RailEntry(p: {
   /** The accessible name when it says more than the label: Promptu's lit state (95). */
   ariaLabel?: string;
   btnRef?: Ref<HTMLButtonElement>;
-  onClick?: () => void;
+  /** `byKey`: Enter or Space opened it, so what it opens takes the focus (review F10). */
+  onClick?: (byKey: boolean) => void;
   onEnter?: () => void;
   onLeave?: () => void;
 }) {
@@ -40,7 +42,7 @@ export function RailEntry(p: {
       disabled={p.disabled}
       // The draft keeps the focus, so a menu's keys still come through the input (86).
       onMouseDown={(e) => e.preventDefault()}
-      onClick={p.onClick}
+      onClick={(e) => p.onClick?.(e.detail === 0)}
       onMouseEnter={p.onEnter}
       onMouseLeave={p.onLeave}
     >
@@ -51,6 +53,39 @@ export function RailEntry(p: {
       </span>
       <span class="rail-label">{p.label}</span>
     </button>
+  );
+}
+
+/**
+ * What the rail opens beside it (review F10): a dialog of its own that takes
+ * the focus when the keys opened it — never on a hover, so typing in the
+ * draft goes on — and that Esc closes, the focus going back where it was.
+ */
+function RailPop(p: { cls: string; label: string; focusIn: boolean; onClose: () => void; onEnter?: () => void; onLeave?: () => void; children: ComponentChildren }) {
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!p.focusIn) return;
+    const b = box.current;
+    (b?.querySelector<HTMLElement>("input:not(:disabled), select:not(:disabled), button:not(:disabled)") ?? b)?.focus();
+  }, []);
+  return (
+    <div
+      class={`rail-pop ${p.cls}`}
+      ref={box}
+      role="dialog"
+      aria-label={p.label}
+      tabIndex={-1}
+      onMouseEnter={p.onEnter}
+      onMouseLeave={p.onLeave}
+      onKeyDown={(e) => {
+        if (e.key !== "Escape") return;
+        e.preventDefault();
+        e.stopPropagation();
+        p.onClose();
+      }}
+    >
+      {p.children}
+    </div>
   );
 }
 
@@ -66,11 +101,13 @@ export function PromptuCard(p: {
   onForce: (name: string | null) => void;
   onEnter: () => void;
   onLeave: () => void;
+  focusIn: boolean;
+  onClose: () => void;
 }) {
   const s = p.state;
   const off = !s.available;
   return (
-    <div class="rail-pop promptu-card" role="dialog" aria-label="Promptu" onMouseEnter={p.onEnter} onMouseLeave={p.onLeave}>
+    <RailPop cls="promptu-card" label="Promptu" focusIn={p.focusIn} onClose={p.onClose} onEnter={p.onEnter} onLeave={p.onLeave}>
       <label class="promptu-switch">
         <input type="checkbox" checked={s.enabled && !off} disabled={off} onChange={(e) => post({ t: "promptuSettings", enabled: (e.target as HTMLInputElement).checked })} />
         <span>
@@ -96,7 +133,7 @@ export function PromptuCard(p: {
           <b>Quick mode</b> <span class="muted">— no questions: every recommendation taken, the prompt still in your draft to check</span>
         </span>
       </label>
-    </div>
+    </RailPop>
   );
 }
 
@@ -179,10 +216,10 @@ function Row({ e, index }: { e: MemoryEntry; index: string | null }) {
   );
 }
 
-export function MemoryPanel({ mem, onRefresh }: { mem: { loading: boolean; data?: MemoryOut; error?: string }; onRefresh: () => void }) {
+export function MemoryPanel({ mem, onRefresh, focusIn, onClose }: { mem: { loading: boolean; data?: MemoryOut; error?: string }; onRefresh: () => void; focusIn: boolean; onClose: () => void }) {
   const d = mem.data;
   return (
-    <div class="rail-pop memory-pop" role="dialog" aria-label="Memory">
+    <RailPop cls="memory-pop" label="Memory" focusIn={focusIn} onClose={onClose}>
       <div class="mem-head">
         <b>Memory</b>
         {d && (
@@ -239,6 +276,6 @@ export function MemoryPanel({ mem, onRefresh }: { mem: { loading: boolean; data?
           <div class="muted mem-note">A click opens the entry's file beside the chat, to read or edit.</div>
         </div>
       )}
-    </div>
+    </RailPop>
   );
 }

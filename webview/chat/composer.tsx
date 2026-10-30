@@ -235,6 +235,10 @@ export function Composer(p: Props) {
   const [menu, setMenu] = useState<null | "bulb" | "library">(null);
   /** What the rail has open beside it: Promptu's card or the Memory menu (95, 98). */
   const [railPop, setRailPop] = useState<null | "promptu" | "memory">(null);
+  /** The keys opened it: it holds the focus, and the pointer leaving never closes it (review F10). */
+  const [popByKey, setPopByKey] = useState(false);
+  const memBtn = useRef<HTMLButtonElement>(null);
+  const promptuBtn = useRef<HTMLButtonElement>(null);
   const popTimer = useRef(0);
   const [memory, setMemory] = useState<{ loading: boolean; data?: MemoryOut; error?: string }>({ loading: false });
   const [forced, setForced] = useState<string | null>(forcedPattern[sid] ?? null);
@@ -1067,13 +1071,22 @@ export function Composer(p: Props) {
     post({ t: "promptuMemory" });
   };
   /** Promptu's card opens on hover and stays while the pointer is on the icon or the card (95). */
-  const openPromptu = () => {
+  const openPromptu = (byKey = false) => {
     clearTimeout(popTimer.current);
+    if (railPop !== "promptu" || byKey) setPopByKey(byKey);
     setRailPop("promptu");
   };
   const leavePromptu = () => {
     clearTimeout(popTimer.current);
+    if (popByKey) return;
     popTimer.current = window.setTimeout(() => setRailPop((x) => (x === "promptu" ? null : x)), 300);
+  };
+  /** Esc in a pop: closed, the focus back on the entry that opened it when the keys did, else in the draft. */
+  const closePop = () => {
+    const back = popByKey ? (railPop === "memory" ? memBtn.current : promptuBtn.current) : ta.current;
+    setRailPop(null);
+    setPopByKey(false);
+    back?.focus();
   };
 
   /**
@@ -1265,7 +1278,8 @@ export function Composer(p: Props) {
                 cls="memory"
                 title="Memory: what loads in this folder, by scope, domain and kind, with stale flags"
                 expanded={railPop === "memory"}
-                onClick={() => (railPop === "memory" ? setRailPop(null) : (setRailPop("memory"), loadMemory()))}
+                btnRef={memBtn}
+                onClick={(byKey) => (railPop === "memory" ? setRailPop(null) : (setPopByKey(byKey), setRailPop("memory"), loadMemory()))}
               />
               <RailEntry
                 icon="✨"
@@ -1276,6 +1290,7 @@ export function Composer(p: Props) {
                 // An indicator, not a switch (95): its name says whether the next Enter runs it (review F8).
                 ariaLabel={lit ? "Promptu — runs on next Enter" : "Promptu"}
                 expanded={railPop === "promptu"}
+                btnRef={promptuBtn}
                 title={
                   !p.promptu?.available
                     ? "Promptu is not installed here"
@@ -1285,7 +1300,7 @@ export function Composer(p: Props) {
                         ? `Enter runs Promptu on this prompt${forced ? ` as ${forced}` : ""}; the result comes back to the draft`
                         : "Promptu runs on the first prompt of a task; replies go as typed — hover for its card"
                 }
-                onClick={() => openPromptu()}
+                onClick={(byKey) => openPromptu(byKey)}
                 onEnter={() => openPromptu()}
                 onLeave={leavePromptu}
               />
@@ -1315,9 +1330,11 @@ export function Composer(p: Props) {
                 }}
                 onEnter={() => clearTimeout(popTimer.current)}
                 onLeave={leavePromptu}
+                focusIn={popByKey}
+                onClose={closePop}
               />
             )}
-            {railPop === "memory" && <MemoryPanel mem={memory} onRefresh={loadMemory} />}
+            {railPop === "memory" && <MemoryPanel mem={memory} onRefresh={loadMemory} focusIn={popByKey} onClose={closePop} />}
           </>,
           p.rail,
         )}

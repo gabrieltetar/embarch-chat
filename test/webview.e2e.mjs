@@ -3632,8 +3632,10 @@ await check("Promptu's icon lights when the next Enter runs the pass: at a task 
     await type("and now the tests");
     assert.equal(await isLit(), false, "a reply");
     // The card: hover opens it, a forced pattern lights the icon for the next prompt.
+    await exec("document.querySelector('.composer textarea').focus()");
     await hover(".rail .rail-entry.promptu");
     assert.equal((await text(".promptu-card")).length, 1, "hover opens the card");
+    assert.equal(await focused(), "TEXTAREA", "a hover never takes the focus from the draft (review F10)");
     const card = (await text(".promptu-card"))[0];
     assert.ok(card.includes("Promptu on") && card.includes("Quick mode") && card.includes("Pattern for the next prompt"), card);
     assert.deepEqual(await text(".promptu-card select option"), ["Auto — Promptu picks", "debug-failure", "handoff", "implement-issue"]);
@@ -3649,6 +3651,17 @@ await check("Promptu's icon lights when the next Enter runs the pass: at a task 
     await mouseAway();
     await sleep(500);
     assert.equal((await text(".promptu-card")).length, 0, "it closes when the pointer leaves");
+    // By the keys: Enter on the icon opens the card with the focus in it; the pointer leaving keeps it; Esc gives the focus back.
+    await exec("document.querySelector('.rail .rail-entry.promptu').focus()");
+    await keys("\uE007");
+    assert.equal(await exec("return !!document.activeElement.closest('.promptu-card')"), true, "the focus is in the card");
+    await mouseAway();
+    await sleep(500);
+    assert.equal((await text(".promptu-card")).length, 1, "opened by the keys, it stays");
+    await keys(ESC_KEY);
+    assert.equal((await text(".promptu-card")).length, 0);
+    assert.equal(await exec("return document.activeElement.classList.contains('promptu')"), true, "back on the icon");
+    await exec("document.querySelector('.composer textarea').focus()");
     await clearPosts();
     await type(ENTER);
     const prep = await promptuPosts("prep");
@@ -3922,6 +3935,18 @@ await check("the Memory menu: scope, then domain, then kind, stale flags and whe
   );
   await send([{ t: "promptuMemory", error: "promptu is not installed here" }]);
   assert.ok((await text(".memory-pop .warn"))[0].includes("not installed"));
+  // By the keys (review F10): Enter on the entry puts the focus in the menu, Esc closes it and gives the focus back.
+  await click(".rail .rail-entry.memory");
+  await settle();
+  assert.equal((await text(".memory-pop")).length, 0, "the click closed it");
+  await exec("document.querySelector('.rail .rail-entry.memory').focus()");
+  await keys("\uE007");
+  assert.equal(await exec("return !!document.activeElement.closest('.memory-pop')"), true, "the focus is in the menu");
+  await keys(ESC_KEY);
+  assert.equal((await text(".memory-pop")).length, 0);
+  assert.equal(await exec("return document.activeElement.classList.contains('memory')"), true, "back on its entry");
+  await click(".rail .rail-entry.memory");
+  await settle();
   await keys(ESC_KEY);
   await click(".composer textarea");
   await exec("document.body.dispatchEvent(new MouseEvent('mousedown', {bubbles:true}))");
