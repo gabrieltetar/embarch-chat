@@ -315,7 +315,9 @@ test("the page asks for ghost text and cards; the host streams Haiku's answers b
   assert.equal(done.text, haikuAnswer("ghost").completion);
   chatView.webview.fromPage({ t: "assist", kind: "cards", text: "fix the flash thing", seq: 702 });
   const c = await waitFor(() => posted((m) => m.t === "cards" && m.seq === 702), 5000, "the cards");
-  assert.ok(c.cards.length >= 1);
+  // The recorded answer is all missing-context and improvement cards: Promptu's job now, so none comes (97).
+  assert.deepEqual(c.cards, []);
+  assert.ok(calls().some((x) => x.task === "cards"), "the cards call ran");
   const ghostCall = calls().filter((x) => x.task === "ghost").at(-1);
   for (const s of ["<draft>now flash it on the</draft>", "<claude_last_reply>", "<library_commands>"]) assert.ok(ghostCall.prompt.includes(s), s);
 });

@@ -1387,7 +1387,11 @@ await check("the 💡 lights with Haiku's cards; hovering a card previews its ed
   assert.equal(await lastAssist("cards"), undefined, "no cards before the 2 s pause");
   const ask = await waitAssist("cards");
   assert.equal(ask.text, "fix the flash thing", "cards after a 2 s pause");
-  const cards = core.parseCards(haikuAnswer("cards"), ask.text, "w");
+  // A reference card and a context card (decision 88's and 36's): decision 28's kinds are Promptu's now (97).
+  const cards = [
+    { id: "w-0", category: "refs", title: "Name PR owner/repo#36", why: "The desk knows the flash PR", edit: { op: "replace", find: "the flash thing", with: 'PR owner/repo#36 "Flash driver" (ABC-154)' } },
+    { id: "w-1", category: "context", kind: "background", title: "Run it in the background", why: "A long job", edit: { op: "append", text: "\n\n" + core.BACKGROUND_INSTRUCTION } },
+  ];
   await send([{ t: "cards", seq: ask.seq, cards }]);
   assert.equal(await exec("return document.querySelector('.bulb').classList.contains('lit')"), true);
   assert.equal((await text(".bulb .count"))[0], String(cards.length));
@@ -1421,8 +1425,8 @@ await check("the 💡 lights with Haiku's cards; hovering a card previews its ed
 /** Cards whose edits grow the draft by lines, two categories: the menu's layout and keys (86). */
 const TALL = "\n\nBoard: the dev bench, its first link port.\nPort: the one it enumerates as after a reset.\nLog: the last flash output, whole.";
 const growCards = () => [
-  { id: "g1", category: "missing", title: "Name the board, port and log", why: "Claude will ask which", edit: { op: "append", text: TALL } },
-  { id: "g2", category: "improve", title: "Say what done looks like", why: "So it knows when to stop", edit: { op: "append", text: "Done when it boots and logs once." } },
+  { id: "g1", category: "refs", title: "Name the board, port and log", why: "Claude will ask which", edit: { op: "append", text: TALL } },
+  { id: "g2", category: "context", title: "Say what done looks like", why: "So it knows when to stop", edit: { op: "append", text: "Done when it boots and logs once." } },
 ];
 /** The 💡 menu open on cards that grow the draft. */
 const openGrowing = async () => {
@@ -1485,7 +1489,7 @@ await check("the 💡 by keyboard, as IntelliSense: ↓ focuses and previews a c
   assert.match(await exec("return [...document.querySelectorAll('.overlay .add')].map(e=>e.textContent).join('')"), /Board: the dev bench/);
   assert.equal(await value(), draft, "nothing applied by a focus");
   await type(RIGHT);
-  assert.deepEqual(await text(".menu.bulb .menu-cat.on .menu-label"), ["Improvements"]);
+  assert.deepEqual(await text(".menu.bulb .menu-cat.on .menu-label"), ["Context handling"]);
   assert.deepEqual(await on(), ["Say what done looks like"], "→ opens the next category on its first row");
   assert.match(await exec("return [...document.querySelectorAll('.overlay .add')].map(e=>e.textContent).join('')"), /Done when it boots/);
   await type(LEFT);
@@ -1501,7 +1505,7 @@ await check("the 💡 by keyboard, as IntelliSense: ↓ focuses and previews a c
   // The keys start on the open category's first row, wherever the pointer is: here the one it opened; Esc closes.
   await click(".bulb");
   await settle();
-  await hover(".menu.bulb .menu-cat", "Improvements");
+  await hover(".menu.bulb .menu-cat", "Context handling");
   await hover(".menu.bulb .menu-item", "Say what done looks like");
   await type(DOWN);
   assert.deepEqual(await on(), ["Say what done looks like"], "one row in the category: ↓ stays on it");
@@ -1598,8 +1602,8 @@ await check("while ↓ has focused a row, the pointer over another marks it but 
   await exec("const t=document.querySelector('.composer textarea'); t.value=arguments[0]; t.dispatchEvent(new Event('input', {bubbles:true}))", [draft]);
   const ask = await waitAssist("cards");
   const cards = [
-    { id: "k1", category: "missing", title: "Name the board", why: "Claude will ask which", edit: { op: "append", text: "Board: the dev bench." } },
-    { id: "k2", category: "missing", title: "Name the log level", why: "So the log says enough", edit: { op: "append", text: "Log level: debug." } },
+    { id: "k1", category: "refs", title: "Name the board", why: "Claude will ask which", edit: { op: "append", text: "Board: the dev bench." } },
+    { id: "k2", category: "refs", title: "Name the log level", why: "So the log says enough", edit: { op: "append", text: "Log level: debug." } },
   ];
   await send([{ t: "cards", seq: ask.seq, cards }]);
   await click(".bulb");
@@ -1737,7 +1741,7 @@ await check("just before send: a long draft typed fast waits for its cards; the 
   const ask = ps.filter((p) => p.t === "assist" && p.kind === "cards").at(-1);
   assert.equal(ask.text, draft);
   assert.equal(await exec("return document.querySelector('.bulb').classList.contains('checking')"), true);
-  await send([{ t: "cards", seq: ask.seq, cards: [{ id: "h1", category: "improve", title: "Name the readme section", edit: { op: "append", text: "(the Flashing section)" } }] }]);
+  await send([{ t: "cards", seq: ask.seq, cards: [{ id: "h1", category: "refs", title: "Name the readme section", edit: { op: "append", text: "(the Flashing section)" } }] }]);
   assert.equal((await text(".menu.bulb")).length, 1, "the 💡 opens on its cards");
   assert.ok(!(await posts()).some((p) => p.t === "send"));
   await type(ENTER);
@@ -1764,7 +1768,7 @@ await check("a 💡 menu whose cards stop applying closes with them: the next Es
   await exec("const t=document.querySelector('.composer textarea'); t.value=arguments[0]; t.dispatchEvent(new Event('input', {bubbles:true}))", [draft]);
   await type(ENTER);
   const ask = await lastAssist("cards");
-  await send([{ t: "cards", seq: ask.seq, cards: [{ id: "r1", category: "improve", title: "Name the file", edit: { op: "replace", find: "readme", with: "README.md" } }] }]);
+  await send([{ t: "cards", seq: ask.seq, cards: [{ id: "r1", category: "refs", title: "Name the file", edit: { op: "replace", find: "readme", with: "README.md" } }] }]);
   assert.equal((await text(".menu.bulb")).length, 1, "the 💡 opens on its card");
   // The owner rewrites the word the card would change: no card applies, the menu goes.
   await exec("const t=document.querySelector('.composer textarea'); t.value='please also update the docs with the new flash steps'; t.dispatchEvent(new Event('input', {bubbles:true}))");

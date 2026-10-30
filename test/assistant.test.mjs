@@ -159,20 +159,25 @@ test("the recorded ghost call streams a completion that grows to the final one",
   assert.equal(core.cleanCompletion("fix it", "fix it now"), " now", "never a repeat of the draft");
 });
 
-test("the recorded cards parse into edits that apply to their draft", () => {
-  const cards = core.parseCards(core.parseObject(answer("cards")), "fix the flash thing", "t");
-  assert.ok(cards.length >= 1);
-  for (const c of cards) {
-    assert.ok(["missing", "improve"].includes(c.category));
-    assert.ok(core.applyEdit("fix the flash thing", c.edit) !== null);
-  }
+test("the recorded cards parse into edits that apply to their draft; decision 28's kinds are Promptu's now and go (97)", () => {
+  // Recorded before the split: missing-context and improvement cards, which the 💡 no longer offers.
+  const raw = core.parseObject(answer("cards")).cards;
+  assert.ok(raw.length >= 1 && raw.every((c) => c.category === "missing" || c.category === "improve"), JSON.stringify(raw));
+  assert.deepEqual(core.parseCards(core.parseObject(answer("cards")), "fix the flash thing", "t"), []);
   const ctx = core.parseCards(core.parseObject(answer("cards-context")), "now write the release notes for the whole quarter", "t");
   assert.deepEqual(ctx.find((c) => c.category === "context")?.edit, { op: "handoff" });
   const draft = "the widget is done. next, move on to the UART driver: add a ring buffer for RX and a test for it";
-  const compact = core.parseCards(core.parseObject(answer("cards-compact")), draft, "t").find((c) => c.kind === "compact");
+  const fromCompact = core.parseCards(core.parseObject(answer("cards-compact")), draft, "t");
+  assert.deepEqual([...new Set(fromCompact.map((c) => c.category))], ["context"], "its missing-context card went");
+  const compact = fromCompact.find((c) => c.kind === "compact");
   assert.ok(compact);
   assert.match(core.applyEdit(draft, compact.edit), /^\/compact focus on: .+\nthe widget is done/);
   assert.deepEqual(core.parseCards({ cards: [{ category: "missing", title: "x", edit: { op: "replace", find: "absent", with: "y" } }, { category: "bogus", title: "y" }] }, "draft", "t"), []);
+  // A bracketed question about a reference stays the linker's (88), and only when the call had references.
+  const ask = { cards: [{ category: "refs", title: "Which PR?", why: "w", edit: { op: "append", text: " [which PR?]" } }] };
+  assert.deepEqual(core.parseCards(ask, "do it like the PR did", "t"), []);
+  assert.deepEqual(core.parseCards(ask, "do it like the PR did", "t", [{ id: "r1", line: "x", prs: [] }]).map((c) => [c.category, c.title]), [["refs", "Which PR?"]]);
+  assert.deepEqual(core.CATEGORIES.map((c) => c.label), ["References", "Context handling"]);
 });
 
 test("the recorded turn gives chips and a name", () => {
@@ -189,6 +194,9 @@ test("the prompts carry what the assistant sees (27), and the draft only where i
   for (const s of ["ABC-123 Make the widget blink · In Progress · PR #42 open", "34% of 200K", "/embarch-chat:build-flash-verify", "<draft>now flash it on the</draft>"]) assert.ok(g.includes(s), s);
   assert.ok(g.length < 6000, "the last reply is capped");
   assert.match(core.cardsPrompt(i), /^TASK: cards/);
+  // Only context handling, and the references when there are some: what a prompt lacks is Promptu's (97).
+  assert.ok(!/"category": "(missing|improve)"/.test(core.cardsPrompt(i)) && !core.cardsPrompt(i).includes('"category": "refs"'));
+  assert.ok(core.cardsPrompt({ ...i, references: [{ id: "r1", line: "ABC-1 \"x\" Done", prs: [] }] }).includes('"category": "refs"'));
   const t = core.turnPrompt({ ...i, cliSuggestion: "go ahead" }, { chips: true, name: false });
   assert.ok(!t.includes("<draft>") && t.includes('"go ahead"') && !t.includes('"name"'));
   assert.ok(core.contextBlock({ ...INPUT, item: null }).includes("untracked"));
@@ -236,7 +244,7 @@ test("the next keystroke cancels a stale call", async () => {
   const first = b.cards("s1", { ...INPUT, draft: "fix the flash thing" });
   const second = b.cards("s1", { ...INPUT, draft: "fix the flash thing" });
   assert.equal(await first, null);
-  assert.ok((await second).length >= 1);
+  assert.notEqual(await second, null, "the second call answers");
   b.dispose();
 });
 

@@ -12,8 +12,12 @@ export type DraftEdit =
   | { op: "replace"; find: string; with: string }
   | { op: "handoff" };
 
-/** The 💡's submenus (38): missing context and improvements (28), context handling (36). */
-export type CardCategory = "missing" | "improve" | "context";
+/**
+ * The 💡's submenus (38): the desk's references (88) and context handling
+ * (36). Decision 28's missing-context and improvement cards are gone:
+ * Promptu's questions do that job (decision 97).
+ */
+export type CardCategory = "refs" | "context";
 export type ContextKind = "compact" | "handoff" | "background";
 
 export interface Card {
@@ -27,8 +31,7 @@ export interface Card {
 }
 
 export const CATEGORIES: Array<{ id: CardCategory; label: string }> = [
-  { id: "missing", label: "Missing context" },
-  { id: "improve", label: "Improvements" },
+  { id: "refs", label: "References" },
   { id: "context", label: "Context handling" },
 ];
 
