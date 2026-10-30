@@ -198,14 +198,23 @@ export class PromptuRuns extends EventEmitter {
     };
     this.active.set(sid, a);
     this.show(sid, a);
-    const item = typeof o.desk === "function" ? await o.desk() : o.desk;
-    if (this.active.get(sid) !== a) return;
-    const desk = item ? this.deskFile(item) : null;
-    const r = await this.cli.prep(o.rough, { cwd: o.cwd, have: o.have, desk: desk?.file, pattern: o.pattern, quick: o.quick, start: o.start, signal: a.ac.signal });
-    if (desk) fs.rmSync(desk.dir, { recursive: true, force: true });
-    if (this.active.get(sid) !== a) return;
-    if (!r.ok || !r.value) return this.end(sid, a, r.error === "cancelled" ? { cancelled: true } : { error: r.error ?? "promptu prep failed" });
-    await this.after(sid, a, r.value);
+    // Whatever throws on the way ends the run with one line: a dialog never stays "working" (review F2).
+    try {
+      const item = typeof o.desk === "function" ? await o.desk() : o.desk;
+      if (this.active.get(sid) !== a) return;
+      const desk = item ? this.deskFile(item) : null;
+      let r: Awaited<ReturnType<PromptuCli["prep"]>>;
+      try {
+        r = await this.cli.prep(o.rough, { cwd: o.cwd, have: o.have, desk: desk?.file, pattern: o.pattern, quick: o.quick, start: o.start, signal: a.ac.signal });
+      } finally {
+        if (desk) fs.rmSync(desk.dir, { recursive: true, force: true });
+      }
+      if (this.active.get(sid) !== a) return;
+      if (!r.ok || !r.value) return this.end(sid, a, r.error === "cancelled" ? { cancelled: true } : { error: r.error ?? "promptu prep failed" });
+      await this.after(sid, a, r.value);
+    } catch (e) {
+      this.end(sid, a, { error: `Promptu stopped: ${(e as Error)?.message ?? String(e)}` });
+    }
   }
 
   /** What a `prep` or `next` output leads to: its prompt, a render when nothing is left, or the next page. */
@@ -232,10 +241,14 @@ export class PromptuRuns extends EventEmitter {
     const run = a.view.step.run;
     a.view = { ...a.view, phase: "working", doing: "next" };
     this.show(sid, a);
-    const r = await this.cli.next(run, input, a.cwd, a.ac.signal);
-    if (this.active.get(sid) !== a) return;
-    if (!r.ok || !r.value) return this.end(sid, a, { error: r.error ?? "promptu next failed" });
-    await this.after(sid, a, r.value);
+    try {
+      const r = await this.cli.next(run, input, a.cwd, a.ac.signal);
+      if (this.active.get(sid) !== a) return;
+      if (!r.ok || !r.value) return this.end(sid, a, { error: r.error ?? "promptu next failed" });
+      await this.after(sid, a, r.value);
+    } catch (e) {
+      this.end(sid, a, { error: `Promptu stopped: ${(e as Error)?.message ?? String(e)}` });
+    }
   }
 
   /**
@@ -246,7 +259,11 @@ export class PromptuRuns extends EventEmitter {
   async finish(sid: string, seq: number, input: AnswerInput, rest: Rest): Promise<void> {
     const a = this.current(sid, seq);
     if (!a || a.view.phase !== "ask" || !a.view.step) return;
-    await this.render(sid, a, a.view.step.run, input, rest);
+    try {
+      await this.render(sid, a, a.view.step.run, input, rest);
+    } catch (e) {
+      this.end(sid, a, { error: `Promptu stopped: ${(e as Error)?.message ?? String(e)}` });
+    }
   }
 
   /** Esc while the pass reads the prompt: no prompt, the draft as it was. */

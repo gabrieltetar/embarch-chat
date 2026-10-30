@@ -660,7 +660,7 @@ export class ChatHost implements vscode.Disposable {
           this.post({ t: "promptuResult", result: { sid, seq: 0, origin, rough: m.text, error: "Promptu is off or not installed: nothing changed" } });
           return;
         }
-        return beginPromptu(this.ctx, rec, { rough: m.text, origin, pattern });
+        return beginPromptu(this.ctx, rec, { rough: m.text, origin, pattern }).catch((e) => this.ctx.log(`[${sid.slice(0, 8)}] promptu: ${(e as Error).message}`));
       }
       case "answer":
         if (Number.isInteger(m.seq)) await this.ctx.runs.answer(sid, m.seq, cleanInput(m.input));

@@ -200,6 +200,23 @@ test("Start work's pass reads the work item from a private file, cut to 2,000 ch
   assert.equal(s.runs.view(SID).step.filled[0].source, "desk");
 });
 
+test("whatever throws on the way ends the run with one line, never a dialog left working (review F2)", async () => {
+  const s = setup();
+  await s.runs.begin(SID, { ...BEGIN, cwd: ROOT, desk: async () => { throw new Error("the desk went away"); } });
+  assert.equal(s.runs.view(SID), null);
+  assert.equal(s.runs.take(SID).error, "Promptu stopped: the desk went away");
+  assert.equal(s.views.at(-1), null, "the dialog closed");
+  // A CLI wrapper that throws instead of answering.
+  const t = setup();
+  t.cli.next = async () => {
+    throw new Error("spawn exploded");
+  };
+  await t.runs.begin(SID, { ...BEGIN, cwd: ROOT });
+  await t.runs.answer(SID, t.runs.view(SID).seq, {});
+  assert.equal(t.runs.view(SID), null);
+  assert.equal(t.runs.take(SID).error, "Promptu stopped: spawn exploded");
+});
+
 test("a chat that goes takes its run with it", async () => {
   const s = setup({ FAKE_PROMPTU_SLEEP_MS: "1500" });
   const first = s.runs.begin(SID, { ...BEGIN, cwd: ROOT });

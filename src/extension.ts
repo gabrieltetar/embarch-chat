@@ -769,7 +769,7 @@ export function activate(context: vscode.ExtensionContext): void {
           // dialog opens over the empty chat, the prompt lands in the draft,
           // nothing is sent. Without a prompt, the desk's starter waits there.
           const rough = startRough(card?.issue?.key, card?.issue?.title ?? card?.title, rec.itemTitle ?? m.item_id);
-          void beginPromptu(ctx, rec, { rough, origin: "start", start: true, fallback: m.prompt || undefined });
+          void beginPromptu(ctx, rec, { rough, origin: "start", start: true, fallback: m.prompt || undefined }).catch((e) => log(`[${rec.chat.sessionId.slice(0, 8)}] promptu: ${(e as Error).message}`));
         } else if (rec && m.prompt) {
           // Promptu off or not installed: the starter waits in the draft, unsent (11
           // reversed; sending it as before is the owner's pick, docs/forks.md step 3 P1).
