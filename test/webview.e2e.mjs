@@ -4007,13 +4007,14 @@ await check("the Usage icon: the plan's session and weekly share with their rese
   assert.equal(await level(), "none");
   assert.equal(await name(), "Usage — no reading yet");
   const now = Math.floor(Date.now() / 1000);
-  const reading = (s, w, extra = {}) => ({ t: "usage", usage: { session: { used: s, resetsAt: now + 3 * 3600 + 60 }, weekly: { used: w, resetsAt: now + 50 * 3600 }, status: "allowed", limit: "five_hour", grace: false, at: Date.now(), ...extra } });
+  const reading = (s, w, extra = {}) => ({ t: "usage", usage: { session: { used: s, resetsAt: now + 3 * 3600 + 60, at: Date.now() }, weekly: { used: w, resetsAt: now + 50 * 3600, at: Date.now() - 12 * 60000 }, status: "allowed", limit: "five_hour", grace: false, at: Date.now(), ...extra } });
   await send([reading(0.42, 0.61)]);
   assert.equal(await level(), "ok");
   assert.equal(await name(), "Usage — session 42 %, weekly 61 %");
   await hover(".rail .rail-entry.usage");
   const card = (await text(".usage-card"))[0];
   assert.ok(card.includes("Session (5 hours)") && card.includes("42 % used") && card.includes("resets in 3h") && card.includes("Weekly") && card.includes("61 % used") && card.includes("resets in 2d"), card);
+  assert.deepEqual((await text(".usage-reset")).map((t) => t.replace(/^.*· /, "")), ["reported just now", "reported 12 min ago"], "each window with its own age (review F15)");
   assert.deepEqual(await exec("return [...document.querySelectorAll('.usage-bar > span')].map((s) => s.style.width)"), ["42%", "61%"]);
   await shot("usage-card");
   await mouseAway();

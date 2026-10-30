@@ -303,7 +303,14 @@ function resetText(resetsAt: number | null, now: number): string {
   return `resets ${resetsIn(resetsAt, now)} (${when})`;
 }
 
-function UsageRow({ name, w, now }: { name: string; w: UsageWindow | null; now: number }) {
+/** How old a window's reading is: each keeps its own, as last heard (review F15). */
+function heardAgo(at: number, now: number): string {
+  const min = Math.max(0, Math.round((now - at) / 60000));
+  if (min < 1) return "just now";
+  return min < 60 ? `${min} min ago` : `${Math.floor(min / 60)} h ago`;
+}
+
+function UsageRow({ name, w, now, heard }: { name: string; w: UsageWindow | null; now: number; heard: number }) {
   const level = !w ? "none" : w.used >= USAGE_RED ? "red" : w.used >= USAGE_AMBER ? "amber" : "ok";
   return (
     <div class={`usage-row ${level}`}>
@@ -314,7 +321,11 @@ function UsageRow({ name, w, now }: { name: string; w: UsageWindow | null; now: 
       <div class="usage-bar" aria-hidden="true">
         <span style={{ width: `${w ? Math.round(w.used * 100) : 0}%` }} />
       </div>
-      {w && <div class="muted usage-reset">{resetText(w.resetsAt, now)}</div>}
+      {w && (
+        <div class="muted usage-reset">
+          {resetText(w.resetsAt, now)} · reported {heardAgo(w.at ?? heard, now)}
+        </div>
+      )}
     </div>
   );
 }
@@ -327,7 +338,6 @@ function UsageRow({ name, w, now }: { name: string; w: UsageWindow | null; now: 
 export function UsageCard(p: { usage: Usage | null; focusIn: boolean; onClose: () => void; onEnter: () => void; onLeave: () => void }) {
   const now = useNow(30_000, true);
   const u = p.usage;
-  const ago = u ? Math.max(0, Math.round((now - u.at) / 60000)) : 0;
   return (
     <RailPop cls="usage-card" label="Claude plan usage" focusIn={p.focusIn} onClose={p.onClose} onEnter={p.onEnter} onLeave={p.onLeave}>
       <div class="usage-title">
@@ -339,10 +349,10 @@ export function UsageCard(p: { usage: Usage | null; focusIn: boolean; onClose: (
           {usageLevel(u) === "red" && (u.status === "rejected" || u.grace) && (
             <div class="warn">{u.grace ? "Limit reached — the turn under way is finishing." : `You've hit your ${(u.limit && LIMIT_NAMES[u.limit]) || "usage limit"}.`}</div>
           )}
-          <UsageRow name="Session (5 hours)" w={u.session} now={now} />
-          <UsageRow name="Weekly" w={u.weekly} now={now} />
+          <UsageRow name="Session (5 hours)" w={u.session} now={now} heard={u.at} />
+          <UsageRow name="Weekly" w={u.weekly} now={now} heard={u.at} />
           <div class="muted usage-note">
-            As Claude Code last reported it, {ago < 1 ? "just now" : `${ago} min ago`}. The icon turns amber from {Math.round(USAGE_AMBER * 100)} % and red from {Math.round(USAGE_RED * 100)} %.
+            Each window as Claude Code last reported it. The icon turns amber from {Math.round(USAGE_AMBER * 100)} % and red from {Math.round(USAGE_RED * 100)} %.
           </div>
         </>
       )}

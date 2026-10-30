@@ -6,8 +6,9 @@
 // icon). Claude Code 2.1.287 carries both windows there, as `unifiedWindows.five_hour` and `.seven_day`
 // (`{utilization 0..1, resetsAt}`, an `@internal` field) [measured
 // 2026-10-30 from its bundle; the recorded sessions carry it]. The reading is
-// the account's, so the window keeps the newest any of its chats heard
-// (usageStore.ts). Pure, for the host and the page alike.
+// the account's, so the window keeps the newest any of its chats heard, each
+// window as last heard, with its own age (usageStore.ts, review F15). Pure,
+// for the host and the page alike.
 
 /** A reset time as "in 12m", "in 3h", "in 2d", or "soon". */
 export function resetsIn(resetsAtSec: number, now = Date.now()): string {
@@ -18,10 +19,11 @@ export function resetsIn(resetsAtSec: number, now = Date.now()): string {
   return h < 24 ? `in ${h}h` : `in ${Math.floor(h / 24)}d`;
 }
 
-/** One window: the share used, 0..1, and when it resets (seconds since the epoch), when said. */
+/** One window: the share used, 0..1, when it resets (seconds since the epoch), when said, and when it was heard (ms). */
 export interface UsageWindow {
   used: number;
   resetsAt: number | null;
+  at: number;
 }
 
 export interface Usage {
@@ -35,7 +37,7 @@ export interface Usage {
   limit: string | null;
   /** The limit is reached and a turn under way is finishing past it. */
   grace: boolean;
-  /** When this window heard it (ms). */
+  /** When this window heard the newest event (ms); each window keeps its own `at`. */
   at: number;
 }
 
@@ -55,12 +57,12 @@ export const LIMIT_NAMES: Record<string, string> = {
 
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
 
-function windowOf(v: unknown): UsageWindow | null {
+function windowOf(v: unknown, at: number): UsageWindow | null {
   if (!v || typeof v !== "object") return null;
   const o = v as Record<string, unknown>;
   const used = num(o.utilization);
   if (used === null) return null;
-  return { used: Math.max(0, Math.min(1, used)), resetsAt: num(o.resetsAt) };
+  return { used: Math.max(0, Math.min(1, used)), resetsAt: num(o.resetsAt), at };
 }
 
 /** A `rate_limit_event`'s `rate_limit_info` as the icon reads it, or null when it is not one. */
@@ -69,17 +71,27 @@ export function usageOf(info: unknown, now = Date.now()): Usage | null {
   const i = info as Record<string, unknown>;
   if (typeof i.status !== "string") return null;
   const w = (i.unifiedWindows && typeof i.unifiedWindows === "object" ? i.unifiedWindows : {}) as Record<string, unknown>;
-  let session = windowOf(w.five_hour);
-  let weekly = windowOf(w.seven_day) ?? windowOf(w.seven_day_overage_included);
+  let session = windowOf(w.five_hour, now);
+  let weekly = windowOf(w.seven_day, now) ?? windowOf(w.seven_day_overage_included, now);
   // Without the windows, the one limit the event names still says its own share.
   const limit = typeof i.rateLimitType === "string" ? i.rateLimitType : null;
   const own = num(i.utilization);
   if (own !== null) {
-    const one = { used: Math.max(0, Math.min(1, own)), resetsAt: num(i.resetsAt) };
+    const one = { used: Math.max(0, Math.min(1, own)), resetsAt: num(i.resetsAt), at: now };
     if (limit === "five_hour" && !session) session = one;
     if (limit?.startsWith("seven_day") && !weekly) weekly = one;
   }
   return { session, weekly, status: i.status, limit, grace: i.rateLimitGraceActive === true, at: now };
+}
+
+/**
+ * A newer reading over the one kept: the event's status and limit, and each
+ * window it carries; a window it leaves out stays as last heard, with its
+ * own age (review F15).
+ */
+export function mergeUsage(prev: Usage | null, next: Usage): Usage {
+  if (!prev) return next;
+  return { ...next, session: next.session ?? prev.session, weekly: next.weekly ?? prev.weekly };
 }
 
 /** How the icon shows: no reading, fine, amber from 70 %, red from 90 % or when a limit is hit. */

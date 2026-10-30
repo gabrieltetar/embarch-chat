@@ -14,12 +14,12 @@ const W = (u, at = 1900000000) => ({ utilization: u, resetsAt: at });
 
 test("both windows come from unifiedWindows, with their reset times", () => {
   const u = core.usageOf({ status: "allowed", resetsAt: 1900000000, rateLimitType: "five_hour", unifiedWindows: { five_hour: W(0.42, 1900001000), seven_day: W(0.61, 1900500000) } }, 7);
-  assert.deepEqual(u, { session: { used: 0.42, resetsAt: 1900001000 }, weekly: { used: 0.61, resetsAt: 1900500000 }, status: "allowed", limit: "five_hour", grace: false, at: 7 });
+  assert.deepEqual(u, { session: { used: 0.42, resetsAt: 1900001000, at: 7 }, weekly: { used: 0.61, resetsAt: 1900500000, at: 7 }, status: "allowed", limit: "five_hour", grace: false, at: 7 });
 });
 
 test("without the windows, the one limit the event names still gives its own share; nothing else is made up", () => {
-  const u = core.usageOf({ status: "allowed_warning", rateLimitType: "seven_day", utilization: 0.83, resetsAt: 1900500000 });
-  assert.deepEqual([u.session, u.weekly], [null, { used: 0.83, resetsAt: 1900500000 }]);
+  const u = core.usageOf({ status: "allowed_warning", rateLimitType: "seven_day", utilization: 0.83, resetsAt: 1900500000 }, 9);
+  assert.deepEqual([u.session, u.weekly], [null, { used: 0.83, resetsAt: 1900500000, at: 9 }]);
   const bare = core.usageOf({ status: "allowed" });
   assert.deepEqual([bare.session, bare.weekly], [null, null]);
   assert.equal(core.usageOf({ nope: 1 }), null);
@@ -49,4 +49,19 @@ test("the window keeps the newest reading any chat heard, and says when it chang
   s.take({ not: "a reading" });
   s.take({ status: "allowed", unifiedWindows: { five_hour: W(0.35), seven_day: W(0.5) } });
   assert.deepEqual(seen, [0.3, 0.35]);
+});
+
+test("each window is kept as last heard, with its own age: an event without unifiedWindows never blanks the other (review F15)", () => {
+  const s = new core.UsageStore();
+  s.take({ status: "allowed", unifiedWindows: { five_hour: W(0.3, 1900001000), seven_day: W(0.5, 1900500000) } });
+  const first = s.current;
+  // The one limit an event names, without the windows: that window moves, the other stays as it was.
+  s.take({ status: "allowed_warning", rateLimitType: "five_hour", utilization: 0.74, resetsAt: 1900002000 });
+  assert.deepEqual(s.current.weekly, first.weekly, "the week stays, with the age it had");
+  assert.deepEqual([s.current.session.used, s.current.session.resetsAt, s.current.status], [0.74, 1900002000, "allowed_warning"]);
+  assert.ok(s.current.session.at >= first.weekly.at);
+  // An event that names no window at all keeps both.
+  s.take({ status: "allowed" });
+  assert.deepEqual([s.current.session.used, s.current.weekly.used, s.current.status], [0.74, 0.5, "allowed"]);
+  assert.deepEqual(core.mergeUsage(null, core.usageOf({ status: "allowed" }, 3)), core.usageOf({ status: "allowed" }, 3));
 });
