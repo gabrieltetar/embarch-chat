@@ -2311,7 +2311,7 @@ body.in-editor .rail-col {
 .rail-entry:hover:not(:disabled) {
   background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
 }
-.rail-entry.pressed {
+.rail-entry.open {
   background: var(--active);
   color: var(--on-active);
 }

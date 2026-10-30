@@ -21,7 +21,10 @@ export function RailEntry(p: {
   count?: number;
   spin?: boolean;
   disabled?: boolean;
-  pressed?: boolean;
+  /** What it opens beside the rail shows (a card or a menu): `aria-expanded`, never a pressed toggle (review F8). */
+  expanded?: boolean;
+  /** The accessible name when it says more than the label: Promptu's lit state (95). */
+  ariaLabel?: string;
   btnRef?: Ref<HTMLButtonElement>;
   onClick?: () => void;
   onEnter?: () => void;
@@ -30,10 +33,10 @@ export function RailEntry(p: {
   return (
     <button
       ref={p.btnRef}
-      class={`rail-entry ${p.cls} ${p.lit ? "lit" : ""} ${p.pressed ? "pressed" : ""}`}
+      class={`rail-entry ${p.cls} ${p.lit ? "lit" : ""} ${p.expanded ? "open" : ""}`}
       title={p.title}
-      aria-label={p.label}
-      aria-pressed={p.pressed}
+      aria-label={p.ariaLabel ?? p.label}
+      {...(p.expanded !== undefined ? { "aria-haspopup": "dialog", "aria-expanded": p.expanded } : {})}
       disabled={p.disabled}
       // The draft keeps the focus, so a menu's keys still come through the input (86).
       onMouseDown={(e) => e.preventDefault()}

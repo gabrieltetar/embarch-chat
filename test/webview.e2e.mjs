@@ -3607,9 +3607,12 @@ await check("Promptu's icon lights when the next Enter runs the pass: at a task 
     assert.equal(await isLit(), false, "nothing to run it on");
     await type("add a watchdog");
     assert.equal(await isLit(), true, "a task start");
+    const aria = () => exec("const b=document.querySelector('.rail .rail-entry.promptu'); return [b.getAttribute('aria-label'), b.getAttribute('aria-pressed'), b.getAttribute('aria-haspopup')]");
+    assert.deepEqual(await aria(), ["Promptu — runs on next Enter", null, "dialog"], "an indicator: its name says it, no pressed state (review F8)");
     await setDraft("/compact the build");
     await settle();
     assert.equal(await isLit(), false, "a command goes as it is");
+    assert.deepEqual((await aria()).slice(0, 2), ["Promptu", null]);
     await setDraft("## Goal\nx\n\n— promptu implement-issue@1 asked=done:rec");
     await settle();
     assert.equal(await isLit(), false, "a draft that went through it already");

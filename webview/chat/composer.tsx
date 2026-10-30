@@ -1253,7 +1253,7 @@ export function Composer(p: Props) {
                 label="Memory"
                 cls="memory"
                 title="Memory: what loads in this folder, by scope, domain and kind, with stale flags"
-                pressed={railPop === "memory"}
+                expanded={railPop === "memory"}
                 onClick={() => (railPop === "memory" ? setRailPop(null) : (setRailPop("memory"), loadMemory()))}
               />
               <RailEntry
@@ -1262,7 +1262,9 @@ export function Composer(p: Props) {
                 cls="promptu"
                 lit={lit}
                 spin={asking || promptuBusy}
-                pressed={railPop === "promptu"}
+                // An indicator, not a switch (95): its name says whether the next Enter runs it (review F8).
+                ariaLabel={lit ? "Promptu — runs on next Enter" : "Promptu"}
+                expanded={railPop === "promptu"}
                 title={
                   !p.promptu?.available
                     ? "Promptu is not installed here"
