@@ -4030,6 +4030,22 @@ await check("the Usage icon: the plan's session and weekly share with their rese
   assert.ok((await text(".usage-card .warn"))[0].includes("You've hit your weekly limit"));
   await mouseAway();
   await sleep(500);
+  // A per-model weekly limit is a line of its own, never the Weekly window, and never colours the icon (review F16).
+  await send([reading(0.2, 0.3, { models: { seven_day_opus: { used: 0.95, resetsAt: now + 50 * 3600, at: Date.now() } } })]);
+  assert.equal(await level(), "ok");
+  assert.equal(await name(), "Usage — session 20 %, weekly 30 %");
+  await hover(".rail .rail-entry.usage");
+  assert.deepEqual((await text(".usage-card .usage-head > span")), ["Session (5 hours)", "Weekly", "Weekly · Opus only"]);
+  assert.ok((await text(".usage-card .usage-row"))[2].includes("95 % used"));
+  assert.ok((await text(".usage-card .usage-note"))[0].includes("a per-model line never colours it"));
+  await mouseAway();
+  await sleep(500);
+  await send([reading(0.2, 0.3, { status: "rejected", limit: "seven_day_opus", resetsAt: now + 50 * 3600, models: { seven_day_opus: { used: 1, resetsAt: now + 50 * 3600, at: Date.now() } } })]);
+  assert.equal(await level(), "ok", "the Opus limit hit: not red");
+  await hover(".rail .rail-entry.usage");
+  assert.ok((await text(".usage-card .warn"))[0].includes("You've hit your weekly Opus limit"), "the card still says it");
+  await mouseAway();
+  await sleep(500);
   // A window past its reset counts as reset (review F14): the session's 95 % from before it lights nothing.
   const win = (used, resetsAt, ago = 0) => ({ used, resetsAt, at: Date.now() - ago });
   await send([{ t: "usage", usage: { session: win(0.95, now - 60, 3 * 3600e3), weekly: win(0.3, now + 50 * 3600), status: "allowed", limit: "five_hour", resetsAt: now - 60, grace: false, at: Date.now() } }]);

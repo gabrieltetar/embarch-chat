@@ -10,7 +10,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { MemoryEntry, MemoryOut, MemoryUse, PatternInfo } from "../../src/promptu/cli";
 import type { PromptuState } from "../../src/promptu/service";
 import type { Usage, UsageWindow } from "../../src/usage";
-import { LIMIT_NAMES, USAGE_AMBER, USAGE_RED, expired, limitHit, nextReset, resetsIn } from "../../src/usage";
+import { LIMIT_NAMES, MODEL_LIMITS, USAGE_AMBER, USAGE_RED, expired, iconHit, limitHit, nextReset, resetsIn } from "../../src/usage";
 import { useNow } from "./clock";
 import { vscodeApi } from "../shared/vscode";
 
@@ -292,7 +292,7 @@ const share = (w: UsageWindow | null, now: number) => (!w ? "not reported" : exp
 /** One line for the icon's name and hover: each window's share, or that there is no reading. */
 export function usageSummary(u: Usage | null, now = Date.now()): string {
   if (!u) return "no reading yet";
-  if (limitHit(u, now)) return `${(u.limit && LIMIT_NAMES[u.limit]) || "usage limit"} reached`;
+  if (iconHit(u, now)) return `${(u.limit && LIMIT_NAMES[u.limit]) || "usage limit"} reached`;
   return `session ${share(u.session, now)}, weekly ${share(u.weekly, now)}`;
 }
 
@@ -375,8 +375,12 @@ export function UsageCard(p: { usage: Usage | null; focusIn: boolean; onClose: (
           )}
           <UsageRow name="Session (5 hours)" w={u.session} now={now} heard={u.at} />
           <UsageRow name="Weekly" w={u.weekly} now={now} heard={u.at} />
+          {MODEL_LIMITS.map((k) => {
+            const w = u.models?.[k];
+            return w ? <UsageRow key={k} name={k === "seven_day_opus" ? "Weekly · Opus only" : "Weekly · Sonnet only"} w={w} now={now} heard={u.at} /> : null;
+          })}
           <div class="muted usage-note">
-            Each window as Claude Code last reported it. The icon turns amber from {Math.round(USAGE_AMBER * 100)} % and red from {Math.round(USAGE_RED * 100)} %.
+            Each window as Claude Code last reported it. The icon turns amber from {Math.round(USAGE_AMBER * 100)} % and red from {Math.round(USAGE_RED * 100)} %{MODEL_LIMITS.some((k) => u.models?.[k]) ? " of the session or the week; a per-model line never colours it" : ""}.
           </div>
         </>
       )}

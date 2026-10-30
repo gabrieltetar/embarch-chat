@@ -26,11 +26,23 @@ export interface UsageWindow {
   at: number;
 }
 
+/**
+ * The per-model weekly limits: a line each on the card, never the Weekly
+ * window and never the icon's colour (review F16). Only the event's own
+ * share says them: `unifiedWindows` carries none [measured 2026-10-30 from
+ * Claude Code 2.1.287's bundle].
+ */
+export const MODEL_LIMITS = ["seven_day_opus", "seven_day_sonnet"] as const;
+export type ModelLimit = (typeof MODEL_LIMITS)[number];
+export const isModelLimit = (l: string | null | undefined): l is ModelLimit => !!l && (MODEL_LIMITS as readonly string[]).includes(l);
+
 export interface Usage {
   /** The 5-hour session window. */
   session: UsageWindow | null;
-  /** The weekly window. */
+  /** The weekly window, all models. */
   weekly: UsageWindow | null;
+  /** A per-model weekly limit's share, when an event named it. */
+  models: Partial<Record<ModelLimit, UsageWindow>>;
   /** `allowed`, `allowed_warning` or `rejected`, as the CLI says. */
   status: string;
   /** The limit the event names, when it names one (`five_hour`, `seven_day`, `seven_day_opus` …). */
@@ -78,12 +90,15 @@ export function usageOf(info: unknown, now = Date.now()): Usage | null {
   // Without the windows, the one limit the event names still says its own share.
   const limit = typeof i.rateLimitType === "string" ? i.rateLimitType : null;
   const own = num(i.utilization);
+  const models: Usage["models"] = {};
   if (own !== null) {
     const one = { used: Math.max(0, Math.min(1, own)), resetsAt: num(i.resetsAt), at: now };
     if (limit === "five_hour" && !session) session = one;
-    if (limit?.startsWith("seven_day") && !weekly) weekly = one;
+    // The week of every model; a per-model limit is a line of its own (review F16).
+    if ((limit === "seven_day" || limit === "seven_day_overage_included") && !weekly) weekly = one;
+    if (isModelLimit(limit)) models[limit] = one;
   }
-  return { session, weekly, status: i.status, limit, resetsAt: num(i.resetsAt), grace: i.rateLimitGraceActive === true, at: now };
+  return { session, weekly, models, status: i.status, limit, resetsAt: num(i.resetsAt), grace: i.rateLimitGraceActive === true, at: now };
 }
 
 /**
@@ -93,7 +108,7 @@ export function usageOf(info: unknown, now = Date.now()): Usage | null {
  */
 export function mergeUsage(prev: Usage | null, next: Usage): Usage {
   if (!prev) return next;
-  return { ...next, session: next.session ?? prev.session, weekly: next.weekly ?? prev.weekly };
+  return { ...next, session: next.session ?? prev.session, weekly: next.weekly ?? prev.weekly, models: { ...prev.models, ...next.models } };
 }
 
 /** Past `resetsAt` (seconds), at `now` (ms): what was read before it no longer holds. */
@@ -113,6 +128,11 @@ export function limitHit(u: Usage, now = Date.now()): boolean {
   return (u.status === "rejected" || u.grace) && !past(u.resetsAt, now);
 }
 
+/** A limit hit that turns the icon red: the session's or the week's, never a per-model one (review F16). */
+export function iconHit(u: Usage, now = Date.now()): boolean {
+  return limitHit(u, now) && !isModelLimit(u.limit);
+}
+
 /**
  * How the icon shows: no reading, fine, amber from 70 %, red from 90 % or
  * when a limit is hit. A window past its reset counts for nothing; with
@@ -120,7 +140,7 @@ export function limitHit(u: Usage, now = Date.now()): boolean {
  */
 export function usageLevel(u: Usage | null, now = Date.now()): "none" | "ok" | "amber" | "red" {
   if (!u) return "none";
-  if (limitHit(u, now)) return "red";
+  if (iconHit(u, now)) return "red";
   const live = [u.session, u.weekly].filter((w): w is UsageWindow => !!w && !expired(w, now));
   if (!live.length) return "none";
   const top = Math.max(...live.map((w) => w.used));
@@ -132,7 +152,7 @@ export function usageLevel(u: Usage | null, now = Date.now()): "none" | "ok" | "
 /** When the reading next shows differently by itself (ms): the first reset still ahead, or null. */
 export function nextReset(u: Usage | null, now = Date.now()): number | null {
   if (!u) return null;
-  const at = [u.session?.resetsAt, u.weekly?.resetsAt, limitHit(u, now) ? u.resetsAt : null]
+  const at = [u.session?.resetsAt, u.weekly?.resetsAt, iconHit(u, now) ? u.resetsAt : null]
     .filter((x): x is number => typeof x === "number" && x * 1000 > now)
     .map((x) => x * 1000);
   return at.length ? Math.min(...at) : null;

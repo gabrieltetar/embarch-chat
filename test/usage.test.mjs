@@ -14,7 +14,7 @@ const W = (u, at = 1900000000) => ({ utilization: u, resetsAt: at });
 
 test("both windows come from unifiedWindows, with their reset times", () => {
   const u = core.usageOf({ status: "allowed", resetsAt: 1900000000, rateLimitType: "five_hour", unifiedWindows: { five_hour: W(0.42, 1900001000), seven_day: W(0.61, 1900500000) } }, 7);
-  assert.deepEqual(u, { session: { used: 0.42, resetsAt: 1900001000, at: 7 }, weekly: { used: 0.61, resetsAt: 1900500000, at: 7 }, status: "allowed", limit: "five_hour", resetsAt: 1900000000, grace: false, at: 7 });
+  assert.deepEqual(u, { session: { used: 0.42, resetsAt: 1900001000, at: 7 }, weekly: { used: 0.61, resetsAt: 1900500000, at: 7 }, models: {}, status: "allowed", limit: "five_hour", resetsAt: 1900000000, grace: false, at: 7 });
 });
 
 test("without the windows, the one limit the event names still gives its own share; nothing else is made up", () => {
@@ -89,4 +89,25 @@ test("a window's reading expires at its reset: past it the window counts as rese
   assert.equal(core.nextReset(u, ms(T)), ms(T + 86400));
   assert.equal(core.nextReset(u, ms(T + 86400)), null);
   assert.equal(core.nextReset(null), null);
+});
+
+test("a per-model weekly limit is never the Weekly window and never colours the icon: a line of its own on the card (review F16)", () => {
+  const T = 1_900_000_000;
+  const now = (T - 3600) * 1000;
+  const opus = core.usageOf({ status: "allowed_warning", rateLimitType: "seven_day_opus", utilization: 0.95, resetsAt: T, unifiedWindows: { five_hour: W(0.2, T), seven_day: W(0.3, T + 86400) } }, 5);
+  assert.deepEqual([opus.weekly.used, opus.models.seven_day_opus], [0.3, { used: 0.95, resetsAt: T, at: 5 }], "the week stays the week");
+  assert.equal(core.usageLevel(opus, now), "ok", "95 % of Opus lights nothing");
+  const alone = core.usageOf({ status: "allowed_warning", rateLimitType: "seven_day_sonnet", utilization: 0.92, resetsAt: T });
+  assert.deepEqual([alone.weekly, alone.models.seven_day_sonnet.used], [null, 0.92], "without the windows it is still no Weekly");
+  assert.equal(core.usageLevel(alone, now), "none");
+  const hit = core.usageOf({ status: "rejected", rateLimitType: "seven_day_opus", resetsAt: T, unifiedWindows: { five_hour: W(0.2, T), seven_day: W(0.3, T + 86400) } });
+  assert.equal(core.limitHit(hit, now), true, "the card still says it");
+  assert.equal(core.iconHit(hit, now), false);
+  assert.equal(core.usageLevel(hit, now), "ok", "the icon does not go red for it");
+  assert.equal(core.isModelLimit("seven_day"), false);
+  // Kept per model, like the windows.
+  const s = new core.UsageStore();
+  s.take({ status: "allowed_warning", rateLimitType: "seven_day_opus", utilization: 0.8, resetsAt: T });
+  s.take({ status: "allowed", unifiedWindows: { five_hour: W(0.1, T), seven_day: W(0.2, T) } });
+  assert.equal(s.current.models.seven_day_opus.used, 0.8);
 });
