@@ -46,8 +46,10 @@ const KINDS = { dark: { vars: THEME, body: "vscode-dark" }, light: { vars: THEME
 // click handler for webview pages (fixtures/vscode-webview-click.js), which
 // records in `__vscode` what it would hand the workbench to open. `?title=`
 // sets the title.
-const PAGE_PORT = 4989;
-const WD_PORT = 4988;
+// The tests' scratch range (scratch-desk.mjs): EMBARCH_CHAT_TEST_PORT_BASE moves it.
+const PORT_BASE = Number(process.env.EMBARCH_CHAT_TEST_PORT_BASE) || 4980;
+const PAGE_PORT = PORT_BASE + 9;
+const WD_PORT = PORT_BASE + 8;
 const origin = `http://127.0.0.1:${PAGE_PORT}`;
 const VSCODE_CLICK = fs.readFileSync(path.join(here, "fixtures", "vscode-webview-click.js"), "utf8");
 function page(bundle, title, kind = KINDS.dark) {

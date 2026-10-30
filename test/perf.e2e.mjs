@@ -29,8 +29,10 @@ const SCALE = Number(process.argv[3] ?? 1);
 const REPLY = Number(process.argv[4] ?? 1);
 const ROOTS = [path.dirname(here), ...process.argv.slice(5).map((p) => path.resolve(p))];
 
-const PAGE_PORT = 4989;
-const WD_PORT = 4988;
+// The tests' scratch range (scratch-desk.mjs): EMBARCH_CHAT_TEST_PORT_BASE moves it.
+const PORT_BASE = Number(process.env.EMBARCH_CHAT_TEST_PORT_BASE) || 4980;
+const PAGE_PORT = PORT_BASE + 9;
+const WD_PORT = PORT_BASE + 8;
 const origin = `http://127.0.0.1:${PAGE_PORT}`;
 const THEME = ":root{--vscode-font-family:sans-serif;--vscode-font-size:13px;--vscode-editor-font-family:monospace;--vscode-foreground:#ccc;--vscode-sideBar-background:#1f1f1f}";
 /** Checkout k's page, at /k/chat.html, its bundle beside it. */

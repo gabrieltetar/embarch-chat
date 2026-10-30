@@ -13,6 +13,7 @@ import * as http from "node:http";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { PORT_BASE } from "./scratch-desk.mjs";
 
 const require = createRequire(import.meta.url);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -27,8 +28,8 @@ Module._load = function (request, ...rest) {
 };
 
 const FAKE = path.join(here, "fake-claude.mjs");
-const HOSTILE_PORT = 4986;
-const NOBODY_PORT = 4987;
+const HOSTILE_PORT = PORT_BASE + 6;
+const NOBODY_PORT = PORT_BASE + 7;
 let dir, srv, ext, context, chat;
 const seen = [];
 

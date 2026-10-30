@@ -10,13 +10,13 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as http from "node:http";
-import { ScratchDesk, haveDesk, haveOldDesk, OLD_BIN } from "./scratch-desk.mjs";
+import { PORT_BASE, ScratchDesk, haveDesk, haveOldDesk, OLD_BIN } from "./scratch-desk.mjs";
 
 const require = createRequire(import.meta.url);
 const core = require("../test-out/core.js");
 
-const PORT = 4980;
-const PROBE_PORT = 4981;
+const PORT = PORT_BASE;
+const PROBE_PORT = PORT_BASE + 1;
 let desk = null;
 let dir = null;
 let client = null;

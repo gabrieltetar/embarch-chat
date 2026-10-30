@@ -14,7 +14,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ScratchDesk, haveDesk } from "./scratch-desk.mjs";
+import { PORT_BASE, ScratchDesk, haveDesk } from "./scratch-desk.mjs";
 import { INDEX, VAGUE } from "./refs-index.mjs";
 
 const require = createRequire(import.meta.url);
@@ -29,7 +29,7 @@ Module._load = function (request, ...rest) {
   return request === "vscode" ? mock.vscode : load.call(this, request, ...rest);
 };
 
-const PORT = 4982;
+const PORT = PORT_BASE + 2;
 const FAKE = path.join(here, "fake-claude.mjs");
 let dir, desk, ext, client, folder, context;
 const core = require("../test-out/core.js");

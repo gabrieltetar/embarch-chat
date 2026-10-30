@@ -12,7 +12,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ScratchDesk, haveDesk } from "./scratch-desk.mjs";
+import { PORT_BASE, ScratchDesk, haveDesk } from "./scratch-desk.mjs";
 
 const require = createRequire(import.meta.url);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -73,7 +73,7 @@ before(async () => {
   fs.mkdirSync(path.join(dir, "work"));
   folder = fs.realpathSync(path.join(dir, "work"));
   const claude = path.join(dir, "claude");
-  desk = await new ScratchDesk(path.join(dir, "desk"), 4984, claude).start();
+  desk = await new ScratchDesk(path.join(dir, "desk"), PORT_BASE + 4, claude).start();
   ({ id: item } = await desk.client.call("POST", "/items", { title: "ABC-123 seeded item", desk: "none" }));
   // A terminal session on the item, with two seconds of time on today's tile.
   const hook = (name, extra = {}) => desk.client.call("POST", "/hook", { hook_event_name: name, session_id: S, cwd: folder, ...extra });

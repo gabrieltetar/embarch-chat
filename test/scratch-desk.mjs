@@ -1,11 +1,12 @@
 // A scratch embarch-desk for the tests (never the live one on :4891): a
 // binary built from ../embarch-desk (EMBARCH_DESK_BIN), its own data and
-// config folders, and a port from the tests' scratch range, 4980–4989:
+// config folders, and a port from the tests' scratch range, 4980–4989 —
+// or the ten from EMBARCH_CHAT_TEST_PORT_BASE, when other work holds those:
 //
-//   desk.test 4980–4981 · host.test 4982–4983 · resume.test 4984–4985
-//   settings.test 4986–4987 · webview.e2e 4988–4989
+//   desk.test +0–1 · host.test +2–3 · resume.test +4–5
+//   settings.test +6–7 · webview.e2e and perf.e2e +8–9
 //
-// (desk.test's older desk, EMBARCH_DESK_OLD_BIN, takes 4981 for its one test.)
+// (desk.test's older desk, EMBARCH_DESK_OLD_BIN, takes +1 for its one test.)
 //
 // A `start` mailbox entry is written only by Start work, server-side (the
 // desk refuses one posted to /mailbox), and Start work needs Linear and a
@@ -23,6 +24,8 @@ const core = require("../test-out/core.js");
 const FAKE = path.join(path.dirname(fileURLToPath(import.meta.url)), "fake-claude.mjs");
 
 export const BIN = process.env.EMBARCH_DESK_BIN;
+/** The first of the tests' ten scratch ports. */
+export const PORT_BASE = Number(process.env.EMBARCH_CHAT_TEST_PORT_BASE) || 4980;
 export const haveDesk = !!BIN && fs.existsSync(BIN);
 /** Optional: a desk older than the chat panel's side (e.g. built from 80368bf), for the "update embarch-desk" notice. */
 export const OLD_BIN = process.env.EMBARCH_DESK_OLD_BIN;
