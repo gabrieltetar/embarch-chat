@@ -136,22 +136,69 @@ function Working({ view }: { view: PromptuView }) {
 }
 
 type Fill = PrepOut["filled"][number];
+/** A pre-filled answer as the dialog holds it: the labels picked and any free text. */
+type Edit = { picked: string[]; other: string };
+
+/** What the fill holds now, as the CLI last said. */
+const currentOf = (f: Fill): Edit => ({ picked: f.picked ?? [], other: f.other ?? "" });
+
+/** What the source gave, in the question's labels (contract §7.8 `original`); an unchanged fill's own, else unknown. */
+function originalOf(f: Fill): Edit | null {
+  if (f.original) return { picked: f.original.picked ?? [], other: f.original.other ?? "" };
+  return f.changed ? null : currentOf(f);
+}
+
+/** Two answers the same, as the CLI compares them: the same labels in any order, the same free text. */
+export function sameAnswer(a: Edit, b: Edit): boolean {
+  return a.other.trim() === b.other.trim() && a.picked.length === b.picked.length && a.picked.every((x) => b.picked.includes(x));
+}
+
+/**
+ * Where a pre-filled answer stands (P13, review F13). `same`: as the source
+ * gave it, or put back — no change, no `!`, as the CLI counts it.
+ * `changed`: the owner's own, an answer to its id; an emptied multi-select
+ * is one, `[]`, nothing taken. `empty`: a single-select emptied — refused,
+ * it sends nothing and the fill stays as it was until one is picked or typed.
+ */
+export function fillState(f: Fill, edit: Edit | null): "same" | "changed" | "empty" {
+  if (!edit) return f.changed ? "changed" : "same";
+  if (f.ask && !f.ask.multiSelect && !edit.picked.length && !edit.other.trim()) return "empty";
+  const o = originalOf(f);
+  return o && sameAnswer(edit, o) ? "same" : "changed";
+}
+
+/** The labels and text of an answer as one line. */
+const shownOf = (e: Edit) => [...e.picked.map(plain), ...(e.other.trim() ? [e.other.trim()] : [])].join(", ");
 
 /**
  * One pre-filled answer (P13): what the source gave, and — for one a page
  * does not ask — Change, which opens its options in place; a change is an
- * answer to its id, and the footer marks it `!`.
+ * answer to its id, and the footer marks it `!`. Revert, on a changed one,
+ * puts back what the source gave (review F13).
  */
-function FillRow({ f, edit, open, onOpen, onEdit }: { f: Fill; edit: { picked: string[]; other: string } | null; open: boolean; onOpen: () => void; onEdit: (e: { picked: string[]; other: string }) => void }) {
+function FillRow({ f, edit, open, onOpen, onEdit, onRevert }: { f: Fill; edit: Edit | null; open: boolean; onOpen: () => void; onEdit: (e: Edit) => void; onRevert: () => void }) {
   const q = f.ask;
-  const cur = edit ?? { picked: f.picked ?? [], other: f.other ?? "" };
-  const shown = edit ? [...cur.picked.map(plain), ...(cur.other.trim() ? [cur.other.trim()] : [])].join(", ") || "nothing" : f.picked?.length || f.other ? [...(f.picked ?? []).map(plain), ...(f.other ? [f.other] : [])].join(", ") : what(f.value);
-  const changed = !!edit || !!f.changed;
+  const cur = edit ?? currentOf(f);
+  const state = fillState(f, edit);
+  // An emptied single-select shows what stands: it is refused, nothing goes.
+  const shown = edit && state !== "empty" ? shownOf(edit) || "nothing" : f.picked?.length || f.other ? shownOf(currentOf(f)) : what(f.value);
+  const canRevert = state === "changed" && (!f.changed || !!originalOf(f));
   const pick = (label: string) => onEdit({ picked: q?.multiSelect ? (cur.picked.includes(label) ? cur.picked.filter((x) => x !== label) : [...cur.picked, label]) : [label], other: q?.multiSelect ? cur.other : "" });
   return (
-    <div class={`promptu-fill ${changed ? "changed" : ""}`} title={f.evidence ?? undefined}>
+    <div class={`promptu-fill ${state}`} title={f.evidence ?? undefined}>
       <span class="q-head">{f.header || f.q}</span> {shown}{" "}
-      <span class="muted">— {changed ? "changed by you" : `from ${SOURCE[f.source] ?? f.source}`}</span>
+      {state === "empty" ? (
+        <span class="fill-hint" role="status">
+          — needs an answer: pick one or type it; empty, it stays as it was
+        </span>
+      ) : (
+        <span class="muted">— {state === "changed" ? "changed by you" : `from ${SOURCE[f.source] ?? f.source}`}</span>
+      )}
+      {canRevert && (
+        <button class="link-button revert" title={`Put back what ${SOURCE[f.source] ?? f.source} gave`} onClick={onRevert}>
+          Revert
+        </button>
+      )}
       {q && (
         <button class="link-button" aria-expanded={open} onClick={onOpen}>
           {open ? "Done" : "Change"}
@@ -191,8 +238,8 @@ function Page({ view, step, page, choose }: { view: PromptuView; step: PrepOut; 
   const [other, setOther] = useState<string[]>(() => qs.map(() => ""));
   /** The questions the owner touched on this page: what Esc keeps of it. */
   const [touched, setTouched] = useState<boolean[]>(() => qs.map(() => false));
-  /** Pre-filled answers the owner changed in place (P13): each goes as an answer to its id, `!` in the footer. */
-  const [edits, setEdits] = useState<Record<string, { picked: string[]; other: string }>>({});
+  /** Pre-filled answers the owner changed in place (P13): each goes as an answer to its id, `!` in the footer unless it is the source's again. */
+  const [edits, setEdits] = useState<Record<string, Edit>>({});
   /** The pre-filled answer open for a change. */
   const [editing, setEditing] = useState<string | null>(null);
   const box = useRef<HTMLDivElement>(null);
@@ -216,10 +263,12 @@ function Page({ view, step, page, choose }: { view: PromptuView; step: PrepOut; 
       return only(0) && typeof a === "string" ? { pattern: plain(a) } : {};
     }
     const out: Record<string, Answer> = {};
-    // A pre-filled answer the owner changed goes too, whatever ends the page: he gave it.
+    // A pre-filled answer the owner changed goes too, whatever ends the page: he gave it. One put back
+    // goes as the source's own, which undoes a change an earlier page sent; an emptied multi-select goes
+    // as `[]`; an emptied single-select has no answer, so nothing goes (review F13).
     for (const f of step.filled ?? []) {
       const e = edits[f.q];
-      const a = e && f.ask ? answerOf(f.ask, e.picked, e.other) : null;
+      const a = e && f.ask && fillState(f, e) !== "empty" ? answerOf(f.ask, e.picked, e.other) : null;
       if (a !== null) out[f.q] = a;
     }
     page.ids.forEach((id, i) => {
@@ -236,6 +285,8 @@ function Page({ view, step, page, choose }: { view: PromptuView; step: PrepOut; 
   const how = p ? (p.start_default ? "Start work's default" : p.picked_by === "model" ? `picked from your prompt${p.confidence !== null ? ` (${Math.round(p.confidence * 100)}%)` : ""}` : p.picked_by === "regex" ? "picked by keywords" : p.picked_by === "owner" ? "your pick" : "as asked") : "no pattern yet";
   const filled = step.filled ?? [];
   const defaults = step.defaults ?? [];
+  /** The pre-filled answers that differ from their source's now, as the footer will mark them. */
+  const changedCount = filled.filter((f) => fillState(f, edits[f.q] ?? null) === "changed").length;
   return (
     <Backdrop box={box}>
       <div
@@ -282,7 +333,7 @@ function Page({ view, step, page, choose }: { view: PromptuView; step: PrepOut; 
           <details class="promptu-filled">
             <summary>
               Already answered ({filled.length}){defaults.length ? ` · defaults (${defaults.length})` : ""}
-              {Object.keys(edits).length ? ` · ${Object.keys(edits).length} changed` : ""}
+              {changedCount ? ` · ${changedCount} changed` : ""}
             </summary>
             {filled.map((f) => (
               <FillRow
@@ -292,6 +343,15 @@ function Page({ view, step, page, choose }: { view: PromptuView; step: PrepOut; 
                 open={editing === f.q}
                 onOpen={() => setEditing(editing === f.q ? null : f.q)}
                 onEdit={(e) => setEdits((all) => ({ ...all, [f.q]: e }))}
+                onRevert={() =>
+                  setEdits((all) => {
+                    const o = originalOf(f);
+                    // Changed on an earlier page: the source's own goes, to undo it; else there is nothing to send.
+                    if (f.changed && o) return { ...all, [f.q]: o };
+                    const { [f.q]: _gone, ...rest } = all;
+                    return rest;
+                  })
+                }
               />
             ))}
             {defaults.map((d) => (

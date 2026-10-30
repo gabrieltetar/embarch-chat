@@ -2529,6 +2529,10 @@ body.in-editor .rail-col {
 .promptu-fill.changed > .muted {
   color: var(--accent);
 }
+/* A single-select emptied: refused, the fill stays as it was (review F13). */
+.promptu-fill .fill-hint {
+  color: var(--waiting);
+}
 .promptu-fill .link-button {
   margin-left: 6px;
   padding: 0 4px;

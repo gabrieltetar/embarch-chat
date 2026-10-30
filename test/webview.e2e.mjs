@@ -3801,6 +3801,76 @@ await check("a pre-filled answer changes in place: Change opens its options, the
   }
 });
 
+await check("a pre-filled answer can be put back: the source's own picked again is no change, Revert puts it back, an emptied multi-select goes as [] and shows changed, an emptied single-select is refused with a hint (review F13)", async () => {
+  try {
+    const sid = await fresh();
+    const REC_READ = "The issue and its PR (Recommended)";
+    const READ = { question: "What should Claude read first?", header: "Read first", multiSelect: false, options: [{ label: REC_READ, description: "Every comment." }, { label: "Only the issue", description: "Not the PR." }] };
+    const RULES_OPTS = ["Use another checkout (Recommended)", "Only I open PRs (Recommended)"];
+    const RULES = { question: "Which house rules apply?", header: "House rules", multiSelect: true, options: RULES_OPTS.map((label) => ({ label, description: "A rule." })) };
+    const read = { q: "read", header: "Read first", value: "The issue and its PR", source: "desk", evidence: "read the issue and its PR", ask: READ, picked: [REC_READ], other: null, changed: false, original: { picked: [REC_READ], other: null } };
+    const rules = { q: "rules", header: "House rules", value: ["Use another checkout", "Only I open PRs"], source: "prompt", evidence: "another checkout, only I open PRs", ask: RULES, picked: RULES_OPTS, other: null, changed: false, original: { picked: RULES_OPTS, other: null } };
+    const row = async (q) => (await text(".promptu-fill"))[q === "read" ? 0 : 1];
+    const summary = async () => (await text(".promptu-filled summary"))[0];
+    const pickIn = (n, label) => exec("[...document.querySelectorAll('.promptu-fill')[arguments[0]].querySelectorAll('.fill-edit .opt')].find((o) => o.textContent.includes(arguments[1])).querySelector('input').click()", [n, label]).then(settle);
+    const otherIn = (n, v) => exec("const t=document.querySelectorAll('.promptu-fill')[arguments[0]].querySelector('.fill-edit textarea.other'); t.value=arguments[1]; t.dispatchEvent(new Event('input', {bubbles:true}))", [n, v]).then(settle);
+    await send([PSTATE(), pView(sid, 41, {}, { filled: [read, rules] })]);
+    await click(".promptu-filled summary");
+    await click(".promptu-fill .link-button", "Change");
+    await settle();
+    // Changed, then the source's own picked again: no change, as the CLI counts it.
+    await pickIn(0, "Only the issue");
+    assert.match(await row("read"), /Only the issue\s*— changed by you/);
+    assert.ok((await summary()).includes("1 changed"));
+    await pickIn(0, "The issue and its PR");
+    assert.match(await row("read"), /The issue and its PR\s*— from the work item/);
+    assert.ok(!(await summary()).includes("changed"), "dropped from the count");
+    assert.deepEqual(await text(".promptu-fill .revert"), [], "nothing to revert");
+    // Revert, on a changed row, puts the source's own back.
+    await pickIn(0, "Only the issue");
+    await click(".promptu-fill .revert", "Revert");
+    await settle();
+    assert.match(await row("read"), /The issue and its PR\s*— from the work item/);
+    assert.ok(!(await summary()).includes("changed"));
+    // An emptied multi-select is an answer of its own: nothing taken, shown as changed.
+    await click(".promptu-fill:nth-of-type(2) .link-button", "Change");
+    await settle();
+    await pickIn(1, "Use another checkout");
+    await pickIn(1, "Only I open PRs");
+    assert.match(await row("rules"), /House rules\s*nothing\s*— changed by you/);
+    assert.ok((await summary()).includes("1 changed"));
+    // An emptied single-select is refused: a hint, never "changed by you", and it sends nothing.
+    await click(".promptu-fill:nth-of-type(1) .link-button", "Change");
+    await settle();
+    await otherIn(0, "only the PR");
+    assert.match(await row("read"), /only the PR\s*— changed by you/);
+    await otherIn(0, "");
+    assert.match(await row("read"), /The issue and its PR\s*— needs an answer/);
+    assert.ok(!(await row("read")).includes("changed by you"));
+    assert.ok((await summary()).includes("1 changed"), "the multi-select only");
+    await shot("promptu-fill-revert");
+    await exec("const t=document.querySelectorAll('.dialog.promptu > .q textarea.other')[1]; t.value='so units recover'; t.dispatchEvent(new Event('input', {bubbles:true}))");
+    await settle();
+    await clearPosts();
+    await click(".dialog.promptu .dialog-buttons button.primary");
+    assert.deepEqual(await promptuPosts(), [{ t: "promptu", op: "answer", seq: 41, input: { answers: { rules: [], done: "Build and tests pass (Recommended)", goal: { other: "so units recover" } } } }]);
+    // Changed on an earlier page: Revert sends the source's own, which undoes it.
+    await send([pView(sid, 42, {}, { filled: [{ ...read, picked: ["Only the issue"], changed: true }] })]);
+    await click(".promptu-filled summary");
+    await settle();
+    assert.match(await row("read"), /Only the issue\s*— changed by you\s*Revert/);
+    await click(".promptu-fill .revert", "Revert");
+    await settle();
+    assert.match(await row("read"), /The issue and its PR\s*— from the work item/);
+    await clearPosts();
+    await exec("document.querySelector('.dialog.promptu').focus()");
+    await keys(ESC_KEY);
+    assert.deepEqual(await promptuPosts(), [{ t: "promptu", op: "finish", seq: 42, rest: "assume", input: { answers: { read: REC_READ } } }]);
+  } finally {
+    await send([PROMPTU_OFF]);
+  }
+});
+
 await check("the prompt lands in the draft, not sent; Ctrl+Z puts the owner's back; this task start had its pass, so the next Enter sends (96)", async () => {
   try {
     const sid = await fresh();
