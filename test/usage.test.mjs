@@ -14,7 +14,7 @@ const W = (u, at = 1900000000) => ({ utilization: u, resetsAt: at });
 
 test("both windows come from unifiedWindows, with their reset times", () => {
   const u = core.usageOf({ status: "allowed", resetsAt: 1900000000, rateLimitType: "five_hour", unifiedWindows: { five_hour: W(0.42, 1900001000), seven_day: W(0.61, 1900500000) } }, 7);
-  assert.deepEqual(u, { session: { used: 0.42, resetsAt: 1900001000, at: 7 }, weekly: { used: 0.61, resetsAt: 1900500000, at: 7 }, status: "allowed", limit: "five_hour", grace: false, at: 7 });
+  assert.deepEqual(u, { session: { used: 0.42, resetsAt: 1900001000, at: 7 }, weekly: { used: 0.61, resetsAt: 1900500000, at: 7 }, status: "allowed", limit: "five_hour", resetsAt: 1900000000, grace: false, at: 7 });
 });
 
 test("without the windows, the one limit the event names still gives its own share; nothing else is made up", () => {
@@ -30,7 +30,7 @@ test("without the windows, the one limit the event names still gives its own sha
 });
 
 test("the icon: no reading, fine, amber from 70 %, red from 90 % or a limit hit", () => {
-  const at = (s, w, extra = {}) => core.usageLevel(core.usageOf({ status: "allowed", unifiedWindows: { five_hour: W(s), seven_day: W(w) }, ...extra }));
+  const at = (s, w, extra = {}) => core.usageLevel(core.usageOf({ status: "allowed", unifiedWindows: { five_hour: W(s), seven_day: W(w) }, ...extra }), 1_800_000_000_000);
   assert.equal(core.usageLevel(null), "none");
   assert.equal(at(0.2, 0.69), "ok");
   assert.equal(at(0.7, 0.1), "amber", "either window");
@@ -64,4 +64,29 @@ test("each window is kept as last heard, with its own age: an event without unif
   s.take({ status: "allowed" });
   assert.deepEqual([s.current.session.used, s.current.weekly.used, s.current.status], [0.74, 0.5, "allowed"]);
   assert.deepEqual(core.mergeUsage(null, core.usageOf({ status: "allowed" }, 3)), core.usageOf({ status: "allowed" }, 3));
+});
+
+test("a window's reading expires at its reset: past it the window counts as reset, lights nothing, and with none left the icon is grey (review F14, P17)", () => {
+  const T = 1_900_000_000; // seconds
+  const ms = (sec) => sec * 1000;
+  const u = core.usageOf({ status: "allowed", unifiedWindows: { five_hour: W(0.95, T), seven_day: W(0.3, T + 86400) } });
+  assert.equal(core.usageLevel(u, ms(T) - 1), "red", "before the session's reset: 95 %");
+  assert.equal(core.expired(u.session, ms(T)), true);
+  assert.equal(core.expired(u.weekly, ms(T)), false);
+  assert.equal(core.usageLevel(u, ms(T)), "ok", "the session reset: the week's 30 % is what holds");
+  assert.equal(core.usageLevel(u, ms(T + 86400)), "none", "both reset: grey, as before a reading");
+  assert.equal(core.expired({ used: 0.9, resetsAt: null, at: 0 }, ms(T)), false, "no reset time: it holds");
+  // A limit hit holds until the limit it names resets.
+  const hit = core.usageOf({ status: "rejected", rateLimitType: "five_hour", resetsAt: T, unifiedWindows: { five_hour: W(1, T), seven_day: W(0.2, T + 86400) } });
+  assert.equal(core.limitHit(hit, ms(T) - 1), true);
+  assert.equal(core.usageLevel(hit, ms(T) - 1), "red");
+  assert.equal(core.limitHit(hit, ms(T)), false);
+  assert.equal(core.usageLevel(hit, ms(T)), "ok");
+  const grace = core.usageOf({ status: "allowed", rateLimitGraceActive: true, rateLimitType: "five_hour", resetsAt: T });
+  assert.equal(core.usageLevel(grace, ms(T) + 5), "none", "a turn finishing past a limit that has since reset");
+  // The page is drawn again at the first reset still ahead.
+  assert.equal(core.nextReset(u, ms(T) - 10), ms(T));
+  assert.equal(core.nextReset(u, ms(T)), ms(T + 86400));
+  assert.equal(core.nextReset(u, ms(T + 86400)), null);
+  assert.equal(core.nextReset(null), null);
 });

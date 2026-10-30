@@ -4007,7 +4007,7 @@ await check("the Usage icon: the plan's session and weekly share with their rese
   assert.equal(await level(), "none");
   assert.equal(await name(), "Usage — no reading yet");
   const now = Math.floor(Date.now() / 1000);
-  const reading = (s, w, extra = {}) => ({ t: "usage", usage: { session: { used: s, resetsAt: now + 3 * 3600 + 60, at: Date.now() }, weekly: { used: w, resetsAt: now + 50 * 3600, at: Date.now() - 12 * 60000 }, status: "allowed", limit: "five_hour", grace: false, at: Date.now(), ...extra } });
+  const reading = (s, w, extra = {}) => ({ t: "usage", usage: { session: { used: s, resetsAt: now + 3 * 3600 + 60, at: Date.now() }, weekly: { used: w, resetsAt: now + 50 * 3600, at: Date.now() - 12 * 60000 }, status: "allowed", limit: "five_hour", resetsAt: now + 3 * 3600 + 60, grace: false, at: Date.now(), ...extra } });
   await send([reading(0.42, 0.61)]);
   assert.equal(await level(), "ok");
   assert.equal(await name(), "Usage — session 42 %, weekly 61 %");
@@ -4024,12 +4024,31 @@ await check("the Usage icon: the plan's session and weekly share with their rese
   assert.equal(await level(), "amber", "70 % of either window");
   await send([reading(0.9, 0.2)]);
   assert.equal(await level(), "red", "90 %");
-  await send([reading(0.2, 0.2, { status: "rejected", limit: "seven_day" })]);
+  await send([reading(0.2, 0.2, { status: "rejected", limit: "seven_day", resetsAt: now + 50 * 3600 })]);
   assert.equal(await level(), "red", "a limit hit");
   await hover(".rail .rail-entry.usage");
   assert.ok((await text(".usage-card .warn"))[0].includes("You've hit your weekly limit"));
   await mouseAway();
   await sleep(500);
+  // A window past its reset counts as reset (review F14): the session's 95 % from before it lights nothing.
+  const win = (used, resetsAt, ago = 0) => ({ used, resetsAt, at: Date.now() - ago });
+  await send([{ t: "usage", usage: { session: win(0.95, now - 60, 3 * 3600e3), weekly: win(0.3, now + 50 * 3600), status: "allowed", limit: "five_hour", resetsAt: now - 60, grace: false, at: Date.now() } }]);
+  assert.equal(await level(), "ok", "the week's 30 % is what holds");
+  assert.equal(await name(), "Usage — session reset, weekly 30 %");
+  await hover(".rail .rail-entry.usage");
+  const rows = await text(".usage-card .usage-row");
+  assert.ok(/Session \(5 hours\)\s*reset/.test(rows[0]) && rows[0].includes("reset at") && rows[0].includes("next reply reports it again"), rows[0]);
+  assert.equal(await exec("return document.querySelector('.usage-card .usage-row').classList.contains('none')"), true, "grey");
+  assert.equal(await exec("return document.querySelector('.usage-bar > span').style.width"), "0%");
+  await mouseAway();
+  await sleep(500);
+  // At the reset the icon greys by itself; with no window left it is as before any reading (P17).
+  const soon = Math.floor(Date.now() / 1000) + 2;
+  await send([{ t: "usage", usage: { session: win(0.95, soon), weekly: win(0.2, soon), status: "allowed", limit: "five_hour", resetsAt: soon, grace: false, at: Date.now() } }]);
+  assert.equal(await level(), "red");
+  await sleep(3000);
+  assert.equal(await level(), "none", "past both resets: grey");
+  assert.equal(await name(), "Usage — session reset, weekly reset");
   await send([{ t: "usage", usage: null }]);
 });
 

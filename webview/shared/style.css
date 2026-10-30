@@ -2590,6 +2590,11 @@ body.in-editor .rail-col {
 .usage-row.red .usage-bar > span {
   background: var(--err);
 }
+/* A window past its reset, or not reported: grey (review F14). */
+.usage-row.none .usage-head b {
+  color: var(--muted);
+  font-weight: normal;
+}
 .usage-reset,
 .usage-note {
   font-size: 0.86em;

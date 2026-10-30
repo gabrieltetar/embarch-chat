@@ -35,6 +35,8 @@ export interface Usage {
   status: string;
   /** The limit the event names, when it names one (`five_hour`, `seven_day`, `seven_day_opus` …). */
   limit: string | null;
+  /** When that limit resets (seconds since the epoch), when said: a limit hit holds until then (review F14). */
+  resetsAt: number | null;
   /** The limit is reached and a turn under way is finishing past it. */
   grace: boolean;
   /** When this window heard the newest event (ms); each window keeps its own `at`. */
@@ -81,7 +83,7 @@ export function usageOf(info: unknown, now = Date.now()): Usage | null {
     if (limit === "five_hour" && !session) session = one;
     if (limit?.startsWith("seven_day") && !weekly) weekly = one;
   }
-  return { session, weekly, status: i.status, limit, grace: i.rateLimitGraceActive === true, at: now };
+  return { session, weekly, status: i.status, limit, resetsAt: num(i.resetsAt), grace: i.rateLimitGraceActive === true, at: now };
 }
 
 /**
@@ -94,12 +96,44 @@ export function mergeUsage(prev: Usage | null, next: Usage): Usage {
   return { ...next, session: next.session ?? prev.session, weekly: next.weekly ?? prev.weekly };
 }
 
-/** How the icon shows: no reading, fine, amber from 70 %, red from 90 % or when a limit is hit. */
-export function usageLevel(u: Usage | null): "none" | "ok" | "amber" | "red" {
+/** Past `resetsAt` (seconds), at `now` (ms): what was read before it no longer holds. */
+const past = (resetsAt: number | null, now: number) => resetsAt !== null && resetsAt * 1000 <= now;
+
+/**
+ * A window past its reset counts as reset (review F14): its reading no longer
+ * holds, so it shows as reset, grey, and lights nothing — as decision 67's
+ * banner expired at its reset.
+ */
+export function expired(w: UsageWindow | null, now = Date.now()): boolean {
+  return !!w && past(w.resetsAt, now);
+}
+
+/** The limit the event names is hit, or a turn finishes past it, and it has not reset since. */
+export function limitHit(u: Usage, now = Date.now()): boolean {
+  return (u.status === "rejected" || u.grace) && !past(u.resetsAt, now);
+}
+
+/**
+ * How the icon shows: no reading, fine, amber from 70 %, red from 90 % or
+ * when a limit is hit. A window past its reset counts for nothing; with
+ * none left, the icon is grey again, as before a reading (P17, review F14).
+ */
+export function usageLevel(u: Usage | null, now = Date.now()): "none" | "ok" | "amber" | "red" {
   if (!u) return "none";
-  if (u.status === "rejected" || u.grace) return "red";
-  const top = Math.max(u.session?.used ?? 0, u.weekly?.used ?? 0);
+  if (limitHit(u, now)) return "red";
+  const live = [u.session, u.weekly].filter((w): w is UsageWindow => !!w && !expired(w, now));
+  if (!live.length) return "none";
+  const top = Math.max(...live.map((w) => w.used));
   if (top >= USAGE_RED) return "red";
   if (top >= USAGE_AMBER) return "amber";
   return "ok";
+}
+
+/** When the reading next shows differently by itself (ms): the first reset still ahead, or null. */
+export function nextReset(u: Usage | null, now = Date.now()): number | null {
+  if (!u) return null;
+  const at = [u.session?.resetsAt, u.weekly?.resetsAt, limitHit(u, now) ? u.resetsAt : null]
+    .filter((x): x is number => typeof x === "number" && x * 1000 > now)
+    .map((x) => x * 1000);
+  return at.length ? Math.min(...at) : null;
 }

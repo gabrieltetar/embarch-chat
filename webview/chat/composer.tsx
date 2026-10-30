@@ -59,7 +59,7 @@ import type { MemoryOut } from "../../src/promptu/cli";
 import type { PromptuResult, PromptuView } from "../../src/promptu/runs";
 import type { PromptuState } from "../../src/promptu/service";
 import { hasFooter } from "../../src/promptu/text";
-import { MemoryPanel, PromptuCard, RailEntry, UsageCard, usageSummary } from "./rail";
+import { MemoryPanel, PromptuCard, RailEntry, UsageCard, usageSummary, useUsageNow } from "./rail";
 import type { Usage } from "../../src/usage";
 import { usageLevel } from "../../src/usage";
 
@@ -239,6 +239,8 @@ export function Composer(p: Props) {
   const [menu, setMenu] = useState<null | "bulb" | "library">(null);
   /** What the rail has open beside it: Promptu's card or the Memory menu (95, 98). */
   const [railPop, setRailPop] = useState<null | "promptu" | "memory" | "usage">(null);
+  /** The time the Usage icon shows its reading at: drawn again as a window resets (review F14). */
+  const usageNow = useUsageNow(p.usage);
   /** The keys opened it: it holds the focus, and the pointer leaving never closes it (review F10). */
   const [popByKey, setPopByKey] = useState(false);
   const memBtn = useRef<HTMLButtonElement>(null);
@@ -1283,9 +1285,9 @@ export function Composer(p: Props) {
               <RailEntry
                 icon="📊"
                 label="Usage"
-                cls={`usage ${usageLevel(p.usage)}`}
-                title={`Claude plan usage: ${usageSummary(p.usage)} — hover for its card`}
-                ariaLabel={`Usage — ${usageSummary(p.usage)}`}
+                cls={`usage ${usageLevel(p.usage, usageNow)}`}
+                title={`Claude plan usage: ${usageSummary(p.usage, usageNow)} — hover for its card`}
+                ariaLabel={`Usage — ${usageSummary(p.usage, usageNow)}`}
                 expanded={railPop === "usage"}
                 btnRef={usageBtn}
                 onClick={(byKey) => openHover("usage", byKey)}

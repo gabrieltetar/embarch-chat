@@ -6,11 +6,11 @@
 // the Memory menu (98).
 
 import type { ComponentChildren, Ref } from "preact";
-import { useEffect, useRef } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import type { MemoryEntry, MemoryOut, MemoryUse, PatternInfo } from "../../src/promptu/cli";
 import type { PromptuState } from "../../src/promptu/service";
 import type { Usage, UsageWindow } from "../../src/usage";
-import { LIMIT_NAMES, USAGE_AMBER, USAGE_RED, resetsIn, usageLevel } from "../../src/usage";
+import { LIMIT_NAMES, USAGE_AMBER, USAGE_RED, expired, limitHit, nextReset, resetsIn } from "../../src/usage";
 import { useNow } from "./clock";
 import { vscodeApi } from "../shared/vscode";
 
@@ -285,22 +285,44 @@ export function MemoryPanel({ mem, onRefresh, focusIn, onClose }: { mem: { loadi
 
 // ------------------------------------------------------------ the Usage card (99)
 
-const pct = (w: UsageWindow | null) => (w ? `${Math.round(w.used * 100)} %` : "not reported");
+const pct = (w: UsageWindow) => `${Math.round(w.used * 100)} %`;
+/** A window's share in a line: its percent, "reset" past its reset (review F14), or "not reported". */
+const share = (w: UsageWindow | null, now: number) => (!w ? "not reported" : expired(w, now) ? "reset" : pct(w));
 
 /** One line for the icon's name and hover: each window's share, or that there is no reading. */
-export function usageSummary(u: Usage | null): string {
+export function usageSummary(u: Usage | null, now = Date.now()): string {
   if (!u) return "no reading yet";
-  if (u.status === "rejected" || u.grace) return `${(u.limit && LIMIT_NAMES[u.limit]) || "usage limit"} reached`;
-  return `session ${pct(u.session)}, weekly ${pct(u.weekly)}`;
+  if (limitHit(u, now)) return `${(u.limit && LIMIT_NAMES[u.limit]) || "usage limit"} reached`;
+  return `session ${share(u.session, now)}, weekly ${share(u.weekly, now)}`;
+}
+
+/**
+ * The time a reading shows at, the page drawn again at each reset still
+ * ahead, so a window greys by itself when it resets (review F14).
+ */
+export function useUsageNow(u: Usage | null): number {
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const next = nextReset(u);
+    if (next === null) return;
+    // A timer's longest wait is about 24 days; a reset further off waits in steps.
+    const t = window.setTimeout(() => setTick((n) => n + 1), Math.min(Math.max(0, next - Date.now()) + 250, 2 ** 31 - 1));
+    return () => clearTimeout(t);
+  }, [u, tick]);
+  return Date.now();
+}
+
+/** A clock time, with the day when it is more than a day from now. */
+function clock(resetsAt: number, now: number): string {
+  const d = new Date(resetsAt * 1000);
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return Math.abs(resetsAt * 1000 - now) > 86_400_000 ? `${d.toLocaleDateString([], { weekday: "short" })} ${time}` : time;
 }
 
 /** When a window resets: in how long, and the clock time (with the day past a day). */
 function resetText(resetsAt: number | null, now: number): string {
   if (!resetsAt) return "reset time not reported";
-  const d = new Date(resetsAt * 1000);
-  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  const when = resetsAt * 1000 - now > 86_400_000 ? `${d.toLocaleDateString([], { weekday: "short" })} ${time}` : time;
-  return `resets ${resetsIn(resetsAt, now)} (${when})`;
+  return `resets ${resetsIn(resetsAt, now)} (${clock(resetsAt, now)})`;
 }
 
 /** How old a window's reading is: each keeps its own, as last heard (review F15). */
@@ -310,20 +332,22 @@ function heardAgo(at: number, now: number): string {
   return min < 60 ? `${min} min ago` : `${Math.floor(min / 60)} h ago`;
 }
 
+/** One window on the card; past its reset it shows as reset, grey, its bar empty (review F14). */
 function UsageRow({ name, w, now, heard }: { name: string; w: UsageWindow | null; now: number; heard: number }) {
-  const level = !w ? "none" : w.used >= USAGE_RED ? "red" : w.used >= USAGE_AMBER ? "amber" : "ok";
+  const gone = expired(w, now);
+  const level = !w || gone ? "none" : w.used >= USAGE_RED ? "red" : w.used >= USAGE_AMBER ? "amber" : "ok";
   return (
     <div class={`usage-row ${level}`}>
       <div class="usage-head">
         <span>{name}</span>
-        <b>{w ? `${pct(w)} used` : "not reported"}</b>
+        <b>{!w ? "not reported" : gone ? "reset" : `${pct(w)} used`}</b>
       </div>
       <div class="usage-bar" aria-hidden="true">
-        <span style={{ width: `${w ? Math.round(w.used * 100) : 0}%` }} />
+        <span style={{ width: `${w && !gone ? Math.round(w.used * 100) : 0}%` }} />
       </div>
       {w && (
         <div class="muted usage-reset">
-          {resetText(w.resetsAt, now)} · reported {heardAgo(w.at ?? heard, now)}
+          {gone ? `reset at ${clock(w.resetsAt!, now)}; a chat's next reply reports it again` : `${resetText(w.resetsAt, now)} · reported ${heardAgo(w.at ?? heard, now)}`}
         </div>
       )}
     </div>
@@ -346,7 +370,7 @@ export function UsageCard(p: { usage: Usage | null; focusIn: boolean; onClose: (
       {!u && <div class="muted">No reading yet: Claude Code reports it with a chat's reply, so it shows once a chat of this window has had one.</div>}
       {u && (
         <>
-          {usageLevel(u) === "red" && (u.status === "rejected" || u.grace) && (
+          {limitHit(u, now) && (
             <div class="warn">{u.grace ? "Limit reached — the turn under way is finishing." : `You've hit your ${(u.limit && LIMIT_NAMES[u.limit]) || "usage limit"}.`}</div>
           )}
           <UsageRow name="Session (5 hours)" w={u.session} now={now} heard={u.at} />
