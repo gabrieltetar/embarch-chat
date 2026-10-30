@@ -992,7 +992,7 @@ test("the account's usage rides an ordinary turn: the CLI's rate_limit_event, bo
   await waitFor(() => seen.length > 0);
   // Recorded, numbers neutral (sanitize.mjs): both windows, with their resets.
   const u = core.usageOf(seen[0], 1);
-  assert.deepEqual([u.session, u.weekly, u.status], [{ used: 0.5, resetsAt: 1900000000 }, { used: 0.5, resetsAt: 1900000000 }, "allowed"]);
+  assert.deepEqual([u.session, u.weekly, u.status], [{ used: 0.5, resetsAt: 1900000000, at: 1 }, { used: 0.5, resetsAt: 1900000000, at: 1 }, "allowed"]);
   assert.equal("rateLimit" in chat.state, false, "the banner's per-chat copy is gone");
   chat.dispose();
 });

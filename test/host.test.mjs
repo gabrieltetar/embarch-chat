@@ -1882,7 +1882,9 @@ test("the plan's usage reaches every page: a chat's rate_limit_event, both windo
   await startUntracked("effort");
   chatView.webview.fromPage({ t: "send", text: "hello" });
   const u = await waitFor(() => chatView.webview.posted.slice(before).find((m) => m.t === "usage" && m.usage), 8000, "the usage reading");
-  assert.deepEqual([u.usage.session, u.usage.weekly, u.usage.status], [{ used: 0.5, resetsAt: 1900000000 }, { used: 0.5, resetsAt: 1900000000 }, "allowed"]);
+  const w = (x) => x && { used: x.used, resetsAt: x.resetsAt };
+  assert.deepEqual([w(u.usage.session), w(u.usage.weekly), u.usage.status], [{ used: 0.5, resetsAt: 1900000000 }, { used: 0.5, resetsAt: 1900000000 }, "allowed"]);
+  assert.ok(u.usage.session.at > 0 && u.usage.session.at === u.usage.weekly.at, "each window heard when the event came (review F15)");
   // A page that comes later gets it at once.
   const late = new mock.FakeView();
   mock.state.providers.get("embarchChat.chat").provider.resolveWebviewView(late);
