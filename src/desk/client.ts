@@ -195,6 +195,17 @@ export class DeskClient {
     return this.call("GET", `/items/${encodeURIComponent(itemId)}/states`);
   }
 
+  /**
+   * The pull (embarch-desk decision 48): everything the desk holds about an
+   * item as one text, newest first — Promptu's `desk` source at a task start
+   * (decision 96). Read here, on the Node side: the token never reaches a
+   * page (20).
+   */
+  async brief(itemId: string): Promise<{ item_id: string; text: string }> {
+    const r = await this.call<{ item_id?: unknown; text?: unknown }>("GET", `/items/${encodeURIComponent(itemId)}/brief`);
+    return { item_id: typeof r?.item_id === "string" ? r.item_id : itemId, text: typeof r?.text === "string" ? r.text : "" };
+  }
+
   async mailbox(folder: string): Promise<MailboxEntry[]> {
     const r = await this.call<unknown>("GET", `/mailbox?folder=${encodeURIComponent(folder)}`);
     if (Array.isArray(r)) return r as MailboxEntry[];

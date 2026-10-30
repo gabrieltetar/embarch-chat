@@ -36,3 +36,7 @@ export * from "../webview/chat/time";
 export * from "../webview/chat/refs";
 export * from "../webview/chat/subjects";
 export * from "../webview/chat/refprose";
+export * from "./promptu/cli";
+export * from "./promptu/runs";
+export * from "./promptu/service";
+export * from "./promptu/text";
