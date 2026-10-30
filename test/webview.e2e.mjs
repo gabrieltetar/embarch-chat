@@ -3822,7 +3822,7 @@ await check("the 💡's handoff card opens the handoff pattern's dialog while Pr
   const handoff = { id: "h1", category: "context", kind: "handoff", title: "Hand off to a fresh chat", why: "The context is nearly full", edit: { op: "handoff" } };
   const draft = "now write the release notes for the whole quarter";
   try {
-    await fresh();
+    const hsid = await fresh();
     await send([PSTATE()]);
     await send([sent("x"), { t: "event", e: { type: "user", message: { role: "user", content: [{ type: "text", text: "x" }] }, parent_tool_use_id: null } }]);
     await setDraft(draft);
@@ -3838,6 +3838,18 @@ await check("the 💡's handoff card opens the handoff pattern's dialog while Pr
     await settle();
     assert.deepEqual(await promptuPosts(), [{ t: "promptu", op: "prep", text: draft, pattern: "handoff", origin: "handoff" }]);
     assert.equal(await value(), draft, "the draft waits for the dialog's prompt");
+    // Cancelled: the card is still there to try again (review F7).
+    await send([{ t: "promptuResult", result: { sid: hsid, seq: 1, origin: "handoff", rough: draft, cancelled: true } }]);
+    assert.equal((await text(".bulb .count"))[0], "1", "the card stays after a cancelled pass");
+    await clearPosts();
+    await click(".rail .bulb");
+    await settle();
+    await pick(".menu.bulb .menu-item", handoff.title);
+    await settle();
+    assert.equal((await promptuPosts("prep")).length, 1, "and runs again");
+    // A prompt lands: now it is used.
+    await send([{ t: "promptuResult", result: { sid: hsid, seq: 2, origin: "handoff", rough: draft, prompt: "## Goal\nnow the notes\n\n— promptu handoff@1 asked=reader:rec", pattern: "handoff" } }]);
+    assert.equal((await text(".bulb .count")).length, 0, "used once its prompt is in the draft");
     await mouseAway();
     // Off: the card's edit, as decision 36 has it.
     await fresh();

@@ -292,6 +292,8 @@ export function Composer(p: Props) {
     undo: [] as Undo[],
     /** Long pastes of this draft, newest last (56). */
     pastes: [] as string[],
+    /** The handoff card whose Promptu pass is out: used once its prompt lands (97). */
+    handoffCard: null as string | null,
   });
 
   const setText = (v: string) => {
@@ -378,6 +380,9 @@ export function Composer(p: Props) {
       delete landed[sid];
       setAsking(false);
       if (r.origin !== "handoff") passed[sid] = true;
+      const card = r.origin === "handoff" ? a.current.handoffCard : null;
+      if (r.origin === "handoff") a.current.handoffCard = null;
+      if (r.prompt && card) setUsed((u) => [...u, card]);
       if (r.prompt) {
         edit(r.prompt, { handoff: r.origin === "handoff" });
         // The handoff card's prompt still asks this chat for a handoff, so its turn offers the fresh chat (36).
@@ -619,8 +624,9 @@ export function Composer(p: Props) {
 
   const applyCard = (c: Card) => {
     // The handoff card opens the handoff pattern's questions (97): one implementation writes handoffs.
+    // It counts as used only once a prompt lands, so a pass cancelled or failed can be tried again (review F7).
     if (c.kind === "handoff" && promptuOn && textRef.current.trim()) {
-      setUsed((u) => [...u, c.id]);
+      a.current.handoffCard = c.id;
       setMenu(null);
       startPass(textRef.current.trim(), "handoff", "handoff");
       return;
