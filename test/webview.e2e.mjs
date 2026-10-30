@@ -3772,8 +3772,10 @@ await check("a failure is one line and the draft stays as typed, Enter then send
     await send([PSTATE()]);
     await type(ROUGH);
     await type(ENTER);
+    await exec("document.activeElement && document.activeElement.blur()");
     await send([{ t: "promptuResult", result: { sid, seq: 3, origin: "enter", rough: ROUGH, error: "promptu prep failed (exit 1): the pass broke" } }]);
     assert.equal(await value(), ROUGH);
+    assert.equal(await focused(), "TEXTAREA", "the draft has the focus again (review F5)");
     assert.ok((await text(".paste-notice"))[0].includes("the pass broke — your draft is as you typed it"));
     await clearPosts();
     await type(ENTER);
@@ -3805,6 +3807,7 @@ await check("a failure is one line and the draft stays as typed, Enter then send
     await send([{ t: "promptu", sid, view: null }, { t: "promptuResult", result: { sid, seq: 6, origin: "start", rough: "Work on ABC-123 — Make the widget blink", error: "promptu prep took over 40 s", fallback: starter } }]);
     assert.equal(await value(), starter);
     assert.ok((await text(".paste-notice"))[0].includes("the desk's starter is in the draft"));
+    assert.equal(await focused(), "TEXTAREA", "and the focus with it (review F5)");
   } finally {
     await send([PROMPTU_OFF]);
   }

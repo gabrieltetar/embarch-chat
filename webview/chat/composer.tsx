@@ -387,10 +387,9 @@ export function Composer(p: Props) {
         if (props.current.assistant) a.current.cardsTimer = window.setTimeout(() => askCards(r.prompt!), CARDS_MS);
         return;
       }
-      if (r.fallback && !textRef.current.trim()) {
-        setText(r.fallback);
-        focusAt(r.fallback.length);
-      }
+      if (r.fallback && !textRef.current.trim()) setText(r.fallback);
+      // Back to the draft, whatever became of the pass (review F5): the chat was inert while it ran.
+      window.setTimeout(() => focusAt(textRef.current.length));
       setNotice(
         r.cancelled
           ? r.fallback
