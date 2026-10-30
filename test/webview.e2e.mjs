@@ -3555,6 +3555,12 @@ const ctrlEnter = async () => {
   await settle();
 };
 const ESC_KEY = "";
+/** Shift+Tab, Shift held across the Tab. */
+const shiftTab = async () => {
+  await wd("POST", `${S}/actions`, { actions: [{ type: "key", id: "kb", actions: [{ type: "keyDown", value: "\uE008" }, { type: "keyDown", value: "\uE004" }, { type: "keyUp", value: "\uE004" }, { type: "keyUp", value: "\uE008" }] }] });
+  await wd("DELETE", `${S}/actions`);
+  await settle();
+};
 const promptuPosts = async (op) => (await posts()).filter((p) => p.t === "promptu" && (!op || p.op === op));
 
 await check("the rail: Memory, Promptu, the 📚 and the 💡 down the chat's left edge, folded to their icons until the pointer is on it, which shows their names over the timeline without moving it; the 💡 and 📚 left the input's bar (94)", async () => {
@@ -3730,8 +3736,11 @@ await check("the dialog is modal: aria-modal, Tab kept inside it, the chat behin
     // Tab from the last control comes back to the first, Shift+Tab from the first goes to the last.
     await exec("const b=[...document.querySelectorAll('.dialog.promptu button')]; b[b.length-1].focus()");
     await keys("\uE004");
-    const first = await exec("const f=document.activeElement; return f.tagName + ':' + (f.closest('.dialog.promptu') ? 'in' : 'out') + ':' + (f === document.querySelector('.dialog.promptu input') ? 'first' : 'other')");
-    assert.equal(first, "INPUT:in:first");
+    const first = await exec("const f=document.activeElement; return f.tagName + ':' + (f.closest('.dialog.promptu') ? 'in' : 'out') + ':' + (f === document.querySelector('.dialog.promptu summary') ? 'first' : 'other')");
+    assert.equal(first, "SUMMARY:in:first", "the \"Already answered\" fold's summary is the first stop");
+    // Shift+Tab from it goes round to the last control, never out of the dialog (review F12).
+    await shiftTab();
+    assert.equal(await exec("const b=[...document.querySelectorAll('.dialog.promptu button')]; return document.activeElement === b[b.length-1]"), true, "Shift+Tab from the summary: the last button");
     // A click on the backdrop: the focus stays in the dialog, Esc still ends it.
     const backdrop = Object.values(await wd("POST", `${S}/element`, { using: "css selector", value: ".promptu-back" }))[0];
     await wd("POST", `${S}/actions`, { actions: [{ type: "pointer", id: "mouse", parameters: { pointerType: "mouse" }, actions: [{ type: "pointerMove", duration: 0, origin: { "element-6066-11e4-a52e-4f735466cecf": backdrop }, x: -200, y: -400 }, { type: "pointerDown", button: 0 }, { type: "pointerUp", button: 0 }] }] });

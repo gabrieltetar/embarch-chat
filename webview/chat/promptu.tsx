@@ -49,8 +49,8 @@ function what(v: unknown): string {
   return String(v ?? "");
 }
 
-/** What Tab can reach in the dialog, in order. */
-const FOCUSABLE = "button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex='-1'])";
+/** What Tab can reach in the dialog, in order: the "Already answered" fold's summary too, its first stop (review F12). */
+const FOCUSABLE = "summary, button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex='-1'])";
 
 /**
  * Tab stays in the dialog (review F4): from its last control to its first,
