@@ -39,7 +39,12 @@ export interface PrepOut {
   offline: boolean;
   offline_reason: string | null;
   mode?: string;
-  filled: Array<{ q: string; header: string; value: unknown; source: string; entry?: string | null; evidence?: string | null }>;
+  /**
+   * What the sources answered. One a page does not ask carries its question
+   * (`ask`), what it holds now (`picked` labels, `other` text) and whether the
+   * owner changed it: the dialog edits it in place (the owner's P13).
+   */
+  filled: Array<{ q: string; header: string; value: unknown; source: string; entry?: string | null; evidence?: string | null; ask?: AskQuestion; picked?: string[]; other?: string | null; changed?: boolean }>;
   defaults: Array<{ q: string; header: string; value: unknown }>;
   choose: AskPage | null;
   pages: AskPage[];

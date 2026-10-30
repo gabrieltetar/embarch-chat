@@ -3765,6 +3765,52 @@ await check("the dialog is modal: aria-modal, Tab kept inside it, the chat behin
   }
 });
 
+await check("a pre-filled answer changes in place: Change opens its options, the pick goes as an answer to its id, and the fold says it changed (the owner's P13)", async () => {
+  try {
+    const sid = await fresh();
+    const READ = {
+      question: "What should Claude read first?",
+      header: "Read first",
+      multiSelect: false,
+      options: [
+        { label: "The issue and its PR (Recommended)", description: "Every comment." },
+        { label: "Only the issue", description: "Not the PR." },
+      ],
+    };
+    const filled = [{ q: "read", header: "Read first", value: "The issue and its PR", source: "desk", evidence: "read the issue and its PR", ask: READ, picked: ["The issue and its PR (Recommended)"], other: null, changed: false }];
+    await send([PSTATE(), pView(sid, 31, {}, { filled })]);
+    await click(".promptu-filled summary");
+    await settle();
+    assert.match((await text(".promptu-fill"))[0], /Read first\s*The issue and its PR\s*— from the work item\s*Change/);
+    await click(".promptu-fill .link-button", "Change");
+    await settle();
+    await exec("[...document.querySelectorAll('.fill-edit .opt')].find((o) => o.textContent.includes('Only the issue')).querySelector('input').click()");
+    await settle();
+    assert.match((await text(".promptu-fill"))[0], /Only the issue\s*— changed by you/);
+    assert.ok((await text(".promptu-filled summary"))[0].includes("1 changed"));
+    await shot("promptu-fill-edit");
+    // Goal needs its answer before Next; then the change goes with the page.
+    await exec("const t=document.querySelectorAll('.dialog.promptu > .q textarea.other')[1]; t.value='so units recover'; t.dispatchEvent(new Event('input', {bubbles:true}))");
+    await settle();
+    await clearPosts();
+    await click(".dialog.promptu .dialog-buttons button.primary");
+    assert.deepEqual(await promptuPosts(), [{ t: "promptu", op: "answer", seq: 31, input: { answers: { read: "Only the issue", done: "Build and tests pass (Recommended)", goal: { other: "so units recover" } } } }]);
+    // Esc keeps it too: the owner gave it.
+    await send([pView(sid, 32, {}, { filled })]);
+    await click(".promptu-filled summary");
+    await click(".promptu-fill .link-button", "Change");
+    await settle();
+    await exec("[...document.querySelectorAll('.fill-edit .opt')].find((o) => o.textContent.includes('Only the issue')).querySelector('input').click()");
+    await settle();
+    await clearPosts();
+    await exec("document.querySelector('.dialog.promptu').focus()");
+    await keys(ESC_KEY);
+    assert.deepEqual(await promptuPosts(), [{ t: "promptu", op: "finish", seq: 32, rest: "assume", input: { answers: { read: "Only the issue" } } }]);
+  } finally {
+    await send([PROMPTU_OFF]);
+  }
+});
+
 await check("the prompt lands in the draft, not sent; Ctrl+Z puts the owner's back; this task start had its pass, so the next Enter sends (96)", async () => {
   try {
     const sid = await fresh();

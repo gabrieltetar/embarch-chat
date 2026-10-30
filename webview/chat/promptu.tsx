@@ -135,12 +135,66 @@ function Working({ view }: { view: PromptuView }) {
   );
 }
 
+type Fill = PrepOut["filled"][number];
+
+/**
+ * One pre-filled answer (P13): what the source gave, and — for one a page
+ * does not ask — Change, which opens its options in place; a change is an
+ * answer to its id, and the footer marks it `!`.
+ */
+function FillRow({ f, edit, open, onOpen, onEdit }: { f: Fill; edit: { picked: string[]; other: string } | null; open: boolean; onOpen: () => void; onEdit: (e: { picked: string[]; other: string }) => void }) {
+  const q = f.ask;
+  const cur = edit ?? { picked: f.picked ?? [], other: f.other ?? "" };
+  const shown = edit ? [...cur.picked.map(plain), ...(cur.other.trim() ? [cur.other.trim()] : [])].join(", ") || "nothing" : f.picked?.length || f.other ? [...(f.picked ?? []).map(plain), ...(f.other ? [f.other] : [])].join(", ") : what(f.value);
+  const changed = !!edit || !!f.changed;
+  const pick = (label: string) => onEdit({ picked: q?.multiSelect ? (cur.picked.includes(label) ? cur.picked.filter((x) => x !== label) : [...cur.picked, label]) : [label], other: q?.multiSelect ? cur.other : "" });
+  return (
+    <div class={`promptu-fill ${changed ? "changed" : ""}`} title={f.evidence ?? undefined}>
+      <span class="q-head">{f.header || f.q}</span> {shown}{" "}
+      <span class="muted">— {changed ? "changed by you" : `from ${SOURCE[f.source] ?? f.source}`}</span>
+      {q && (
+        <button class="link-button" aria-expanded={open} onClick={onOpen}>
+          {open ? "Done" : "Change"}
+        </button>
+      )}
+      {q && open && (
+        <div class="q fill-edit">
+          <div class="q-text">{q.question}</div>
+          {q.options.map((o, n) => (
+            <label class={`opt ${cur.picked.includes(o.label) ? "sel" : ""}`} key={n}>
+              <input type={q.multiSelect ? "checkbox" : "radio"} name={`fill-${f.q}`} checked={cur.picked.includes(o.label)} onChange={() => pick(o.label)} />
+              <span>
+                <div>{o.label}</div>
+                {o.description && <div class="desc">{o.description}</div>}
+              </span>
+            </label>
+          ))}
+          <textarea
+            class="other"
+            rows={1}
+            placeholder="Other…"
+            value={cur.other}
+            onInput={(e) => {
+              const v = (e.target as HTMLTextAreaElement).value;
+              onEdit({ picked: !q.multiSelect && v.trim() ? [] : cur.picked, other: v });
+            }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Page({ view, step, page, choose }: { view: PromptuView; step: PrepOut; page: AskPage; choose: boolean }) {
   const qs = page.questions;
   const [picked, setPicked] = useState<string[][]>(() => qs.map(preselected));
   const [other, setOther] = useState<string[]>(() => qs.map(() => ""));
   /** The questions the owner touched on this page: what Esc keeps of it. */
   const [touched, setTouched] = useState<boolean[]>(() => qs.map(() => false));
+  /** Pre-filled answers the owner changed in place (P13): each goes as an answer to its id, `!` in the footer. */
+  const [edits, setEdits] = useState<Record<string, { picked: string[]; other: string }>>({});
+  /** The pre-filled answer open for a change. */
+  const [editing, setEditing] = useState<string | null>(null);
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
     // The option picked already — the first question's recommendation — else the first one (review F6).
@@ -162,6 +216,12 @@ function Page({ view, step, page, choose }: { view: PromptuView; step: PrepOut; 
       return only(0) && typeof a === "string" ? { pattern: plain(a) } : {};
     }
     const out: Record<string, Answer> = {};
+    // A pre-filled answer the owner changed goes too, whatever ends the page: he gave it.
+    for (const f of step.filled ?? []) {
+      const e = edits[f.q];
+      const a = e && f.ask ? answerOf(f.ask, e.picked, e.other) : null;
+      if (a !== null) out[f.q] = a;
+    }
     page.ids.forEach((id, i) => {
       const a = answers[i];
       if (a !== null && only(i)) out[id] = a;
@@ -222,11 +282,17 @@ function Page({ view, step, page, choose }: { view: PromptuView; step: PrepOut; 
           <details class="promptu-filled">
             <summary>
               Already answered ({filled.length}){defaults.length ? ` · defaults (${defaults.length})` : ""}
+              {Object.keys(edits).length ? ` · ${Object.keys(edits).length} changed` : ""}
             </summary>
             {filled.map((f) => (
-              <div key={`f:${f.q}`} class="promptu-fill" title={f.evidence ?? undefined}>
-                <span class="q-head">{f.header || f.q}</span> {what(f.value)} <span class="muted">— from {SOURCE[f.source] ?? f.source}</span>
-              </div>
+              <FillRow
+                key={`f:${f.q}`}
+                f={f}
+                edit={edits[f.q] ?? null}
+                open={editing === f.q}
+                onOpen={() => setEditing(editing === f.q ? null : f.q)}
+                onEdit={(e) => setEdits((all) => ({ ...all, [f.q]: e }))}
+              />
             ))}
             {defaults.map((d) => (
               <div key={`d:${d.q}`} class="promptu-fill">
