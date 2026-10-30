@@ -3566,6 +3566,11 @@ const promptuPosts = async (op) => (await posts()).filter((p) => p.t === "prompt
 await check("the rail: Memory, Promptu, the 📚 and the 💡 down the chat's left edge, folded to their icons until the pointer is on it, which shows their names over the timeline without moving it; the 💡 and 📚 left the input's bar (94)", async () => {
   await fresh();
   assert.deepEqual(await text(".rail .rail-entry .rail-label"), ["Usage", "Memory", "Promptu", "Library", "Suggestions"]);
+  // Usage alone at the top, the rest at the bottom by the input (the owner's P16).
+  const [col, use, mem, bulb] = await Promise.all([".rail-col", ".rail .rail-entry.usage", ".rail .rail-entry.memory", ".rail .rail-entry.bulb"].map((sel) => exec("const r=document.querySelector(arguments[0]).getBoundingClientRect(); return [Math.round(r.top), Math.round(r.bottom)]", [sel])));
+  assert.ok(use[0] - col[0] < 12, `Usage at the top: ${use} in ${col}`);
+  assert.ok(col[1] - bulb[1] < 12, `the 💡 at the bottom: ${bulb} in ${col}`);
+  assert.ok(mem[0] - use[1] > 100, `a gap between them: ${use} ${mem}`);
   assert.deepEqual(await exec("const r=document.querySelector('.rail'); return [r.getAttribute('role'), r.getAttribute('aria-label'), r.getAttribute('aria-orientation')]"), ["toolbar", "Chat tools", "vertical"], "named, a toolbar (review F9)");
   await exec("document.querySelector('.rail .rail-entry.memory').focus()");
   await keys("\uE015");

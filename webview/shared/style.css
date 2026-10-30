@@ -2238,7 +2238,8 @@ a.ref:hover {
 /* Memory, Promptu, the 📚 and the 💡 down the chat's left edge, folded to
    their icons like VS Code's activity bar: the pointer on it unfolds their
    names over the timeline, never moving it. The icons sit at the bottom,
-   beside the input whose draft they work on; what one opens sits beside
+   beside the input whose draft they work on, and Usage alone at the top, as
+   it is about the account (the owner's P16); what one opens sits beside
    the rail, and while it is open the rail stays folded. */
 .rail {
   position: relative;
@@ -2544,7 +2545,10 @@ body.in-editor .rail-col {
   margin: 4px 0 6px 8px;
 }
 
-/* The Usage icon and card (99): amber from 70 % used, red from 90 % or a limit hit. */
+/* The Usage icon and card (99): alone at the rail's top (P16); amber from 70 % used, red from 90 % or a limit hit. */
+.rail-entry.usage {
+  margin-bottom: auto;
+}
 .rail-entry.usage.none .rail-icon {
   filter: grayscale(1);
   opacity: 0.6;

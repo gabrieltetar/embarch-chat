@@ -1,5 +1,6 @@
-// The rail on the chat's left edge (decision 94): Memory, Promptu, the 📚
-// and the 💡, one icon each, folded like VS Code's activity bar until the
+// The rail on the chat's left edge (decision 94): Usage alone at the top
+// (99, the owner's P16), and Memory, Promptu, the 📚 and the 💡 at the
+// bottom, one icon each, folded like VS Code's activity bar until the
 // pointer is on it, when their names show. The composer draws the entries
 // into it (composer.tsx), since the 📚's and 💡's menus are the draft's;
 // this file holds what they open beside the rail: Promptu's card (95) and

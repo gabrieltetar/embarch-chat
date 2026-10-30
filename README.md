@@ -146,9 +146,10 @@ code cites.
   your draft as typed. **Memory** shows what loads in the chat's folder by
   scope, domain and kind, with stale flags and where each memory was used;
   a click opens it beside the chat.
-- **Usage** in the rail: the Claude plan's 5-hour session and weekly share
-  used, with when each resets, as a chat's Claude Code last reported them;
-  amber from 70 %, red from 90 % or at a limit. Hover for its card.
+- **Usage**, alone at the top of the rail: the Claude plan's 5-hour session
+  and weekly share used, with when each resets, as a chat's Claude Code last
+  reported each; amber from 70 %, red from 90 % or at a limit, grey again
+  once a window's reset has passed. Hover for its card.
 - **The 📚 library** in the rail: this repo's own plugin (`plugin/`) and
   your `~/.claude/commands`, one submenu per `category:` in each entry's
   frontmatter (none is Other); a click puts `/<name> ` at the head of the
