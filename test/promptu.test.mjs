@@ -24,11 +24,11 @@ const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "embarch-chat-promptu-"));
 after(() => fs.rmSync(ROOT, { recursive: true, force: true }));
 const scratch = () => fs.mkdtempSync(path.join(ROOT, "s-"));
 
-function setup(env = {}, bin = FAKE) {
+function setup(env = {}, bin = FAKE, now = undefined) {
   const dir = scratch();
   const lines = [];
   const cli = new core.PromptuCli(() => ({ bin, log: (l) => lines.push(l), env: { ...process.env, FAKE_PROMPTU_DIR: dir, ...env } }));
-  const runs = new core.PromptuRuns(cli, (l) => lines.push(l));
+  const runs = new core.PromptuRuns(cli, (l) => lines.push(l), now);
   const views = [];
   runs.on("view", (sid, v) => views.push(v));
   const calls = () => (fs.existsSync(path.join(dir, "log.jsonl")) ? fs.readFileSync(path.join(dir, "log.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l)) : []);
@@ -231,7 +231,7 @@ test("whatever throws on the way ends the run with one line, never a dialog left
   assert.equal(t.runs.take(SID).error, "Promptu stopped: spawn exploded");
 });
 
-test("a chat that goes takes its run with it", async () => {
+test("a dropped view takes its run with it", async () => {
   const s = setup({ FAKE_PROMPTU_SLEEP_MS: "1500" });
   const first = s.runs.begin(SID, { ...BEGIN, cwd: ROOT });
   await new Promise((r) => setTimeout(r, 100));
@@ -241,14 +241,41 @@ test("a chat that goes takes its run with it", async () => {
   assert.equal(s.runs.take(SID), null);
 });
 
-test("a run goes with its chat: an idle close waits while its dialog or its prompt is the owner's, then nothing of it is left; a crash and a dropped view take it too (41, 96)", async () => {
+test("the hold: only while the chat's page shows, and for ten minutes after the run's last step; a result is still taken after (review F11)", async () => {
+  let t = 1_000_000;
+  const s = setup({ FAKE_PROMPTU_PAGES: "2" }, FAKE, () => t);
+  assert.equal(core.PROMPTU_HOLD_MS, 10 * 60_000);
+  await s.runs.begin(SID, { ...BEGIN, cwd: ROOT });
+  assert.equal(s.runs.holdReason(SID, true), "a Promptu dialog is open");
+  assert.equal(s.runs.holdReason(SID, false), null, "no page shows the chat: nothing holds its process");
+  t += core.PROMPTU_HOLD_MS - 1;
+  assert.equal(s.runs.holdReason(SID, true), "a Promptu dialog is open", "under ten minutes since its last step");
+  t += 1;
+  assert.equal(s.runs.holdReason(SID, true), null, "ten minutes without a step");
+  assert.ok(s.runs.view(SID), "the dialog itself stays");
+  // A step — a page answered — starts the ten minutes again.
+  const v = s.runs.view(SID);
+  await s.runs.answer(SID, v.seq, core.cleanInput({ answers: { done: "Build and tests pass (Recommended)", goal: { other: "so units recover" } } }));
+  assert.equal(s.runs.holdReason(SID, true), "a Promptu dialog is open");
+  // Its prompt, not taken yet: held while the page shows, ten minutes from the end.
+  await s.runs.finish(SID, s.runs.view(SID).seq, {}, "recommended");
+  assert.equal(s.runs.holdReason(SID, true), "a Promptu prompt waits for its draft");
+  assert.equal(s.runs.holdReason(SID, false), null);
+  t += core.PROMPTU_HOLD_MS;
+  assert.equal(s.runs.holdReason(SID, true), null);
+  assert.ok(s.runs.take(SID).prompt, "the hold lifted, the prompt still waits for a page");
+  assert.equal(s.runs.holdReason(SID, true), null, "taken: nothing left");
+});
+
+test("a run and its chat's process: an idle close waits only while the page shows; a close stops a run under way with one line, its result kept for the next page; a dropped view takes everything (41, 96, review F11)", async () => {
   const FAKE_CLAUDE = path.join(here, "fake-claude.mjs");
   fs.chmodSync(FAKE_CLAUDE, 0o755);
   const was = process.env.FAKE_CLAUDE_FIXTURE;
   process.env.FAKE_CLAUDE_FIXTURE = path.join(here, "fixtures", "wire", "basic.jsonl");
   const s = setup();
-  const manager = new core.ChatManager(() => ({ claudePath: FAKE_CLAUDE, idleMs: 300, log: () => {}, hold: (sid) => s.runs.holdReason(sid) }));
-  manager.on("closed", (sid) => s.runs.forget(sid));
+  let shown = true;
+  const manager = new core.ChatManager(() => ({ claudePath: FAKE_CLAUDE, idleMs: 300, log: () => {}, hold: (sid) => s.runs.holdReason(sid, shown) }));
+  manager.on("closed", (sid) => s.runs.closed(sid));
   manager.on("released", (sid) => s.runs.forget(sid));
   const until = async (pred, ms = 5000, what = "it") => {
     const t0 = Date.now();
@@ -257,36 +284,49 @@ test("a run goes with its chat: an idle close waits while its dialog or its prom
       await new Promise((r) => setTimeout(r, 30));
     }
   };
-  try {
-    const rec = manager.create(SID, scratch(), null, null);
+  const turn = async (rec) => {
     const turned = new Promise((r) => manager.once("turn", r));
     rec.chat.send("Run the bash command `echo hello-from-bash` and then reply with just: done");
     await turned;
-    // A pass mid-task (a forced pattern): its dialog keeps the process past its idle time.
+  };
+  try {
+    const rec = manager.create(SID, scratch(), null, null);
+    await turn(rec);
+    // A pass mid-task (a forced pattern): its dialog keeps the process past its idle time while the page shows.
     await s.runs.begin(SID, { ...BEGIN, cwd: ROOT });
-    const seq = s.runs.view(SID).seq;
     await new Promise((r) => setTimeout(r, 900));
-    assert.ok(rec.chat.running, "held while the dialog is open");
+    assert.ok(rec.chat.running, "held while the dialog shows");
     assert.equal(rec.chat.holdReason(), "a Promptu dialog is open");
-    // Done, its prompt not taken by a page yet: still the owner's.
-    await s.runs.finish(SID, seq, {}, "recommended");
-    await new Promise((r) => setTimeout(r, 900));
-    assert.ok(rec.chat.running, "held while its prompt waits");
-    assert.ok(s.runs.take(SID).prompt);
-    await until(() => !rec.chat.running, 5000, "the idle close once nothing is the owner's");
-    // A crash with a prompt waiting: forgotten, so it never lands in the chat resumed later.
-    const turned2 = new Promise((r) => manager.once("turn", r));
-    rec.chat.send("Run the bash command `echo hello-from-bash` and then reply with just: done");
-    await turned2;
+    // The page hidden: the hold lifts, the idle close goes ahead, and the run under way stops with one line.
+    shown = false;
+    await until(() => !rec.chat.running, 5000, "the idle close once no page shows the chat");
+    assert.equal(s.runs.view(SID), null);
+    assert.equal(s.views.at(-1), null, "the page is told the dialog went");
+    assert.equal(s.runs.take(SID).error, "the chat's process closed while its dialog was open");
+    // A prompt not taken by a page yet: held while the page shows.
+    shown = true;
+    await turn(rec);
     await s.runs.begin(SID, { ...BEGIN, cwd: ROOT });
-    const views = s.views.length;
+    await s.runs.finish(SID, s.runs.view(SID).seq, {}, "recommended");
+    await new Promise((r) => setTimeout(r, 900));
+    assert.ok(rec.chat.running, "held while its prompt waits on a page that shows");
+    assert.equal(rec.chat.holdReason(), "a Promptu prompt waits for its draft");
+    // Hidden, it closes; the prompt outlives the close, and the page that shows the chat next takes it.
+    shown = false;
+    await until(() => !rec.chat.running, 5000, "the idle close with the page hidden");
+    shown = true;
+    const kept = s.runs.take(SID);
+    assert.ok(kept?.prompt, "taken after the close, as the chat shows again");
+    assert.match(kept.prompt, /^## Goal\nadd a watchdog to the loader/);
+    // A crash under a Start work pass: one line, and its starter waits in the draft, never sent into the closed chat.
+    await turn(rec);
+    const sent = [];
+    await s.runs.begin(SID, { ...BEGIN, cwd: ROOT, origin: "start", start: true, fallback: "Read ABC-7 — the old starter", sendFallback: (x) => sent.push(x) });
     process.kill(rec.chat.pid, "SIGKILL");
     await until(() => !rec.chat.running, 5000, "the crash");
-    assert.equal(s.runs.view(SID), null);
-    assert.equal(s.runs.take(SID), null);
-    assert.equal(s.views.at(-1), null, "the page is told the dialog went");
-    assert.ok(s.views.length > views);
-    // A read-only view dropped: its run goes with it.
+    const crashed = s.runs.take(SID);
+    assert.deepEqual([crashed.error, crashed.fallback, crashed.fallbackSent, sent], ["the chat's process closed while its dialog was open", "Read ABC-7 — the old starter", undefined, []]);
+    // A read-only view dropped: a run under way and a result not taken go with it.
     const other = "33333333-0000-4000-8000-000000000009";
     manager.openViewer(other, scratch(), null, null, true);
     await s.runs.begin(other, { ...BEGIN, cwd: ROOT });
@@ -294,6 +334,11 @@ test("a run goes with its chat: an idle close waits while its dialog or its prom
     manager.release(other);
     assert.equal(s.runs.view(other), null);
     assert.equal(s.runs.take(other), null);
+    manager.openViewer(other, scratch(), null, null, true);
+    await s.runs.begin(other, { ...BEGIN, cwd: ROOT });
+    await s.runs.finish(other, s.runs.view(other).seq, {}, "recommended");
+    manager.release(other);
+    assert.equal(s.runs.take(other), null, "its result is discarded with it");
   } finally {
     manager.dispose();
     if (was === undefined) delete process.env.FAKE_CLAUDE_FIXTURE;

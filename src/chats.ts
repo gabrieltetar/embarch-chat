@@ -63,7 +63,7 @@ export interface ChatSettings {
   log: (line: string) => void;
   /** What the panel does for the CLI (decisions 61, 65), for a chat in the folder `cwd`. */
   hooks?: (cwd: string) => HostHooks;
-  /** Why a chat's process stays up from outside it — a Promptu run of its own (96) — or null. */
+  /** Why a chat's process stays up from outside it — a Promptu run of its own while its page shows (96, review F11) — or null. */
   hold?: (sessionId: string) => string | null;
 }
 

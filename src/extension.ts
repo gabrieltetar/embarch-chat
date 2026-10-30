@@ -98,7 +98,9 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
 
-  chats = new ChatManager(() => ({ claudePath: cfg().claudePath, idleMs: cfg().idleMs, log, hooks: (cwd) => hostHooks(log, cwd), hold: (sid) => promptuRuns?.holdReason(sid) ?? null }));
+  /** Whether a chat's page is on screen (`onScreen` below, once the views exist): Promptu holds a process only then (review F11). */
+  let shownNow: (sid: string) => boolean = () => false;
+  chats = new ChatManager(() => ({ claudePath: cfg().claudePath, idleMs: cfg().idleMs, log, hooks: (cwd) => hostHooks(log, cwd), hold: (sid) => promptuRuns?.holdReason(sid, shownNow(sid)) ?? null }));
   const manager = chats;
   deskService = new DeskService(() => client, manager, folders, log);
   const desk = deskService;
@@ -157,8 +159,10 @@ export function activate(context: vscode.ExtensionContext): void {
   const promptu = new PromptuService(promptuCli, context.globalState, log);
   promptuRuns = new PromptuRuns(promptuCli, log);
   const runs = promptuRuns;
-  // A run goes with its chat (96): an idle close (held while a run or its prompt waits on the owner), a crash, a dropped view.
-  manager.on("closed", (sid: string) => runs.forget(sid));
+  // A run and its chat (96): an idle close waits while the chat's page shows a dialog or a prompt whose last
+  // step is under ten minutes old; a close stops a run under way, its result kept for the next page that shows
+  // the chat; a dropped read-only view takes everything (review F11).
+  manager.on("closed", (sid: string) => runs.closed(sid));
   manager.on("released", (sid: string) => runs.forget(sid));
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
@@ -248,6 +252,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(status);
   /** On screen: the sidebar's chat while the sidebar shows, or a visible editor tab (decision 34). */
   const onScreen = (sid: string) => (manager.current === sid && !!chatView.view?.visible) || panels.visible(sid);
+  shownNow = onScreen;
   /** The chats waiting on the owner off screen, oldest first: the count, and what a click opens (decision 35). */
   const waitingOff = () => desk.waiting().filter((t) => !onScreen(t.sessionId));
   const refreshCount = () => {

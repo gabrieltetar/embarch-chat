@@ -10,7 +10,7 @@
 //
 // Events: `view` (sid, PromptuView | null) whenever the dialog changes, and
 // `result` (sid) when a run ended — its result waits in `take` for the page
-// that shows the chat, once.
+// that shows the chat, once, past its process's close (review F11).
 
 import { EventEmitter } from "events";
 import * as fs from "fs";
@@ -94,7 +94,16 @@ interface Active {
   cwd: string;
   fallback?: string;
   sendFallback?: (text: string) => void;
+  /** When the dialog last changed: the run's last step (ms). */
+  at: number;
 }
+
+/**
+ * How long a run's last step keeps its chat's process up while the chat's
+ * page shows (decision 41's "it waits on the owner", review F11): past it, or
+ * with the page hidden, an idle close goes ahead.
+ */
+export const PROMPTU_HOLD_MS = 10 * 60_000;
 
 /** The brief the pass reads, cut as the terminal skill cuts it: about 2,000 characters (SYNTHESIS §2.3). */
 export const DESK_TEXT_MAX = 2000;
@@ -132,12 +141,15 @@ export function cleanInput(v: unknown): AnswerInput {
 
 export class PromptuRuns extends EventEmitter {
   private active = new Map<string, Active>();
-  private results = new Map<string, PromptuResult>();
+  /** A run's result and when it ended (ms), until a page takes it. */
+  private results = new Map<string, { r: PromptuResult; at: number }>();
   private seq = 0;
 
   constructor(
     private cli: PromptuCli,
     private log: (s: string) => void,
+    /** The clock, for the hold's age (a test's own). */
+    private now: () => number = Date.now,
   ) {
     super();
   }
@@ -154,21 +166,27 @@ export class PromptuRuns extends EventEmitter {
 
   /** The result of a chat's last run, once: the page that shows the chat takes it. */
   take(sid: string): PromptuResult | null {
-    const r = this.results.get(sid) ?? null;
+    const r = this.results.get(sid)?.r ?? null;
     this.results.delete(sid);
     return r;
   }
 
   private show(sid: string, a: Active | null): void {
+    if (a) a.at = this.now();
     this.emit("view", sid, a ? a.view : null);
   }
 
-  private end(sid: string, a: Active, r: Omit<PromptuResult, "sid" | "seq" | "origin" | "rough">): void {
+  /**
+   * The run ends with its result, for the page. `send`: Start work's starter
+   * may go to Claude when there is no prompt (P2); not when the chat's
+   * process has just closed, which sending would start again unasked.
+   */
+  private end(sid: string, a: Active, r: Omit<PromptuResult, "sid" | "seq" | "origin" | "rough">, send = true): void {
     if (this.active.get(sid) !== a) return;
     this.active.delete(sid);
     const result: PromptuResult = { sid, seq: a.view.seq, origin: a.view.origin, rough: a.view.rough, ...r };
     if (!result.prompt && a.fallback) {
-      if (a.sendFallback) {
+      if (a.sendFallback && send) {
         try {
           a.sendFallback(a.fallback);
           result.fallbackSent = true;
@@ -179,7 +197,7 @@ export class PromptuRuns extends EventEmitter {
       } else result.fallback = a.fallback;
     }
     this.log(`[${sid.slice(0, 8)}] promptu ${a.view.origin}: ${result.prompt ? "a prompt in the draft" : result.cancelled ? "cancelled" : `no prompt (${result.error})`}`);
-    this.results.set(sid, result);
+    this.results.set(sid, { r: result, at: this.now() });
     this.show(sid, null);
     this.emit("result", sid);
   }
@@ -216,6 +234,7 @@ export class PromptuRuns extends EventEmitter {
       cwd: o.cwd,
       fallback: o.fallback,
       sendFallback: o.sendFallback,
+      at: this.now(),
     };
     this.active.set(sid, a);
     this.show(sid, a);
@@ -297,18 +316,38 @@ export class PromptuRuns extends EventEmitter {
 
   /**
    * Why a chat's process stays up for Promptu (decision 41's "it waits on the
-   * owner"): a dialog open, or a prompt no page has taken yet. So an idle
-   * close never drops either.
+   * owner"): a dialog open, or a result no page has taken yet — only while
+   * the chat's page shows (`shown`) and the run's last step is under
+   * PROMPTU_HOLD_MS old (review F11). A dialog left on a hidden page, or
+   * left alone, never keeps the process up for good; a result outlives the
+   * close anyway (`closed`).
    */
-  holdReason(sid: string): string | null {
-    if (this.active.has(sid)) return "a Promptu dialog is open";
-    if (this.results.has(sid)) return "a Promptu prompt waits for its draft";
-    return null;
+  holdReason(sid: string, shown: boolean): string | null {
+    if (!shown) return null;
+    const fresh = (at: number) => this.now() - at < PROMPTU_HOLD_MS;
+    const a = this.active.get(sid);
+    if (a) return fresh(a.at) ? "a Promptu dialog is open" : null;
+    const r = this.results.get(sid);
+    return r && fresh(r.at) ? "a Promptu prompt waits for its draft" : null;
   }
 
   /**
-   * The chat's process closed, or its view was dropped: nothing of a run
-   * outlives it, so none lands in the chat resumed or opened again later.
+   * The chat's process closed (an idle close, a crash, a spawn that failed):
+   * a run under way stops, with one line and Start work's starter in the
+   * draft, never sent; a result waits on, so the next page that shows the
+   * chat still takes it (review F11).
+   */
+  closed(sid: string): void {
+    const a = this.active.get(sid);
+    if (!a) return;
+    a.ac.abort();
+    this.log(`[${sid.slice(0, 8)}] promptu: stopped, its chat's process closed`);
+    this.end(sid, a, { error: "the chat's process closed while its dialog was open" }, false);
+  }
+
+  /**
+   * A read-only view was dropped: nothing of a run outlives it, so none
+   * lands in the chat opened again later.
    */
   forget(sid: string): void {
     const a = this.active.get(sid);
