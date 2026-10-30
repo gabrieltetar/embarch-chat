@@ -15,6 +15,7 @@ import type { EditorItem } from "../../src/editorContext";
 import type { MemoryOut } from "../../src/promptu/cli";
 import type { PromptuResult, PromptuView } from "../../src/promptu/runs";
 import type { PromptuState } from "../../src/promptu/service";
+import type { Usage } from "../../src/usage";
 
 /** The chat's card in two lines (decision 18). */
 export interface Header {
@@ -106,7 +107,9 @@ export type HostToChat =
   /** How a chat's Promptu run ended: the prompt for the draft, or one line and the draft as it was (96). */
   | { t: "promptuResult"; result: PromptuResult }
   /** The Memory menu's data (98): `promptu memory --json` for the chat's folder, or why there is none. */
-  | { t: "promptuMemory"; data?: MemoryOut; error?: string };
+  | { t: "promptuMemory"; data?: MemoryOut; error?: string }
+  /** The Claude plan's usage, the newest any of the window's chats heard (99); null: no reading yet. */
+  | { t: "usage"; usage: Usage | null };
 
 /** What a kept reply is on the work item: the desk's note kinds a reply can be. */
 export type KeepKind = "finding" | "decision";

@@ -28,6 +28,7 @@ import { PromptuCli, findBinary } from "./promptu/cli";
 import { PromptuRuns } from "./promptu/runs";
 import { PromptuService, embarchApiPresent } from "./promptu/service";
 import { startRough } from "./promptu/text";
+import { UsageStore } from "./usageStore";
 import { CHAT_VIEW, ChatPanels, ChatViewProvider, THREADS_VIEW, ThreadsViewProvider } from "./views/views";
 import { claudeVersion, versionWarning } from "./wire/version";
 import { findTranscript, isSessionId } from "./wire/transcript";
@@ -164,6 +165,11 @@ export function activate(context: vscode.ExtensionContext): void {
       if (e.affectsConfiguration("embarchChat.promptuPath")) promptu.emit("state");
     }),
   );
+  // The plan's usage for the rail's icon (99): the newest rate_limit_event any of this window's chats heard.
+  const usage = new UsageStore();
+  manager.on("event", (_sid: string, e: WireMessage) => {
+    if (e.type === "rate_limit_event") usage.take(e.rate_limit_info);
+  });
   /** The EmbArch parts a chat has (`--have`): the desk when it answers, the bench tools when its CLI lists them or the binary is here. */
   const promptuHave = (rec: ChatRecord) => [
     ...(desk.error === null && desk.view ? ["desk"] : []),
@@ -198,6 +204,7 @@ export function activate(context: vscode.ExtensionContext): void {
     promptu,
     runs,
     promptuHave,
+    usage,
   };
 
   const chatView = new ChatViewProvider(context.extensionUri, ctx);

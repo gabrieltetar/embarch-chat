@@ -59,7 +59,9 @@ import type { MemoryOut } from "../../src/promptu/cli";
 import type { PromptuResult, PromptuView } from "../../src/promptu/runs";
 import type { PromptuState } from "../../src/promptu/service";
 import { hasFooter } from "../../src/promptu/text";
-import { MemoryPanel, PromptuCard, RailEntry } from "./rail";
+import { MemoryPanel, PromptuCard, RailEntry, UsageCard, usageSummary } from "./rail";
+import type { Usage } from "../../src/usage";
+import { usageLevel } from "../../src/usage";
 
 const post = (m: unknown) => vscodeApi.postMessage(m);
 
@@ -94,6 +96,8 @@ interface Props {
   promptu: PromptuState | null;
   /** The chat has no message of the owner's yet: a task start (96). */
   taskStart: boolean;
+  /** The Claude plan's usage, the window's newest reading (99); null: none yet. */
+  usage: Usage | null;
   /** This chat's Promptu run while one is under way (its dialog shows, or in Quick mode only the icon turns). */
   promptuView: PromptuView | null;
   /** The pills beside the mode select (footer.tsx): the model pill, MCP. */
@@ -234,11 +238,12 @@ export function Composer(p: Props) {
   const [used, setUsed] = useState<string[]>([]);
   const [menu, setMenu] = useState<null | "bulb" | "library">(null);
   /** What the rail has open beside it: Promptu's card or the Memory menu (95, 98). */
-  const [railPop, setRailPop] = useState<null | "promptu" | "memory">(null);
+  const [railPop, setRailPop] = useState<null | "promptu" | "memory" | "usage">(null);
   /** The keys opened it: it holds the focus, and the pointer leaving never closes it (review F10). */
   const [popByKey, setPopByKey] = useState(false);
   const memBtn = useRef<HTMLButtonElement>(null);
   const promptuBtn = useRef<HTMLButtonElement>(null);
+  const usageBtn = useRef<HTMLButtonElement>(null);
   const popTimer = useRef(0);
   const [memory, setMemory] = useState<{ loading: boolean; data?: MemoryOut; error?: string }>({ loading: false });
   const [forced, setForced] = useState<string | null>(forcedPattern[sid] ?? null);
@@ -1071,20 +1076,22 @@ export function Composer(p: Props) {
     setMemory((m) => ({ ...m, loading: true, error: undefined }));
     post({ t: "promptuMemory" });
   };
-  /** Promptu's card opens on hover and stays while the pointer is on the icon or the card (95). */
-  const openPromptu = (byKey = false) => {
+  /** Promptu's card and the Usage card open on hover and stay while the pointer is on the icon or the card (95, 99). */
+  const openHover = (kind: "promptu" | "usage", byKey = false) => {
     clearTimeout(popTimer.current);
-    if (railPop !== "promptu" || byKey) setPopByKey(byKey);
-    setRailPop("promptu");
+    if (railPop !== kind || byKey) setPopByKey(byKey);
+    setRailPop(kind);
   };
-  const leavePromptu = () => {
+  const leaveHover = (kind: "promptu" | "usage") => {
     clearTimeout(popTimer.current);
     if (popByKey) return;
-    popTimer.current = window.setTimeout(() => setRailPop((x) => (x === "promptu" ? null : x)), 300);
+    popTimer.current = window.setTimeout(() => setRailPop((x) => (x === kind ? null : x)), 300);
   };
+  const openPromptu = (byKey = false) => openHover("promptu", byKey);
+  const leavePromptu = () => leaveHover("promptu");
   /** Esc in a pop: closed, the focus back on the entry that opened it when the keys did, else in the draft. */
   const closePop = () => {
-    const back = popByKey ? (railPop === "memory" ? memBtn.current : promptuBtn.current) : ta.current;
+    const back = popByKey ? (railPop === "memory" ? memBtn.current : railPop === "usage" ? usageBtn.current : promptuBtn.current) : ta.current;
     setRailPop(null);
     setPopByKey(false);
     back?.focus();
@@ -1274,6 +1281,18 @@ export function Composer(p: Props) {
           <>
             <div class={`rail-col ${railPop ? "popped" : ""}`} onKeyDown={railKeys}>
               <RailEntry
+                icon="📊"
+                label="Usage"
+                cls={`usage ${usageLevel(p.usage)}`}
+                title={`Claude plan usage: ${usageSummary(p.usage)} — hover for its card`}
+                ariaLabel={`Usage — ${usageSummary(p.usage)}`}
+                expanded={railPop === "usage"}
+                btnRef={usageBtn}
+                onClick={(byKey) => openHover("usage", byKey)}
+                onEnter={() => openHover("usage")}
+                onLeave={() => leaveHover("usage")}
+              />
+              <RailEntry
                 icon="🧠"
                 label="Memory"
                 cls="memory"
@@ -1336,6 +1355,7 @@ export function Composer(p: Props) {
               />
             )}
             {railPop === "memory" && <MemoryPanel mem={memory} onRefresh={loadMemory} focusIn={popByKey} onClose={closePop} />}
+            {railPop === "usage" && <UsageCard usage={p.usage} focusIn={popByKey} onClose={closePop} onEnter={() => clearTimeout(popTimer.current)} onLeave={() => leaveHover("usage")} />}
           </>,
           p.rail,
         )}

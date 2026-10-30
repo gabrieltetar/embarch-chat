@@ -1876,3 +1876,17 @@ test("the Memory menu: promptu memory --json for the chat's folder, and a click 
     mock.state.config["embarchChat.promptuPath"] = path.join(dir, "no-promptu");
   }
 });
+
+test("the plan's usage reaches every page: a chat's rate_limit_event, both windows, the window's newest reading (99)", { skip }, async () => {
+  const before = chatView.webview.posted.length;
+  await startUntracked("effort");
+  chatView.webview.fromPage({ t: "send", text: "hello" });
+  const u = await waitFor(() => chatView.webview.posted.slice(before).find((m) => m.t === "usage" && m.usage), 8000, "the usage reading");
+  assert.deepEqual([u.usage.session, u.usage.weekly, u.usage.status], [{ used: 0.5, resetsAt: 1900000000 }, { used: 0.5, resetsAt: 1900000000 }, "allowed"]);
+  // A page that comes later gets it at once.
+  const late = new mock.FakeView();
+  mock.state.providers.get("embarchChat.chat").provider.resolveWebviewView(late);
+  late.webview.fromPage({ t: "ready" });
+  const first = await waitFor(() => late.webview.posted.find((m) => m.t === "usage"), 3000, "the late page's reading");
+  assert.equal(first.usage.session.used, 0.5);
+});

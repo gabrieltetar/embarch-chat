@@ -3578,7 +3578,7 @@ const promptuPosts = async (op) => (await posts()).filter((p) => p.t === "prompt
 
 await check("the rail: Memory, Promptu, the 📚 and the 💡 down the chat's left edge, folded to their icons until the pointer is on it, which shows their names over the timeline without moving it; the 💡 and 📚 left the input's bar (94)", async () => {
   await fresh();
-  assert.deepEqual(await text(".rail .rail-entry .rail-label"), ["Memory", "Promptu", "Library", "Suggestions"]);
+  assert.deepEqual(await text(".rail .rail-entry .rail-label"), ["Usage", "Memory", "Promptu", "Library", "Suggestions"]);
   assert.deepEqual(await exec("const r=document.querySelector('.rail'); return [r.getAttribute('role'), r.getAttribute('aria-label'), r.getAttribute('aria-orientation')]"), ["toolbar", "Chat tools", "vertical"], "named, a toolbar (review F9)");
   await exec("document.querySelector('.rail .rail-entry.memory').focus()");
   await keys("\uE015");
@@ -3937,6 +3937,39 @@ await check("the 💡's handoff card opens the handoff pattern's dialog while Pr
     await mouseAway();
     await send([PROMPTU_OFF]);
   }
+});
+
+await check("the Usage icon: the plan's session and weekly share with their resets, amber from 70 %, red from 90 % or a limit hit; its card on hover (99)", async () => {
+  await fresh();
+  const level = () => exec("const b=document.querySelector('.rail .rail-entry.usage'); return ['none','ok','amber','red'].find((l) => b.classList.contains(l))");
+  const name = () => exec("return document.querySelector('.rail .rail-entry.usage').getAttribute('aria-label')");
+  await send([{ t: "usage", usage: null }]);
+  assert.equal(await level(), "none");
+  assert.equal(await name(), "Usage — no reading yet");
+  const now = Math.floor(Date.now() / 1000);
+  const reading = (s, w, extra = {}) => ({ t: "usage", usage: { session: { used: s, resetsAt: now + 3 * 3600 + 60 }, weekly: { used: w, resetsAt: now + 50 * 3600 }, status: "allowed", limit: "five_hour", grace: false, at: Date.now(), ...extra } });
+  await send([reading(0.42, 0.61)]);
+  assert.equal(await level(), "ok");
+  assert.equal(await name(), "Usage — session 42 %, weekly 61 %");
+  await hover(".rail .rail-entry.usage");
+  const card = (await text(".usage-card"))[0];
+  assert.ok(card.includes("Session (5 hours)") && card.includes("42 % used") && card.includes("resets in 3h") && card.includes("Weekly") && card.includes("61 % used") && card.includes("resets in 2d"), card);
+  assert.deepEqual(await exec("return [...document.querySelectorAll('.usage-bar > span')].map((s) => s.style.width)"), ["42%", "61%"]);
+  await shot("usage-card");
+  await mouseAway();
+  await sleep(500);
+  assert.equal((await text(".usage-card")).length, 0, "it closes when the pointer leaves");
+  await send([reading(0.69, 0.7)]);
+  assert.equal(await level(), "amber", "70 % of either window");
+  await send([reading(0.9, 0.2)]);
+  assert.equal(await level(), "red", "90 %");
+  await send([reading(0.2, 0.2, { status: "rejected", limit: "seven_day" })]);
+  assert.equal(await level(), "red", "a limit hit");
+  await hover(".rail .rail-entry.usage");
+  assert.ok((await text(".usage-card .warn"))[0].includes("You've hit your weekly limit"));
+  await mouseAway();
+  await sleep(500);
+  await send([{ t: "usage", usage: null }]);
 });
 
 await check("the Memory menu: scope, then domain, then kind, stale flags and where each was used; a click opens the entry's file, a dead link its index line (98)", async () => {

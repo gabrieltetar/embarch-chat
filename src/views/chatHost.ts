@@ -39,6 +39,7 @@ import type { ChatToHost, Header, HostToChat, TerminalRef } from "../../webview/
 import type { PromptuService } from "../promptu/service";
 import type { BeginOpts, DeskItem, PromptuRuns, PromptuView } from "../promptu/runs";
 import { cleanInput } from "../promptu/runs";
+import type { UsageStore } from "../usageStore";
 
 export interface HostCtx {
   chats: ChatManager;
@@ -84,6 +85,8 @@ export interface HostCtx {
   runs: PromptuRuns;
   /** The EmbArch parts a chat has, for the pass's `--have` (96): `desk`, `embarch-api`. */
   promptuHave: (rec: ChatRecord) => string[];
+  /** The Claude plan's usage, the newest any chat of the window heard (99). */
+  usage: UsageStore;
 }
 
 /** Where an "always allow" was last saved, in the extension's global state (78). */
@@ -213,6 +216,10 @@ export class ChatHost implements vscode.Disposable {
   private onPromptuResult = (sid: string) => {
     if (sid === this.sid && this.ready) this.pushPromptuResult();
   };
+  /** A newer usage reading: every page's Usage icon (99). */
+  private onUsage = () => {
+    if (this.ready) this.post({ t: "usage", usage: this.ctx.usage.current });
+  };
   /** The files the Memory menu was last given: the only ones a click opens (98). */
   private memoryFiles = new Set<string>();
 
@@ -242,6 +249,7 @@ export class ChatHost implements vscode.Disposable {
     ctx.promptu.on("state", this.onPromptuState);
     ctx.runs.on("view", this.onPromptuView);
     ctx.runs.on("result", this.onPromptuResult);
+    ctx.usage.on("changed", this.onUsage);
     this.subs.push(webview.onDidReceiveMessage((m: ChatToHost) => void this.onMessage(m)));
     // The times above messages come and go with their setting (68).
     this.subs.push(
@@ -382,6 +390,7 @@ export class ChatHost implements vscode.Disposable {
       this.post({ t: "library", entries: this.ctx.library(), assistant: this.ctx.assistantOn() });
       // Before the snapshot, so its rows are drawn with the index's titles and links.
       this.pushRefs();
+      this.post({ t: "usage", usage: this.ctx.usage.current });
       this.snapshot();
       for (const k of this.keyed.splice(0)) this.post(k);
       return;
@@ -765,6 +774,7 @@ export class ChatHost implements vscode.Disposable {
     this.ctx.promptu.off("state", this.onPromptuState);
     this.ctx.runs.off("view", this.onPromptuView);
     this.ctx.runs.off("result", this.onPromptuResult);
+    this.ctx.usage.off("changed", this.onUsage);
     for (const s of this.subs) s.dispose();
   }
 }

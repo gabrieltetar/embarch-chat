@@ -2559,3 +2559,54 @@ body.in-editor .rail-col {
 .promptu-fill .fill-edit {
   margin: 4px 0 6px 8px;
 }
+
+/* The Usage icon and card (99): amber from 70 % used, red from 90 % or a limit hit. */
+.rail-entry.usage.none .rail-icon {
+  filter: grayscale(1);
+  opacity: 0.6;
+}
+.rail-entry.usage.amber {
+  box-shadow: inset 2px 0 0 var(--waiting);
+}
+.rail-entry.usage.amber .rail-icon {
+  filter: drop-shadow(0 0 3px var(--waiting));
+}
+.rail-entry.usage.red {
+  box-shadow: inset 2px 0 0 var(--err);
+}
+.rail-entry.usage.red .rail-icon {
+  filter: drop-shadow(0 0 3px var(--err));
+}
+.usage-title {
+  margin-bottom: 6px;
+}
+.usage-row {
+  margin: 6px 0;
+}
+.usage-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.usage-bar {
+  height: 5px;
+  margin: 3px 0 2px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+}
+.usage-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--meter);
+}
+.usage-row.amber .usage-bar > span {
+  background: var(--waiting);
+}
+.usage-row.red .usage-bar > span {
+  background: var(--err);
+}
+.usage-reset,
+.usage-note {
+  font-size: 0.86em;
+}

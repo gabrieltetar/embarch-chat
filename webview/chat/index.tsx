@@ -25,6 +25,7 @@ import { Composer, EditorChip, promptuLanded, returnToDraft } from "./composer";
 import { PromptuDialog } from "./promptu";
 import type { PromptuView } from "../../src/promptu/runs";
 import type { PromptuState } from "../../src/promptu/service";
+import type { Usage } from "../../src/usage";
 import { RunView, ToolCtx, ToolView, quiet, revealTool, toolRenderers } from "./tools";
 import { Fold, foldRuns, liveTool } from "./runs";
 import { benchRenderer } from "./bench";
@@ -188,6 +189,8 @@ function App() {
   const [promptu, setPromptu] = useState<PromptuState | null>(null);
   const [promptuViews, setPromptuViews] = useState<Record<string, PromptuView | null>>({});
   const [rail, setRail] = useState<HTMLDivElement | null>(null);
+  // The plan's usage for the rail's icon (99): the window's newest reading, whichever chat heard it.
+  const [usage, setUsage] = useState<Usage | null>(null);
   // The desk's reference index (decision 88), set whole by the host: each one draws the rows that read it again.
   const [refsV, setRefsV] = useState(0);
   const live = useRef<ChatState | null>(null);
@@ -261,6 +264,9 @@ function App() {
           return;
         case "promptuResult":
           promptuLanded(m.result);
+          return;
+        case "usage":
+          setUsage(m.usage);
           return;
       }
     };
@@ -564,6 +570,7 @@ function App() {
               promptu={promptu}
               taskStart={taskStart}
               promptuView={pv}
+              usage={usage}
               footer={
                 <>
                   <ModelPill state={state} />

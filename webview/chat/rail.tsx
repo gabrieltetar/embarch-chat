@@ -9,6 +9,9 @@ import type { ComponentChildren, Ref } from "preact";
 import { useEffect, useRef } from "preact/hooks";
 import type { MemoryEntry, MemoryOut, MemoryUse, PatternInfo } from "../../src/promptu/cli";
 import type { PromptuState } from "../../src/promptu/service";
+import type { Usage, UsageWindow } from "../../src/usage";
+import { LIMIT_NAMES, USAGE_AMBER, USAGE_RED, resetsIn, usageLevel } from "../../src/usage";
+import { useNow } from "./clock";
 import { vscodeApi } from "../shared/vscode";
 
 const post = (m: unknown) => vscodeApi.postMessage(m);
@@ -275,6 +278,73 @@ export function MemoryPanel({ mem, onRefresh, focusIn, onClose }: { mem: { loadi
           ))}
           <div class="muted mem-note">A click opens the entry's file beside the chat, to read or edit.</div>
         </div>
+      )}
+    </RailPop>
+  );
+}
+
+// ------------------------------------------------------------ the Usage card (99)
+
+const pct = (w: UsageWindow | null) => (w ? `${Math.round(w.used * 100)} %` : "not reported");
+
+/** One line for the icon's name and hover: each window's share, or that there is no reading. */
+export function usageSummary(u: Usage | null): string {
+  if (!u) return "no reading yet";
+  if (u.status === "rejected" || u.grace) return `${(u.limit && LIMIT_NAMES[u.limit]) || "usage limit"} reached`;
+  return `session ${pct(u.session)}, weekly ${pct(u.weekly)}`;
+}
+
+/** When a window resets: in how long, and the clock time (with the day past a day). */
+function resetText(resetsAt: number | null, now: number): string {
+  if (!resetsAt) return "reset time not reported";
+  const d = new Date(resetsAt * 1000);
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const when = resetsAt * 1000 - now > 86_400_000 ? `${d.toLocaleDateString([], { weekday: "short" })} ${time}` : time;
+  return `resets ${resetsIn(resetsAt, now)} (${when})`;
+}
+
+function UsageRow({ name, w, now }: { name: string; w: UsageWindow | null; now: number }) {
+  const level = !w ? "none" : w.used >= USAGE_RED ? "red" : w.used >= USAGE_AMBER ? "amber" : "ok";
+  return (
+    <div class={`usage-row ${level}`}>
+      <div class="usage-head">
+        <span>{name}</span>
+        <b>{w ? `${pct(w)} used` : "not reported"}</b>
+      </div>
+      <div class="usage-bar" aria-hidden="true">
+        <span style={{ width: `${w ? Math.round(w.used * 100) : 0}%` }} />
+      </div>
+      {w && <div class="muted usage-reset">{resetText(w.resetsAt, now)}</div>}
+    </div>
+  );
+}
+
+/**
+ * The Usage card (99), on hover over its icon: the 5-hour session's and the
+ * week's share of the Claude plan used, with when each resets, as the
+ * newest `rate_limit_event` any chat of this window heard says them.
+ */
+export function UsageCard(p: { usage: Usage | null; focusIn: boolean; onClose: () => void; onEnter: () => void; onLeave: () => void }) {
+  const now = useNow(30_000, true);
+  const u = p.usage;
+  const ago = u ? Math.max(0, Math.round((now - u.at) / 60000)) : 0;
+  return (
+    <RailPop cls="usage-card" label="Claude plan usage" focusIn={p.focusIn} onClose={p.onClose} onEnter={p.onEnter} onLeave={p.onLeave}>
+      <div class="usage-title">
+        <b>Claude plan usage</b>
+      </div>
+      {!u && <div class="muted">No reading yet: Claude Code reports it with a chat's reply, so it shows once a chat of this window has had one.</div>}
+      {u && (
+        <>
+          {usageLevel(u) === "red" && (u.status === "rejected" || u.grace) && (
+            <div class="warn">{u.grace ? "Limit reached — the turn under way is finishing." : `You've hit your ${(u.limit && LIMIT_NAMES[u.limit]) || "usage limit"}.`}</div>
+          )}
+          <UsageRow name="Session (5 hours)" w={u.session} now={now} />
+          <UsageRow name="Weekly" w={u.weekly} now={now} />
+          <div class="muted usage-note">
+            As Claude Code last reported it, {ago < 1 ? "just now" : `${ago} min ago`}. The icon turns amber from {Math.round(USAGE_AMBER * 100)} % and red from {Math.round(USAGE_RED * 100)} %.
+          </div>
+        </>
       )}
     </RailPop>
   );
