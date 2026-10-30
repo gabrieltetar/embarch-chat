@@ -36,6 +36,9 @@ import type { EditorContext, EditorItem } from "../editorContext";
 import { editorItem, editorLabel } from "../editorContext";
 import { terminalOutput } from "../terminals";
 import type { ChatToHost, Header, HostToChat, TerminalRef } from "../../webview/shared/protocol";
+import type { PromptuService } from "../promptu/service";
+import type { BeginOpts, DeskItem, PromptuRuns, PromptuView } from "../promptu/runs";
+import { cleanInput } from "../promptu/runs";
 
 export interface HostCtx {
   chats: ChatManager;
@@ -75,6 +78,12 @@ export interface HostCtx {
   continueStep: (sid: string) => void;
   /** The editor's open file or selection, which goes with a message by default (60). */
   editor: EditorContext;
+  /** Promptu: the binary, the card's switches, the pattern set (95). */
+  promptu: PromptuService;
+  /** Promptu's runs, one per chat (96). */
+  runs: PromptuRuns;
+  /** The EmbArch parts a chat has, for the pass's `--have` (96): `desk`, `embarch-api`. */
+  promptuHave: (rec: ChatRecord) => string[];
 }
 
 /** Where an "always allow" was last saved, in the extension's global state (78). */
@@ -118,6 +127,33 @@ export function assistInput(ctx: HostCtx, rec: ChatRecord, draft: string, opts: 
     context: st.context ? { percentage: st.context.percentage, totalTokens: st.context.totalTokens, maxTokens: st.context.maxTokens } : null,
     ...(opts.references ? { references: deskReferences(index, draft, { ownKey: h.issueKey, ownPrs: h.prs, repo: githubRepo(rec.chat.opts.cwd || st.cwd || "") }) } : {}),
   };
+}
+
+/**
+ * Runs Promptu's pass for a chat (decision 96): the rough prompt, with the
+ * chat's work item as the `desk` source when it has one — the brief the
+ * host reads from the desk, so the token never reaches a page (20). A brief
+ * that cannot be read leaves the source out; the pass goes on.
+ */
+export async function beginPromptu(ctx: HostCtx, rec: ChatRecord, o: Pick<BeginOpts, "rough" | "origin" | "pattern" | "start" | "fallback">): Promise<void> {
+  const h = headerFor(ctx, rec);
+  const desk = async (): Promise<DeskItem | null> => {
+    if (!h.itemId || h.untracked) return null;
+    try {
+      const b = await ctx.desk.client.brief(h.itemId);
+      return { id: h.itemId, key: h.issueKey, title: h.title, url: h.issueUrl, text: b.text };
+    } catch (e) {
+      ctx.log(`[${rec.chat.sessionId.slice(0, 8)}] promptu: the work item's brief could not be read (${(e as Error).message}); the pass goes on without it`);
+      return null;
+    }
+  };
+  await ctx.runs.begin(rec.chat.sessionId, {
+    ...o,
+    cwd: rec.chat.opts.cwd || rec.chat.state.cwd || "",
+    have: ctx.promptuHave(rec),
+    quick: ctx.promptu.quick(),
+    desk,
+  });
 }
 
 /** A pasted image as the page sent it: one of the API's types, base64. */
@@ -166,6 +202,19 @@ export class ChatHost implements vscode.Disposable {
   private onRefs = () => {
     if (this.ready) this.pushRefs();
   };
+  /** Promptu's card changed: found or not, its switches, its patterns (95). */
+  private onPromptuState = () => {
+    if (this.ready) this.pushPromptuState();
+  };
+  private onPromptuView = (sid: string, view: PromptuView | null) => {
+    if (sid === this.sid && this.ready) this.post({ t: "promptu", sid, view });
+  };
+  /** A run ended: its result goes to the page showing the chat, once (96). */
+  private onPromptuResult = (sid: string) => {
+    if (sid === this.sid && this.ready) this.pushPromptuResult();
+  };
+  /** The files the Memory menu was last given: the only ones a click opens (98). */
+  private memoryFiles = new Set<string>();
 
   /** Messages go in the order sent, though one waits — to resume its chat, for a terminal's output. */
   private sending: Promise<void> = Promise.resolve();
@@ -190,6 +239,9 @@ export class ChatHost implements vscode.Disposable {
     ctx.assistant.on("chips", this.onChips);
     ctx.history.on("changed", this.onPrompts);
     ctx.editor.on("changed", this.onEditor);
+    ctx.promptu.on("state", this.onPromptuState);
+    ctx.runs.on("view", this.onPromptuView);
+    ctx.runs.on("result", this.onPromptuResult);
     this.subs.push(webview.onDidReceiveMessage((m: ChatToHost) => void this.onMessage(m)));
     // The times above messages come and go with their setting (68).
     this.subs.push(
@@ -251,6 +303,9 @@ export class ChatHost implements vscode.Disposable {
     this.pushPrompts();
     this.pushDraft();
     this.pushEditor();
+    this.pushPromptuState();
+    this.post({ t: "promptu", sid: rec.chat.sessionId, view: this.ctx.runs.view(rec.chat.sessionId) });
+    this.pushPromptuResult();
     // A turn that ended while the chat was off screen gets its chips now (34).
     if (rec.ours) void this.ctx.assistant.shown(rec.chat.sessionId, () => assistInput(this.ctx, rec, ""));
   }
@@ -292,6 +347,19 @@ export class ChatHost implements vscode.Disposable {
   private pushRefs(): void {
     const r = this.ctx.desk.refs;
     this.post({ t: "refs", refs: r ? { issues: r.issues, prs: r.prs } : null });
+  }
+
+  /** Promptu's card for this page (95): found here or not, the switches, the pattern set. */
+  private pushPromptuState(): void {
+    const rec = this.sid ? this.ctx.chats.get(this.sid) : undefined;
+    this.post({ t: "promptuState", state: this.ctx.promptu.state(rec ? rec.chat.opts.cwd || rec.chat.state.cwd || "" : "") });
+  }
+
+  /** A run of this chat's that ended, taken once: the first page showing the chat gets it (96). */
+  private pushPromptuResult(): void {
+    if (!this.sid) return;
+    const r = this.ctx.runs.take(this.sid);
+    if (r) this.post({ t: "promptuResult", result: r });
   }
 
   /** The owner's past prompts, when they changed since this page last got them. */
@@ -361,6 +429,18 @@ export class ChatHost implements vscode.Disposable {
       case "assistCancel":
         this.ctx.assistant.cancel(chat.sessionId);
         return;
+      case "promptu":
+        return this.promptu(rec, m);
+      case "promptuSettings":
+        return this.ctx.promptu.set({ enabled: m.enabled, quick: m.quick });
+      case "promptuMemory":
+        return this.memory(rec);
+      case "promptuOpen": {
+        // Only a file the menu was given: the page names one, it never supplies a path of its own (98).
+        if (typeof m.file !== "string" || !this.memoryFiles.has(m.file)) return;
+        const line = Number.isInteger(m.line) && (m.line as number) > 0 ? (m.line as number) : undefined;
+        return openAt(m.file, { line }, this.column());
+      }
       case "freshChat":
         return this.ctx.freshChat(chat.sessionId);
       case "rename":
@@ -566,6 +646,47 @@ export class ChatHost implements vscode.Disposable {
     }
   }
 
+  /** A page's Promptu step (96): the pass on its draft, a page of answers, the end of the dialog, or Esc while it reads. */
+  private async promptu(rec: ChatRecord, m: Extract<ChatToHost, { t: "promptu" }>): Promise<void> {
+    const sid = rec.chat.sessionId;
+    if (!rec.ours && !rec.resumable) return;
+    switch (m.op) {
+      case "prep": {
+        if (typeof m.text !== "string" || !m.text.trim()) return;
+        const origin = m.origin === "handoff" ? "handoff" : "enter";
+        const pattern = typeof m.pattern === "string" && /^[a-z0-9-]{1,64}$/.test(m.pattern) ? m.pattern : null;
+        if (!this.ctx.promptu.ready()) {
+          // Turned off or gone since the page lit its icon: one line, the draft as typed.
+          this.post({ t: "promptuResult", result: { sid, seq: 0, origin, rough: m.text, error: "Promptu is off or not installed: nothing changed" } });
+          return;
+        }
+        return beginPromptu(this.ctx, rec, { rough: m.text, origin, pattern });
+      }
+      case "answer":
+        if (Number.isInteger(m.seq)) await this.ctx.runs.answer(sid, m.seq, cleanInput(m.input));
+        return;
+      case "finish":
+        if (Number.isInteger(m.seq) && (m.rest === "recommended" || m.rest === "assume")) await this.ctx.runs.finish(sid, m.seq, cleanInput(m.input), m.rest);
+        return;
+      case "cancel":
+        if (Number.isInteger(m.seq)) this.ctx.runs.cancel(sid, m.seq);
+        return;
+    }
+  }
+
+  /** The Memory menu's data (98): what loads in the chat's folder, and where each entry was used. */
+  private async memory(rec: ChatRecord): Promise<void> {
+    const cwd = rec.chat.opts.cwd || rec.chat.state.cwd || "";
+    const r = await this.ctx.promptu.cli.memory(cwd);
+    if (!r.ok || !r.value || !Array.isArray(r.value.entries)) {
+      this.post({ t: "promptuMemory", error: r.error ?? "promptu memory printed nothing the menu can read" });
+      return;
+    }
+    const d = r.value;
+    this.memoryFiles = new Set([...d.entries.map((e) => e.file), ...(d.memory?.index ? [d.memory.index] : []), ...d.scopes.flatMap((s) => s.files ?? [])]);
+    this.post({ t: "promptuMemory", data: d });
+  }
+
   private async send(m: Extract<ChatToHost, { t: "send" }>, rec: ChatRecord): Promise<void> {
     if (this.ctx.chats.get(rec.chat.sessionId) !== rec) {
       // A read-only view dropped since, as another thread opened: the message stays with it, to copy.
@@ -641,6 +762,9 @@ export class ChatHost implements vscode.Disposable {
     this.ctx.assistant.off("chips", this.onChips);
     this.ctx.history.off("changed", this.onPrompts);
     this.ctx.editor.off("changed", this.onEditor);
+    this.ctx.promptu.off("state", this.onPromptuState);
+    this.ctx.runs.off("view", this.onPromptuView);
+    this.ctx.runs.off("result", this.onPromptuResult);
     for (const s of this.subs) s.dispose();
   }
 }

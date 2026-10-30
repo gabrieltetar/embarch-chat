@@ -16,7 +16,18 @@
 // only previews, so a menu opened under a still pointer never takes the
 // Enter meant to send (86).
 // After each turn, reply chips above the input (25). The 📚 beside the 💡
-// holds the library, one submenu per category (38).
+// holds the library, one submenu per category (38). Both sit in the rail on
+// the chat's left edge with Memory and Promptu (94), drawn there from here:
+// their menus still open over the input, and the 💡's swaps still preview in
+// the draft (37).
+//
+// Promptu (95–97): at a task start — the chat's first prompt — with Promptu
+// on, its rail icon lights, and Enter runs the pass instead of sending: the
+// host plans the questions, a dialog asks them (promptu.tsx), and the prompt
+// it writes comes back into the draft, not sent; the next Enter sends it.
+// A pattern forced on the card lights it for the next prompt whatever the
+// chat. A failure is one line and the draft stays as typed. The 💡's
+// handoff card opens the handoff pattern's dialog (97).
 //
 // What goes in with the words, as Claude Code's own panel does it (56): a
 // pasted screenshot is a thumbnail under the input until sent — an image
@@ -32,6 +43,7 @@
 // the message goes (58).
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
+import { createPortal } from "preact/compat";
 import type { Card, Chip, DiffPart, PastPrompt } from "../../src/assistant/edits";
 import { CATEGORIES, applyEdit, ghostRest, prefixMatch, wordDiff } from "../../src/assistant/edits";
 import type { LibraryEntry } from "../../src/library/entries";
@@ -43,6 +55,11 @@ import type { HostToChat, MentionItem, TerminalRef } from "../shared/protocol";
 import { MODES } from "../shared/protocol";
 import { vscodeApi } from "../shared/vscode";
 import { CategoryMenu, MenuGroup, MenuKeys } from "./menus";
+import type { MemoryOut } from "../../src/promptu/cli";
+import type { PromptuResult, PromptuView } from "../../src/promptu/runs";
+import type { PromptuState } from "../../src/promptu/service";
+import { hasFooter } from "../../src/promptu/text";
+import { MemoryPanel, PromptuCard, RailEntry } from "./rail";
 
 const post = (m: unknown) => vscodeApi.postMessage(m);
 
@@ -71,6 +88,14 @@ interface Props {
   /** The editor's open file or selection (60). */
   editor: EditorChip | null;
   chips: Chip[];
+  /** The rail on the chat's left edge, which the 📚, 💡, Memory and Promptu go into (94); null while it is not there. */
+  rail: HTMLElement | null;
+  /** Promptu's card: found or not, its switches, the patterns (95); null before the host says. */
+  promptu: PromptuState | null;
+  /** The chat has no message of the owner's yet: a task start (96). */
+  taskStart: boolean;
+  /** This chat's Promptu run while one is under way (its dialog shows, or in Quick mode only the icon turns). */
+  promptuView: PromptuView | null;
   /** The pills beside the mode select (footer.tsx): the model pill, MCP. */
   footer?: preact.ComponentChildren;
   /** The page's own commands — /copy, /export, /rewind (history.tsx), /mcp, /remote-control (footer.tsx) — answered here: true when taken. */
@@ -170,6 +195,20 @@ export function returnToDraft(sid: string, text: string, typed = false): void {
 }
 
 /**
+ * Promptu's per-chat memory on this page (95, 96): the pattern forced on the
+ * card for the next prompt, whether this task start already had its pass —
+ * run, failed or skipped, the next Enter sends — and a run's result waiting
+ * for the chat's composer, which may not be mounted when it lands.
+ */
+const forcedPattern: Record<string, string> = {};
+const passed: Record<string, boolean> = {};
+const landed: Record<string, PromptuResult> = {};
+export function promptuLanded(r: PromptuResult): void {
+  landed[r.sid] = r;
+  window.dispatchEvent(new CustomEvent("embarch-promptu", { detail: r.sid }));
+}
+
+/**
  * The owner is typing (decision 55), by Claude Code's own rule: the draft
  * changed under the owner's hands in the last 1.5 s and is not blank, so
  * sending or clearing it ends that at once; here leaving the input ends it
@@ -186,6 +225,7 @@ function setTyping(v: boolean): void {
 
 export function Composer(p: Props) {
   const { sid, busy, mode, slashCommands, placeholder, mentions, library, chips, onChip } = p;
+  const promptuBusy = !!p.promptuView;
   const [text, setTextState] = useState(() => (vscodeApi.getState() as Saved | undefined)?.drafts?.[sid] ?? "");
   const [pop, setPop] = useState<Pop | null>(null);
   const [ghost, setGhost] = useState<Ghost | null>(null);
@@ -193,6 +233,13 @@ export function Composer(p: Props) {
   const [cards, setCards] = useState<{ judged: string; list: Card[] }>({ judged: "", list: [] });
   const [used, setUsed] = useState<string[]>([]);
   const [menu, setMenu] = useState<null | "bulb" | "library">(null);
+  /** What the rail has open beside it: Promptu's card or the Memory menu (95, 98). */
+  const [railPop, setRailPop] = useState<null | "promptu" | "memory">(null);
+  const popTimer = useRef(0);
+  const [memory, setMemory] = useState<{ loading: boolean; data?: MemoryOut; error?: string }>({ loading: false });
+  const [forced, setForced] = useState<string | null>(forcedPattern[sid] ?? null);
+  /** The pass was asked for and the host has not shown its dialog yet. */
+  const [asking, setAsking] = useState(false);
   const [preview, setPreview] = useState<Card | null>(null);
   const [holding, setHolding] = useState(false);
   /** Side-question mode (57): Enter asks aside. */
@@ -315,10 +362,67 @@ export function Composer(p: Props) {
       clearTimeout(s.ghostTimer);
       clearTimeout(s.cardsTimer);
       clearTimeout(s.holdTimer);
+      clearTimeout(popTimer.current);
       doneTyping();
     },
     [],
   );
+
+  // A Promptu run of this chat's ended (96): its prompt into the draft, not
+  // sent — Ctrl+Z puts the owner's own back — or one line and the draft as
+  // it was. Either way this task start has had its pass: the next Enter sends.
+  useEffect(() => {
+    const take = () => {
+      const r = landed[sid];
+      if (!r) return;
+      delete landed[sid];
+      setAsking(false);
+      if (r.origin !== "handoff") passed[sid] = true;
+      if (r.prompt) {
+        edit(r.prompt, { handoff: r.origin === "handoff" });
+        // The handoff card's prompt still asks this chat for a handoff, so its turn offers the fresh chat (36).
+        if (r.origin === "handoff") a.current.handoff = true;
+        setNotice(`Promptu wrote this prompt${r.pattern ? ` (${r.pattern})` : ""}: read it, then Enter sends it — Ctrl+Z puts yours back.`);
+        // The linker reads it as any draft (88): the cards after their pause.
+        if (props.current.assistant) a.current.cardsTimer = window.setTimeout(() => askCards(r.prompt!), CARDS_MS);
+        return;
+      }
+      if (r.fallback && !textRef.current.trim()) {
+        setText(r.fallback);
+        focusAt(r.fallback.length);
+      }
+      setNotice(
+        r.cancelled
+          ? r.fallback
+            ? "Promptu skipped: the desk's starter is in the draft."
+            : "Promptu skipped: Enter sends your draft as it is."
+          : `Promptu: ${r.error ?? "no prompt"} — ${r.fallback ? "the desk's starter is in the draft" : "your draft is as you typed it"}.`,
+      );
+    };
+    const on = (e: Event) => (e as CustomEvent<string>).detail === sid && take();
+    take();
+    window.addEventListener("embarch-promptu", on);
+    return () => window.removeEventListener("embarch-promptu", on);
+  }, [sid]);
+
+  // The host shows the dialog: the pass is its now. A host that never answers
+  // leaves Enter sending again after a few seconds: Promptu never blocks it.
+  useEffect(() => {
+    if (promptuBusy) return setAsking(false);
+    if (!asking) return;
+    const t = window.setTimeout(() => setAsking(false), 8000);
+    return () => clearTimeout(t);
+  }, [promptuBusy, asking]);
+
+  // The card or the Memory menu closes on a click elsewhere.
+  useEffect(() => {
+    if (!railPop) return;
+    const away = (e: MouseEvent) => {
+      if (!(e.target instanceof Node && p.rail?.contains(e.target))) setRailPop(null);
+    };
+    document.addEventListener("mousedown", away);
+    return () => document.removeEventListener("mousedown", away);
+  }, [railPop, p.rail]);
 
   // ------------------------------------------------------------ the assistant's answers
 
@@ -328,6 +432,10 @@ export function Composer(p: Props) {
       const s = a.current;
       if (m.t === "focus") {
         ta.current?.focus();
+        return;
+      }
+      if (m.t === "promptuMemory") {
+        setMemory({ loading: false, data: m.data, error: m.error });
         return;
       }
       if (m.t === "insert") {
@@ -511,6 +619,13 @@ export function Composer(p: Props) {
   };
 
   const applyCard = (c: Card) => {
+    // The handoff card opens the handoff pattern's questions (97): one implementation writes handoffs.
+    if (c.kind === "handoff" && promptuOn && textRef.current.trim()) {
+      setUsed((u) => [...u, c.id]);
+      setMenu(null);
+      startPass(textRef.current.trim(), "handoff", "handoff");
+      return;
+    }
     const after = applyEdit(textRef.current, c.edit);
     if (after === null) return;
     if (c.kind === "handoff") a.current.handoff = true;
@@ -629,6 +744,31 @@ export function Composer(p: Props) {
     taken();
   };
 
+  /**
+   * Promptu's pass on the draft (96): the host runs it and shows its dialog;
+   * the draft stays as it is until the prompt comes back. A pattern forced
+   * on the card goes with it, once.
+   */
+  const startPass = (t: string, origin: "enter" | "handoff", pattern: string | null) => {
+    const s = a.current;
+    clearTimeout(s.ghostTimer);
+    clearTimeout(s.cardsTimer);
+    cancelStale();
+    endHold();
+    setGhost(null);
+    setPreview(null);
+    setMenu(null);
+    setRailPop(null);
+    setNotice(null);
+    doneTyping();
+    if (origin === "enter") {
+      delete forcedPattern[sid];
+      setForced(null);
+    }
+    setAsking(true);
+    post({ t: "promptu", op: "prep", text: t, pattern, origin });
+  };
+
   const send = () => {
     // The DOM, not the last render: keys typed and Enter in one frame would
     // otherwise send the text from before them.
@@ -648,6 +788,10 @@ export function Composer(p: Props) {
     // Answered by the page, as /btw is: nothing goes, and what goes with a
     // message — a screenshot, a paste, the chips — stays for the next (56).
     if (t.startsWith("/") && props.current.onCommand(t)) return taken();
+    // A task start with Promptu on: the pass, not a send (96).
+    if (lit) return startPass(t, "enter", forced);
+    // A pass already asked for: its dialog is on the way, and this Enter is not a send.
+    if (asking || promptuBusy) return;
     const s = a.current;
     if (s.hold !== null || !t) return doSend(t);
     // Just before send, the cards judge the whole prompt (26) — unless they already have.
@@ -760,7 +904,11 @@ export function Composer(p: Props) {
       return;
     }
     if (e.key === "Escape") {
-      if (menu) setMenu(null);
+      // Quick mode's pass has no dialog to take the Esc: here it stops the pass while it reads, never Claude.
+      const pv = p.promptuView;
+      if (pv && pv.quick && pv.phase === "working" && pv.doing === "prep") post({ t: "promptu", op: "cancel", seq: pv.seq });
+      else if (railPop) setRailPop(null);
+      else if (menu) setMenu(null);
       // Leaving the mode never stops Claude: that is the next Esc.
       else if (aside) setAsideMode(false);
       else if (shown) setGhost(null);
@@ -789,6 +937,20 @@ export function Composer(p: Props) {
     ta.current?.focus();
   };
 
+  /** Promptu is here and on (95). */
+  const promptuOn = !!p.promptu?.available && !!p.promptu?.enabled;
+  /**
+   * The Promptu icon lights when the next Enter runs the pass (95): at a task
+   * start — this chat's first prompt — or with a pattern forced for the next
+   * prompt; never for a command, a side question, or a draft that already
+   * went through it (its footer).
+   */
+  const draftT = text.trim();
+  const lit =
+    promptuOn && !aside && !promptuBusy && !asking && !!draftT && !draftT.startsWith("/") && !hasFooter(text) && (forced !== null || (p.taskStart && !passed[sid]));
+  /** What the 💡 previews for a card: the handoff card opens a dialog instead while Promptu is on (97). */
+  const previewOf = (c: Card | null) => (c && c.kind === "handoff" && promptuOn ? null : c);
+
   /** The ghost text the draft shows, or would but for a card's preview. */
   const ghostNow = ghost && atEnd && !pop ? ghostRest(text, ghost.base, ghost.completion) : null;
   const shown = preview ? null : ghostNow;
@@ -800,7 +962,9 @@ export function Composer(p: Props) {
   const bulbGroups: Array<MenuGroup<Card>> = CATEGORIES.map((c) => ({
     id: c.id,
     label: c.label,
-    items: live.filter((x) => x.category === c.id).map((x) => ({ key: x.id, label: x.title, detail: x.why, value: x })),
+    items: live
+      .filter((x) => x.category === c.id)
+      .map((x) => ({ key: x.id, label: x.title, detail: x.kind === "handoff" && promptuOn ? `Opens Promptu's handoff questions. ${x.why ?? ""}`.trim() : x.why, value: x })),
   })).filter((g) => g.items.length);
 
   const libGroups: Array<MenuGroup<LibraryEntry>> = byCategory(library).map((g) => ({
@@ -859,6 +1023,7 @@ export function Composer(p: Props) {
     const run = () => {
       let h = height([{ t: "same", s: text }, ...(ghostNow ? [{ t: "add" as const, s: ghostNow }] : [])]);
       for (const c of live) {
+        if (!previewOf(c)) continue;
         const next = applyEdit(text, c.edit);
         if (next !== null) h = Math.max(h, height(wordDiff(text, next)));
       }
@@ -867,7 +1032,7 @@ export function Composer(p: Props) {
     };
     measureNow.current = run;
     run();
-  }, [bulbShown, text, live, ghostNow]);
+  }, [bulbShown, text, live, ghostNow, promptuOn]);
   useEffect(() => {
     const f = field.current;
     if (!bulbShown || !f || typeof ResizeObserver === "undefined") return;
@@ -882,6 +1047,21 @@ export function Composer(p: Props) {
     ro.observe(f);
     return () => ro.disconnect();
   }, [bulbShown]);
+
+  /** The Memory menu's data, read again each time it opens (98). */
+  const loadMemory = () => {
+    setMemory((m) => ({ ...m, loading: true, error: undefined }));
+    post({ t: "promptuMemory" });
+  };
+  /** Promptu's card opens on hover and stays while the pointer is on the icon or the card (95). */
+  const openPromptu = () => {
+    clearTimeout(popTimer.current);
+    setRailPop("promptu");
+  };
+  const leavePromptu = () => {
+    clearTimeout(popTimer.current);
+    popTimer.current = window.setTimeout(() => setRailPop((x) => (x === "promptu" ? null : x)), 300);
+  };
 
   /**
    * While a menu shows, ↑/↓ — and once they focused a row ←/→, Enter and
@@ -927,7 +1107,9 @@ export function Composer(p: Props) {
           ))}
         </div>
       )}
-      {menu === "bulb" && bulbGroups.length > 0 && <CategoryMenu kind="bulb" groups={bulbGroups} anchor={bulbBtn.current} keys={menuKeys} onPick={applyCard} onHover={setPreview} onClose={() => (setMenu(null), setPreview(null))} />}
+      {menu === "bulb" && bulbGroups.length > 0 && (
+        <CategoryMenu kind="bulb" groups={bulbGroups} anchor={bulbBtn.current} keys={menuKeys} onPick={applyCard} onHover={(c) => setPreview(previewOf(c))} onClose={() => (setMenu(null), setPreview(null))} />
+      )}
       {menu === "library" && libGroups.length > 0 && <CategoryMenu kind="library" groups={libGroups} anchor={libBtn.current} keys={menuKeys} onPick={pickEntry} onClose={() => setMenu(null)} />}
       {aside && (
         <div class="aside-tag" title="Enter asks Claude aside: the answer shows above, and neither joins the conversation. Esc or 💬 leaves, the draft kept.">
@@ -1034,19 +1216,6 @@ export function Composer(p: Props) {
         {p.footer}
         <span class="assist-slot">
           <button
-            ref={bulbBtn}
-            class={`icon bulb ${live.length ? "lit" : ""} ${holding ? "checking" : ""}`}
-            title={holding ? "Checking the draft before it goes — Enter sends now" : live.length ? `${live.length} suggestion${live.length > 1 ? "s" : ""} for this draft` : p.assistant ? "Suggestions for the draft show here after a pause" : "The assistant is off (embarchChat.assistant)"}
-            disabled={!live.length}
-            onClick={() => setMenu(menu === "bulb" ? null : "bulb")}
-          >
-            💡{live.length > 0 && <span class="count">{live.length}</span>}
-            {holding && <span class="spinner" />}
-          </button>
-          <button ref={libBtn} class="icon library" title="Library" disabled={!library.length} onClick={() => setMenu(menu === "library" ? null : "library")}>
-            📚
-          </button>
-          <button
             class={`icon btw ${aside ? "on" : ""}`}
             title={p.canAsk ? (aside ? "Side question mode: Enter asks aside — click or Esc to leave" : "Side question (/btw) — answered beside the chat, not added to it") : "Side questions need a conversation this window runs: send it a message first"}
             aria-pressed={aside}
@@ -1073,6 +1242,70 @@ export function Composer(p: Props) {
           </button>
         </span>
       </div>
+      {p.rail &&
+        createPortal(
+          <>
+            <div class={`rail-col ${railPop ? "popped" : ""}`}>
+              <RailEntry
+                icon="🧠"
+                label="Memory"
+                cls="memory"
+                title="Memory: what loads in this folder, by scope, domain and kind, with stale flags"
+                pressed={railPop === "memory"}
+                onClick={() => (railPop === "memory" ? setRailPop(null) : (setRailPop("memory"), loadMemory()))}
+              />
+              <RailEntry
+                icon="✨"
+                label="Promptu"
+                cls="promptu"
+                lit={lit}
+                spin={asking || promptuBusy}
+                pressed={railPop === "promptu"}
+                title={
+                  !p.promptu?.available
+                    ? "Promptu is not installed here"
+                    : !p.promptu.enabled
+                      ? "Promptu is off — hover for its card"
+                      : lit
+                        ? `Enter runs Promptu on this prompt${forced ? ` as ${forced}` : ""}; the result comes back to the draft`
+                        : "Promptu runs on the first prompt of a task; replies go as typed — hover for its card"
+                }
+                onClick={() => openPromptu()}
+                onEnter={() => openPromptu()}
+                onLeave={leavePromptu}
+              />
+              <RailEntry icon="📚" label="Library" cls="library" title="Library" btnRef={libBtn} disabled={!library.length} onClick={() => (setMenu(menu === "library" ? null : "library"), ta.current?.focus())} />
+              <RailEntry
+                icon="💡"
+                label="Suggestions"
+                cls={`bulb ${holding ? "checking" : ""}`}
+                btnRef={bulbBtn}
+                lit={live.length > 0}
+                count={live.length}
+                spin={holding}
+                disabled={!live.length}
+                title={holding ? "Checking the draft before it goes — Enter sends now" : live.length ? `${live.length} suggestion${live.length > 1 ? "s" : ""} for this draft` : p.assistant ? "Suggestions for the draft show here after a pause" : "The assistant is off (embarchChat.assistant)"}
+                onClick={() => (setMenu(menu === "bulb" ? null : "bulb"), ta.current?.focus())}
+              />
+            </div>
+            {railPop === "promptu" && p.promptu && (
+              <PromptuCard
+                state={p.promptu}
+                lit={lit}
+                forced={forced}
+                onForce={(name) => {
+                  if (name) forcedPattern[sid] = name;
+                  else delete forcedPattern[sid];
+                  setForced(name);
+                }}
+                onEnter={() => clearTimeout(popTimer.current)}
+                onLeave={leavePromptu}
+              />
+            )}
+            {railPop === "memory" && <MemoryPanel mem={memory} onRefresh={loadMemory} />}
+          </>,
+          p.rail,
+        )}
     </div>
   );
 }

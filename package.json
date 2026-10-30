@@ -322,6 +322,12 @@
             "scope": "machine",
             "description": "The `claude` each chat runs. Defaults to the one on PATH, as the desk and terminals use (decision 30). User or Remote settings only — a workspace cannot set it."
           },
+          "embarchChat.promptuPath": {
+            "type": "string",
+            "default": "promptu",
+            "scope": "machine",
+            "description": "Promptu's `promptu` CLI (embarch-promptu), which turns the first prompt of a task into a better one in the draft (decisions 94–98). Defaults to the one on PATH. Not found, the Promptu icon stays dark and Enter sends as it always did. User or Remote settings only — a workspace cannot set it."
+          },
           "embarchChat.idleMinutes": {
             "type": "number",
             "default": 5,

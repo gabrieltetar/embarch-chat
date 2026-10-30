@@ -851,7 +851,7 @@ await check("the column: a wide pane centres timeline, cards and composer in 80 
   const measure = () =>
     exec(`const r = (s) => document.querySelector(s)?.getBoundingClientRect();
       const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
-      return { vw: document.documentElement.clientWidth, rem,
+      return { vw: document.documentElement.clientWidth, rem, rail: r('.rail')?.right ?? 0,
         head: r('.header .row').left, composer: r('.composer').width, field: r('.composer .field').left, fieldRight: r('.composer .field').right,
         p: r('.timeline .reply .md > p'), code: r('.timeline .reply .md > .codeblock'), tool: r('.timeline > div > .tool').left,
         think: r('.timeline > div > details.thinking').left, user: r('.timeline .user').right, turn: r('.timeline > .turn').width };`);
@@ -872,21 +872,25 @@ await check("the column: a wide pane centres timeline, cards and composer in 80 
     await wd("POST", `${S}/window/rect`, { width: 460, height: 900 });
   }
   for (const [name, m] of seen) {
+    // The column is the region right of the rail (decision 94): the pane less the rail.
+    const mw = m.vw - m.rail;
     const gutter = Math.min(16, Math.max(8, 0.025 * m.vw));
-    const col = Math.max(56 * m.rem, 0.8 * m.vw);
-    const left = Math.max(gutter, (m.vw - col) / 2);
+    const col = Math.max(56 * m.rem, 0.8 * mw);
+    const left = m.rail + Math.max(gutter, (mw - col) / 2);
     near(m.p.left, left, `${name}: prose starts at the column's edge`);
     near(m.field, left, `${name}: the composer's field shares it`);
     near(m.think, left + gutter, `${name}: thinking indents by the gutter`);
     near(m.tool, left + gutter, `${name}: a step indents by the gutter`);
     near(m.head, gutter, `${name}: the header keeps the gutter, full width`);
-    near(m.composer, m.vw, `${name}: the composer's rule runs the pane's width`);
-    if (m.vw > col + 2 * gutter) {
+    near(m.composer, mw, `${name}: the composer's rule runs the pane's width, from the rail`);
+    assert.ok(m.rail > 20 && m.rail < 40, `${name}: the rail, folded: ${m.rail}`);
+    if (mw > col + 2 * gutter) {
       assert.ok(m.p.width <= 64 * m.rem + 1 && m.p.width > 56 * m.rem, `${name}: prose wraps at 64rem: ${m.p.width}`);
       near(m.code.width, col, `${name}: code takes the whole column`);
       near(m.turn, col, `${name}: the turn's rule stops at the column`);
-      near(m.fieldRight, m.vw - left, `${name}: the composer's field ends at the column's edge`);
-      assert.ok(m.user <= m.vw - left + 1 && m.user >= m.vw - left - 20, `${name}: the bubble ends at the column's edge: ${m.user}`);
+      const right = m.vw - (left - m.rail);
+      near(m.fieldRight, right, `${name}: the composer's field ends at the column's edge`);
+      assert.ok(m.user <= right + 1 && m.user >= right - 20, `${name}: the bubble ends at the column's edge: ${m.user}`);
     }
   }
 });
@@ -1412,7 +1416,8 @@ await check("the 💡 lights with Haiku's cards; hovering a card previews its ed
   await shot("assist-card-preview");
   await mouseAway();
   assert.equal(await exec("return document.querySelector('.composer textarea').classList.contains('previewing')"), false);
-  await click(".bulb");
+  // Still open: the pointer leaving only ends the preview. (`.bulb` is also the menu's own class: the rail's button is first now.)
+  if (!(await text(".menu.bulb")).length) await click(".rail .bulb");
   await settle();
   await pick(".menu.bulb .menu-item", first.title);
   await settle();
@@ -3512,6 +3517,360 @@ await check("the model pill by keyboard: Enter opens it, Tab reaches each model 
   assert.deepEqual((await posts()).filter((p) => p.t === "model"), [{ t: "model", model: "opus" }]);
   assert.equal((await text(".model-pop")).length, 0);
   assert.equal(await focused(), "BUTTON.pill.model");
+});
+
+// ------------------------------------------------------------ the rail and Promptu (decisions 94–98)
+
+const PATTERNS = [
+  { name: "debug-failure", version: 1, summary: "Investigate a failure whose cause is not known yet." },
+  { name: "handoff", version: 1, summary: "Have this session write a self-contained brief." },
+  { name: "implement-issue", version: 1, summary: "Build a feature or a change from an issue or an idea." },
+];
+const PSTATE = (over = {}) => ({ t: "promptuState", state: { available: true, enabled: true, quick: false, patterns: PATTERNS, why: null, ...over } });
+const PROMPTU_OFF = { t: "promptuState", state: { available: false, enabled: true, quick: false, patterns: [], why: "promptu is not installed here: put it on PATH, or set embarchChat.promptuPath" } };
+const isLit = () => exec("return document.querySelector('.rail .rail-entry.promptu').classList.contains('lit')");
+const setDraft = (t) => exec("const e=document.querySelector('.composer textarea'); e.value=arguments[0]; e.dispatchEvent(new Event('input', {bubbles:true}))", [t]);
+const Q_DONE = {
+  question: "What does done look like, and how is it checked?",
+  header: "Done when",
+  multiSelect: false,
+  options: [
+    { label: "Build and tests pass (Recommended)", description: "Show the commands and their output." },
+    { label: "I'll judge it", description: "Stop when you think it's done." },
+  ],
+};
+const Q_GOAL = { question: "Why are we doing this, and for whom? One line.", header: "Goal", multiSelect: false, options: [{ label: "Leave it out", description: "Nothing about this goes into the prompt." }, { label: "Not sure", description: "The prompt says it is not known yet." }] };
+/** Five words or fewer: a send of it is never held for the cards (26). */
+const ROUGH = "add a loader watchdog";
+const pView = (sid, seq, over = {}, step = {}) => ({
+  t: "promptu",
+  sid,
+  view: {
+    sid,
+    seq,
+    origin: "enter",
+    rough: ROUGH,
+    phase: "ask",
+    quick: false,
+    step: {
+      promptu: 1,
+      run: "20261030-120000-abcd",
+      pattern: { id: "implement-issue", version: 1, picked_by: "model", confidence: 0.84, alt: [] },
+      offline: false,
+      offline_reason: null,
+      filled: [{ q: "read", header: "Read first", value: "The issue and its PR", source: "desk", evidence: "read the issue and its PR" }],
+      defaults: [{ q: "heavy", header: "How heavy", value: "Smallest that works" }],
+      choose: null,
+      pages: [{ ids: ["done", "goal"], questions: [Q_DONE, Q_GOAL] }],
+      done: false,
+      ...step,
+    },
+    ...over,
+  },
+});
+const ctrlEnter = async () => {
+  await wd("POST", `${S}/actions`, { actions: [{ type: "key", id: "kb", actions: [{ type: "keyDown", value: "" }, { type: "keyDown", value: "" }, { type: "keyUp", value: "" }, { type: "keyUp", value: "" }] }] });
+  await wd("DELETE", `${S}/actions`);
+  await settle();
+};
+const ESC_KEY = "";
+const promptuPosts = async (op) => (await posts()).filter((p) => p.t === "promptu" && (!op || p.op === op));
+
+await check("the rail: Memory, Promptu, the 📚 and the 💡 down the chat's left edge, folded to their icons until the pointer is on it, which shows their names over the timeline without moving it; the 💡 and 📚 left the input's bar (94)", async () => {
+  await fresh();
+  assert.deepEqual(await text(".rail .rail-entry .rail-label"), ["Memory", "Promptu", "Library", "Suggestions"]);
+  assert.deepEqual(await text(".composer .bar .bulb, .composer .bar .library"), [], "not in the bar any more");
+  assert.deepEqual(await text(".composer .bar .btw"), ["💬"], "the side question stays by the input");
+  const width = () => exec("return Math.round(document.querySelector('.rail-col').getBoundingClientRect().width)");
+  const shown = () => exec("return getComputedStyle(document.querySelector('.rail .rail-label')).opacity");
+  assert.equal(await width(), 30);
+  assert.equal(await shown(), "0");
+  const timeline = await rect(".timeline");
+  await hover(".rail .rail-entry.memory");
+  await sleep(200);
+  assert.equal(await width(), 140, "unfolded");
+  assert.equal(await shown(), "1");
+  assert.deepEqual(await rect(".timeline"), timeline, "the timeline never moves");
+  await shot("rail-unfolded");
+  await mouseAway();
+  await sleep(200);
+  assert.equal(await width(), 30);
+  // A read-only chat has no input, so no rail.
+  await send([snapshot({}, { ...OURS, ours: false, readOnly: true })]);
+  assert.equal((await text(".rail")).length, 0);
+});
+
+await check("Promptu's icon lights when the next Enter runs the pass: at a task start with Promptu on, never for a command or a reply inside a task; a pattern forced on its card lights it for the next prompt (95)", async () => {
+  try {
+    await fresh();
+    await send([PSTATE()]);
+    assert.equal(await isLit(), false, "nothing to run it on");
+    await type("add a watchdog");
+    assert.equal(await isLit(), true, "a task start");
+    await setDraft("/compact the build");
+    await settle();
+    assert.equal(await isLit(), false, "a command goes as it is");
+    await setDraft("## Goal\nx\n\n— promptu implement-issue@1 asked=done:rec");
+    await settle();
+    assert.equal(await isLit(), false, "a draft that went through it already");
+    await send([PROMPTU_OFF]);
+    await setDraft("add a watchdog");
+    await settle();
+    assert.equal(await isLit(), false, "not installed");
+    await send([PSTATE({ enabled: false })]);
+    assert.equal(await isLit(), false, "off");
+    // A reply inside a running task never.
+    await fresh();
+    await send([PSTATE(), sent("first"), { t: "event", e: { type: "user", message: { role: "user", content: [{ type: "text", text: "first" }] }, parent_tool_use_id: null } }]);
+    await type("and now the tests");
+    assert.equal(await isLit(), false, "a reply");
+    // The card: hover opens it, a forced pattern lights the icon for the next prompt.
+    await hover(".rail .rail-entry.promptu");
+    assert.equal((await text(".promptu-card")).length, 1, "hover opens the card");
+    const card = (await text(".promptu-card"))[0];
+    assert.ok(card.includes("Promptu on") && card.includes("Quick mode") && card.includes("Pattern for the next prompt"), card);
+    assert.deepEqual(await text(".promptu-card select option"), ["Auto — Promptu picks", "debug-failure", "handoff", "implement-issue"]);
+    await shot("promptu-card");
+    await exec("const s=document.querySelector('.promptu-card select'); s.value='debug-failure'; s.dispatchEvent(new Event('change', {bubbles:true}))");
+    await settle();
+    assert.equal(await isLit(), true, "forced for the next prompt, mid-task too");
+    await clearPosts();
+    await exec("document.querySelectorAll('.promptu-card input[type=checkbox]')[1].click()");
+    await exec("document.querySelectorAll('.promptu-card input[type=checkbox]')[0].click()");
+    await settle();
+    assert.deepEqual((await posts()).filter((p) => p.t === "promptuSettings"), [{ t: "promptuSettings", quick: true }, { t: "promptuSettings", enabled: false }]);
+    await mouseAway();
+    await sleep(500);
+    assert.equal((await text(".promptu-card")).length, 0, "it closes when the pointer leaves");
+    await clearPosts();
+    await type(ENTER);
+    const prep = await promptuPosts("prep");
+    assert.deepEqual(prep, [{ t: "promptu", op: "prep", text: "and now the tests", pattern: "debug-failure", origin: "enter" }], "the forced pattern goes with it, once");
+    assert.ok(!(await posts()).some((p) => p.t === "send"), "not sent");
+  } finally {
+    await send([PROMPTU_OFF]);
+  }
+});
+
+await check("Enter at a task start runs Promptu instead of sending; its dialog over the chat asks the page, recommendations picked, Other for free text; Enter answers it (96)", async () => {
+  try {
+    const sid = await fresh();
+    await send([PSTATE()]);
+    await type(ROUGH);
+    await clearPosts();
+    await type(ENTER);
+    assert.deepEqual(await promptuPosts(), [{ t: "promptu", op: "prep", text: ROUGH, pattern: null, origin: "enter" }]);
+    assert.ok(!(await posts()).some((p) => p.t === "send"), "nothing sent");
+    assert.equal(await value(), ROUGH, "the draft stays as typed meanwhile");
+    await send([{ t: "promptu", sid, view: { sid, seq: 7, origin: "enter", rough: ROUGH, phase: "working", doing: "prep", quick: false } }]);
+    assert.match((await text(".dialog.promptu.working .dialog-title"))[0], /reading your prompt/);
+    await shot("promptu-working");
+    await send([pView(sid, 7)]);
+    assert.deepEqual(await text(".dialog.promptu .q > .q-head"), ["Done when", "Goal"]);
+    assert.ok((await text(".dialog.promptu .promptu-title"))[0].includes("implement-issue"));
+    const checked = await exec("return [...document.querySelectorAll('.dialog.promptu .opt')].filter((o) => o.querySelector('input').checked).map((o) => o.querySelector('span > div').textContent)");
+    assert.deepEqual(checked, ["Build and tests pass (Recommended)"], "the recommendation is picked; Goal has none");
+    assert.equal(await exec("return document.querySelector('.dialog.promptu .dialog-buttons button.primary').disabled"), true, "Goal still needs an answer");
+    assert.ok((await text(".promptu-filled summary"))[0].includes("Already answered (1)"));
+    await shot("promptu-page");
+    await exec("document.querySelectorAll('.dialog.promptu textarea.other')[1].setAttribute('data-g', '1')");
+    const el = Object.values(await wd("POST", `${S}/element`, { using: "css selector", value: "textarea[data-g='1']" }))[0];
+    await clearPosts();
+    await wd("POST", `${S}/element/${el}/value`, { text: "so field units recover" });
+    await settle();
+    assert.equal(await exec("return document.querySelector('.dialog.promptu .dialog-buttons button.primary').textContent"), "Done");
+    await wd("POST", `${S}/element/${el}/value`, { text: ENTER });
+    await settle();
+    assert.deepEqual(await promptuPosts(), [{ t: "promptu", op: "answer", seq: 7, input: { answers: { done: "Build and tests pass (Recommended)", goal: { other: "so field units recover" } } } }]);
+  } finally {
+    await send([PROMPTU_OFF]);
+  }
+});
+
+await check("Esc ends the dialog with what the owner touched, the rest as assumptions; Ctrl+Enter takes every recommendation; the chip row's pick goes as the pattern (96)", async () => {
+  try {
+    const sid = await fresh();
+    await send([PSTATE(), pView(sid, 8)]);
+    await exec("[...document.querySelectorAll('.dialog.promptu .opt')].find((o) => o.textContent.includes(\"I'll judge it\")).querySelector('input').click()");
+    await settle();
+    await clearPosts();
+    await keys(ESC_KEY);
+    assert.deepEqual(await promptuPosts(), [{ t: "promptu", op: "finish", seq: 8, rest: "assume", input: { answers: { done: "I'll judge it" } } }]);
+    await send([pView(sid, 9)]);
+    await clearPosts();
+    await exec("document.querySelector('.dialog.promptu').focus()");
+    await ctrlEnter();
+    assert.deepEqual(await promptuPosts(), [{ t: "promptu", op: "finish", seq: 9, rest: "recommended", input: { answers: { done: "Build and tests pass (Recommended)" } } }]);
+    const choose = { ids: ["_pattern"], questions: [{ question: "Which kind of task is this?", header: "Pattern", multiSelect: false, options: [{ label: "implement-issue (Recommended)", description: "Build a change." }, { label: "No pattern, send as is", description: "Run it as typed." }] }] };
+    await send([pView(sid, 10, {}, { choose, pages: [], pattern: null })]);
+    assert.deepEqual(await text(".dialog.promptu .dialog-buttons button.primary"), ["Next"]);
+    assert.equal((await text(".dialog.promptu textarea.other")).length, 0, "the chip row takes no free text");
+    await clearPosts();
+    await click(".dialog.promptu .dialog-buttons button.primary");
+    assert.deepEqual(await promptuPosts(), [{ t: "promptu", op: "answer", seq: 10, input: { pattern: "implement-issue" } }]);
+    await send([{ t: "promptu", sid, view: null }]);
+    assert.equal((await text(".dialog.promptu")).length, 0, "closed");
+  } finally {
+    await send([PROMPTU_OFF]);
+  }
+});
+
+await check("the prompt lands in the draft, not sent; Ctrl+Z puts the owner's back; this task start had its pass, so the next Enter sends (96)", async () => {
+  try {
+    const sid = await fresh();
+    await send([PSTATE()]);
+    await type(ROUGH);
+    await type(ENTER);
+    const prompt = `## Goal\n${ROUGH}\n\n## Done when\nIt builds and the tests pass.\n\n— promptu implement-issue@1 asked=done:rec`;
+    await clearPosts();
+    await send([{ t: "promptu", sid, view: null }, { t: "promptuResult", result: { sid, seq: 7, origin: "enter", rough: ROUGH, prompt, pattern: "implement-issue" } }]);
+    assert.equal(await value(), prompt);
+    assert.ok((await text(".paste-notice"))[0].includes("Promptu wrote this prompt (implement-issue)"));
+    assert.equal(await isLit(), false, "the next Enter sends it");
+    assert.ok(!(await posts()).some((p) => p.t === "send"), "not sent");
+    await shot("promptu-landed");
+    await type(CTRL_Z);
+    assert.equal(await value(), ROUGH, "the owner's own back");
+    assert.equal(await isLit(), false, "the pass was had");
+    await clearPosts();
+    await type(ENTER);
+    assert.deepEqual((await posts()).filter((p) => p.t === "send").map((p) => p.text), [ROUGH]);
+    assert.deepEqual(await promptuPosts(), []);
+  } finally {
+    await send([PROMPTU_OFF]);
+  }
+});
+
+await check("a failure is one line and the draft stays as typed, Enter then sends; Esc while it reads cancels; Quick mode shows no dialog; Start work's starter fills an empty draft when there is no prompt (96)", async () => {
+  try {
+    let sid = await fresh();
+    await send([PSTATE()]);
+    await type(ROUGH);
+    await type(ENTER);
+    await send([{ t: "promptuResult", result: { sid, seq: 3, origin: "enter", rough: ROUGH, error: "promptu prep failed (exit 1): the pass broke" } }]);
+    assert.equal(await value(), ROUGH);
+    assert.ok((await text(".paste-notice"))[0].includes("the pass broke — your draft is as you typed it"));
+    await clearPosts();
+    await type(ENTER);
+    assert.deepEqual((await posts()).filter((p) => p.t === "send").map((p) => p.text), [ROUGH], "never blocks sending");
+    // Esc while it reads the prompt.
+    sid = await fresh();
+    await send([PSTATE(), { t: "promptu", sid, view: { sid, seq: 4, origin: "enter", rough: ROUGH, phase: "working", doing: "prep", quick: false } }]);
+    await clearPosts();
+    await keys(ESC_KEY);
+    assert.deepEqual(await promptuPosts(), [{ t: "promptu", op: "cancel", seq: 4 }]);
+    // Quick mode: no dialog, the icon turns.
+    sid = await fresh();
+    await send([PSTATE({ quick: true }), { t: "promptu", sid, view: { sid, seq: 5, origin: "enter", rough: ROUGH, phase: "working", doing: "prep", quick: true } }]);
+    assert.equal((await text(".dialog.promptu")).length, 0);
+    assert.equal((await text(".rail .rail-entry.promptu .spinner")).length, 1);
+    await clearPosts();
+    await type(ESC_KEY);
+    assert.deepEqual(await promptuPosts(), [{ t: "promptu", op: "cancel", seq: 5 }], "Esc stops Quick mode's pass, not Claude");
+    assert.ok(!(await posts()).some((p) => p.t === "interrupt"));
+    // Start work: the dialog over the empty chat, reading the issue; no prompt, the desk's starter waits in the draft.
+    sid = await fresh();
+    await send([PSTATE(), { t: "promptu", sid, view: { sid, seq: 6, origin: "start", rough: "Work on ABC-123 — Make the widget blink", phase: "working", doing: "prep", quick: false } }]);
+    assert.match((await text(".dialog.promptu.working .dialog-title"))[0], /reading the issue/);
+    const starter = "Read ABC-123 — Make the widget blink with the desk's linear_get_issue tool, then wait.";
+    await send([{ t: "promptu", sid, view: null }, { t: "promptuResult", result: { sid, seq: 6, origin: "start", rough: "Work on ABC-123 — Make the widget blink", error: "promptu prep took over 40 s", fallback: starter } }]);
+    assert.equal(await value(), starter);
+    assert.ok((await text(".paste-notice"))[0].includes("the desk's starter is in the draft"));
+  } finally {
+    await send([PROMPTU_OFF]);
+  }
+});
+
+await check("the 💡's handoff card opens the handoff pattern's dialog while Promptu is on, with no preview; off, it edits the draft as before (97)", async () => {
+  const handoff = { id: "h1", category: "context", kind: "handoff", title: "Hand off to a fresh chat", why: "The context is nearly full", edit: { op: "handoff" } };
+  const draft = "now write the release notes for the whole quarter";
+  try {
+    await fresh();
+    await send([PSTATE()]);
+    await send([sent("x"), { t: "event", e: { type: "user", message: { role: "user", content: [{ type: "text", text: "x" }] }, parent_tool_use_id: null } }]);
+    await setDraft(draft);
+    const ask = await waitAssist("cards");
+    await send([{ t: "cards", seq: ask.seq, cards: [handoff] }]);
+    await click(".bulb");
+    await settle();
+    assert.ok((await text(".menu.bulb .menu-item-detail"))[0].startsWith("Opens Promptu's handoff questions"));
+    await hover(".menu.bulb .menu-item", handoff.title);
+    assert.equal(await exec("return document.querySelector('.composer textarea').classList.contains('previewing')"), false, "no preview: it opens a dialog");
+    await clearPosts();
+    await pick(".menu.bulb .menu-item", handoff.title);
+    await settle();
+    assert.deepEqual(await promptuPosts(), [{ t: "promptu", op: "prep", text: draft, pattern: "handoff", origin: "handoff" }]);
+    assert.equal(await value(), draft, "the draft waits for the dialog's prompt");
+    await mouseAway();
+    // Off: the card's edit, as decision 36 has it.
+    await fresh();
+    await send([PROMPTU_OFF, sent("x"), { t: "event", e: { type: "user", message: { role: "user", content: [{ type: "text", text: "x" }] }, parent_tool_use_id: null } }]);
+    await setDraft(draft);
+    const ask2 = await waitAssist("cards");
+    await send([{ t: "cards", seq: ask2.seq, cards: [handoff] }]);
+    await click(".bulb");
+    await settle();
+    await pick(".menu.bulb .menu-item", handoff.title);
+    await settle();
+    assert.match(await value(), /^Write a handoff for a fresh chat/);
+  } finally {
+    await mouseAway();
+    await send([PROMPTU_OFF]);
+  }
+});
+
+await check("the Memory menu: scope, then domain, then kind, stale flags and where each was used; a click opens the entry's file, a dead link its index line (98)", async () => {
+  await fresh();
+  await clearPosts();
+  await click(".rail .rail-entry.memory");
+  await settle();
+  assert.deepEqual((await posts()).filter((p) => p.t === "promptuMemory"), [{ t: "promptuMemory" }]);
+  assert.ok((await text(".memory-pop"))[0].includes("Reading"));
+  const mem = "/home/u/.claude/projects/-work/memory";
+  const data = {
+    promptu: 1,
+    project_root: "/work/app",
+    today: "2026-10-30",
+    memory: { path: mem, exists: true, index: `${mem}/MEMORY.md` },
+    scopes: [
+      { id: "user", label: "User", files: ["/home/u/.claude/CLAUDE.md"], domains: ["Working rules"] },
+      { id: "auto", label: "Auto memory", files: [`${mem}/MEMORY.md`, `${mem}/soak-test.md`], domains: ["testing", "tooling"] },
+      { id: "project", label: "Project", files: [], domains: [] },
+    ],
+    entries: [
+      { scope: "user", domain: "Working rules", kind: null, id: "claude-md", file: "/home/u/.claude/CLAUDE.md", title: "Working rules", line: "- Ask when unclear.", line_no: 12, modified: null, age_days: null, flags: [], stale: false, used: [] },
+      { scope: "auto", domain: "testing", kind: "status", id: "08841b", file: `${mem}/soak-test.md`, title: "Soak test", line: "- [Soak test](soak-test.md) — paused", line_no: 3, modified: "2026-09-15", age_days: 45, flags: ["review_by_past"], stale: true, used: [{ pattern: "bench-session", question: "gate", date: "2026-10-29", changed: false }] },
+      { scope: "auto", domain: "testing", kind: "trap", id: "de8cea", file: `${mem}/cache-trap.md`, title: "Cache trap", line: "- [Cache trap](cache-trap.md) — clear it", line_no: 4, modified: "2026-10-20", age_days: 10, flags: [], stale: false, used: [] },
+      { scope: "auto", domain: "tooling", kind: null, id: "aa11bb", file: `${mem}/gone.md`, title: "Gone", line: "- [Gone](gone.md) — x", line_no: 7, modified: null, age_days: null, flags: ["dead_link"], stale: true, used: [] },
+    ],
+    counts: { entries: 4, stale: 2 },
+    used_scanned: true,
+    used_claude_md: [{ pattern: "implement-issue", question: "rules", date: "2026-10-28", changed: false }],
+  };
+  await send([{ t: "promptuMemory", data }]);
+  assert.deepEqual(await text(".memory-pop .mem-domain-name"), ["testing", "tooling"]);
+  assert.deepEqual(await text(".memory-pop .mem-kind .q-head"), ["trap", "status", "no kind"], "kinds in their order, within each domain");
+  const soak = (await text(".memory-pop .mem-row.stale"))[0];
+  assert.ok(soak.includes("Soak test") && soak.includes("45d") && soak.includes("review-by passed") && soak.includes("used ×1"), soak);
+  assert.ok((await text(".memory-pop summary"))[0].includes("CLAUDE.md used ×1"));
+  await shot("memory-menu");
+  await clearPosts();
+  await click(".memory-pop .mem-row", "Soak test");
+  await click(".memory-pop .mem-row", "Gone");
+  assert.deepEqual(
+    (await posts()).filter((p) => p.t === "promptuOpen"),
+    [
+      { t: "promptuOpen", file: `${mem}/soak-test.md` },
+      { t: "promptuOpen", file: `${mem}/MEMORY.md`, line: 7 },
+    ],
+  );
+  await send([{ t: "promptuMemory", error: "promptu is not installed here" }]);
+  assert.ok((await text(".memory-pop .warn"))[0].includes("not installed"));
+  await keys(ESC_KEY);
+  await click(".composer textarea");
+  await exec("document.body.dispatchEvent(new MouseEvent('mousedown', {bubbles:true}))");
+  await settle();
+  assert.equal((await text(".memory-pop")).length, 0, "a click elsewhere closes it");
 });
 
 // ------------------------------------------------------------ the list

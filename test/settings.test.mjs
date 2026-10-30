@@ -39,7 +39,7 @@ before(async () => {
   fs.mkdirSync(folder);
   fs.writeFileSync(path.join(dir, "secret"), '{"accessToken":"sk-FAKE-not-real"}');
   // Scripts a workspace would name: each leaves a mark if it ever runs.
-  for (const name of ["hostile-claude", "hostile-ui"]) {
+  for (const name of ["hostile-claude", "hostile-ui", "hostile-promptu"]) {
     fs.writeFileSync(path.join(dir, name), `#!/bin/sh\ntouch "${path.join(dir, `${name}.ran`)}"\n`, { mode: 0o755 });
   }
   srv = http.createServer((req, res) => {
@@ -60,6 +60,8 @@ before(async () => {
     "embarchChat.deskTokenPath": path.join(dir, "no-token"),
     "embarchChat.assistant": false,
     "embarchUi.port": 1,
+    // Promptu's CLI: none here, never the owner's own.
+    "embarchChat.promptuPath": path.join(dir, "no-promptu"),
   });
   // The repo's .vscode/settings.json.
   Object.assign(mock.state.workspaceConfig, {
@@ -75,6 +77,8 @@ before(async () => {
     "embarchChat.idleMinutes": 100000,
     // And would hand every chat its Problems panel, which the owner keeps off.
     "embarchChat.diagnosticsTool": true,
+    // And would run its own `promptu` on the owner's prompts (95).
+    "embarchChat.promptuPath": path.join(dir, "hostile-promptu"),
   });
   mock.state.folders = [folder];
   ext = require("../dist/extension.js");
@@ -98,7 +102,7 @@ after(async () => {
 test("every path or URL setting is machine-scoped: user or remote settings only", () => {
   const props = Object.assign({}, ...pkg.contributes.configuration.map((s) => s.properties));
   const machine = Object.keys(props).filter((k) => props[k].scope === "machine");
-  for (const k of ["embarchChat.claudePath", "embarchChat.deskUrl", "embarchChat.deskTokenPath", "embarchChat.assistant", "embarchChat.idleMinutes", "embarchChat.autosave", "embarchChat.diagnosticsTool", "embarchChat.continueAfterReload", "embarchUi.binaryPath", "embarchUi.host", "embarchUi.port", "embarchUi.configPath", "embarchUi.autoStart"]) {
+  for (const k of ["embarchChat.claudePath", "embarchChat.promptuPath", "embarchChat.deskUrl", "embarchChat.deskTokenPath", "embarchChat.assistant", "embarchChat.idleMinutes", "embarchChat.autosave", "embarchChat.diagnosticsTool", "embarchChat.continueAfterReload", "embarchUi.binaryPath", "embarchUi.host", "embarchUi.port", "embarchUi.configPath", "embarchUi.autoStart"]) {
     assert.ok(machine.includes(k), `${k} is machine-scoped`);
   }
   for (const [k, v] of Object.entries(props)) {
@@ -113,6 +117,7 @@ test("a workspace cannot point the desk, its token, claude or embarch-ui anywher
   assert.deepEqual(seen, [], "the workspace's server heard nothing");
   assert.ok(!fs.existsSync(path.join(dir, "hostile-claude.ran")), "the workspace's claude never ran");
   assert.ok(!fs.existsSync(path.join(dir, "hostile-ui.ran")), "the workspace's embarch-ui never ran");
+  assert.ok(!fs.existsSync(path.join(dir, "hostile-promptu.ran")), "the workspace's promptu never ran");
   const runs = fs.readFileSync(process.env.FAKE_CLAUDE_ARGS_LOG, "utf8").trim().split("\n").map((l) => JSON.parse(l).argv);
   assert.ok(runs.some((a) => a.includes("--version")), "the owner's claude did");
 });

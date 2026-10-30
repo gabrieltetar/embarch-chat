@@ -93,6 +93,8 @@ before(async () => {
   fs.chmodSync(FAKE, 0o755);
   Object.assign(mock.state.config, {
     "embarchChat.claudePath": FAKE,
+    // Promptu's CLI: none here, never the owner's own.
+    "embarchChat.promptuPath": path.join(dir, "no-promptu"),
     "embarchChat.deskUrl": desk.url,
     "embarchChat.deskTokenPath": desk.tokenPath,
     "embarchChat.assistant": false,

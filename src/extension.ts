@@ -23,7 +23,11 @@ import { EditorContext } from "./editorContext";
 import { agentPid, jump } from "./jump";
 import { activateLauncher, deactivateLauncher, serverUrl } from "./launcher/launcher";
 import { ReloadMemory, restoreAfterReload } from "./reload";
-import { HostCtx, assistInput } from "./views/chatHost";
+import { HostCtx, assistInput, beginPromptu } from "./views/chatHost";
+import { PromptuCli, findBinary } from "./promptu/cli";
+import { PromptuRuns } from "./promptu/runs";
+import { PromptuService, embarchApiPresent } from "./promptu/service";
+import { startRough } from "./promptu/text";
 import { CHAT_VIEW, ChatPanels, ChatViewProvider, THREADS_VIEW, ThreadsViewProvider } from "./views/views";
 import { claudeVersion, versionWarning } from "./wire/version";
 import { findTranscript, isSessionId } from "./wire/transcript";
@@ -34,6 +38,7 @@ let chats: ChatManager | undefined;
 let deskService: DeskService | undefined;
 let assistant: HaikuAssistant | undefined;
 let reloadMemory: ReloadMemory | undefined;
+let promptuRuns: PromptuRuns | undefined;
 
 function cfg() {
   const c = vscode.workspace.getConfiguration("embarchChat");
@@ -47,6 +52,8 @@ function cfg() {
     attachSelection: c.get<boolean>("attachSelection", true),
     // Where a chat opens (decision 92): an editor tab, unless the owner keeps the sidebar.
     inTabs: c.get<string>("chatLocation", "editor") !== "sidebar",
+    // Promptu's CLI (decision 95): on PATH unless a path is set.
+    promptuPath: c.get<string>("promptuPath", "promptu") || "promptu",
   };
 }
 
@@ -144,6 +151,22 @@ export function activate(context: vscode.ExtensionContext): void {
   const editor = new EditorContext(() => ({ attachOpenFile: cfg().attachOpenFile, attachSelection: cfg().attachSelection }));
   context.subscriptions.push(editor);
 
+  // Promptu (decisions 94–98): the CLI, the card's switches, one run per chat.
+  const promptuCli = new PromptuCli(() => ({ bin: cfg().promptuPath, log }));
+  const promptu = new PromptuService(promptuCli, context.globalState, log);
+  promptuRuns = new PromptuRuns(promptuCli, log);
+  const runs = promptuRuns;
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration("embarchChat.promptuPath")) promptu.emit("state");
+    }),
+  );
+  /** The EmbArch parts a chat has (`--have`): the desk when it answers, the bench tools when its CLI lists them or the binary is here. */
+  const promptuHave = (rec: ChatRecord) => [
+    ...(desk.error === null && desk.view ? ["desk"] : []),
+    ...(embarchApiPresent(rec.chat.state.mcp, () => !!findBinary("embarch-api")) ? ["embarch-api"] : []),
+  ];
+
   const ctx: HostCtx = {
     chats: manager,
     desk,
@@ -169,6 +192,9 @@ export function activate(context: vscode.ExtensionContext): void {
     continueStep: (sid) => reloadMemory?.continueStep(sid),
     rename: (sid) => renameChat(sid),
     editor,
+    promptu,
+    runs,
+    promptuHave,
   };
 
   const chatView = new ChatViewProvider(context.extensionUri, ctx);
@@ -734,9 +760,17 @@ export function activate(context: vscode.ExtensionContext): void {
             void vscode.window.showErrorMessage(`Start work's chat is not on its work item (${why}); its prompt waits in the draft.`);
           },
         });
-        if (rec && m.prompt) {
-          if (refused) manager.setDraft(rec.chat.sessionId, m.prompt);
-          else rec.chat.send(m.prompt);
+        if (rec && !refused && promptu.ready()) {
+          // Promptu's pass on the issue instead of the read-and-summarize
+          // starter (decision 96, reversing 11 at the owner's word): the
+          // dialog opens over the empty chat, the prompt lands in the draft,
+          // nothing is sent. Without a prompt, the desk's starter waits there.
+          const rough = startRough(card?.issue?.key, card?.issue?.title ?? card?.title, rec.itemTitle ?? m.item_id);
+          void beginPromptu(ctx, rec, { rough, origin: "start", start: true, fallback: m.prompt || undefined });
+        } else if (rec && m.prompt) {
+          // Promptu off or not installed: the starter waits in the draft, unsent (11
+          // reversed; sending it as before is the owner's pick, docs/forks.md step 3 P1).
+          manager.setDraft(rec.chat.sessionId, m.prompt);
         }
       } else if (m.kind === "focus" && m.session_id) {
         await open(m.session_id);
@@ -848,6 +882,7 @@ export function activate(context: vscode.ExtensionContext): void {
 export function deactivate(): Thenable<void> | undefined {
   const saved = reloadMemory?.save();
   reloadMemory?.dispose();
+  promptuRuns?.dispose();
   assistant?.dispose();
   deskService?.dispose();
   chats?.dispose();

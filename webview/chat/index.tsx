@@ -7,7 +7,8 @@
 // drawn again (decision 85, settled.tsx). Its history — fork, rewind, copy,
 // export — is history.tsx's (decisions 73 and 74). Messages that wait for
 // Claude sit above the input, background tasks open from the status line
-// (port items 70–72).
+// (port items 70–72). A rail on the left edge holds Memory, Promptu, the 📚
+// and the 💡 (decision 94); Promptu's dialog opens over the chat (96).
 
 import "../shared/style.css";
 import { render } from "preact";
@@ -20,7 +21,10 @@ import type { Chip, PastPrompt } from "../../src/assistant/edits";
 import type { LibraryEntry } from "../../src/library/entries";
 import { duration, vscodeApi } from "../shared/vscode";
 import { CompactCard, PendingCards } from "./cards";
-import { Composer, EditorChip, returnToDraft } from "./composer";
+import { Composer, EditorChip, promptuLanded, returnToDraft } from "./composer";
+import { PromptuDialog } from "./promptu";
+import type { PromptuView } from "../../src/promptu/runs";
+import type { PromptuState } from "../../src/promptu/service";
 import { RunView, ToolCtx, ToolView, quiet, revealTool, toolRenderers } from "./tools";
 import { Fold, foldRuns, liveTool } from "./runs";
 import { benchRenderer } from "./bench";
@@ -180,6 +184,10 @@ function App() {
   const [library, setLibrary] = useState<{ entries: LibraryEntry[]; assistant: boolean }>({ entries: [], assistant: false });
   const [chips, setChips] = useState<{ sid: string; chips: Chip[] } | null>(null);
   const [editor, setEditor] = useState<EditorChip | null>(null);
+  // Promptu (94–96): its card's state, each chat's dialog, and the rail the composer draws into.
+  const [promptu, setPromptu] = useState<PromptuState | null>(null);
+  const [promptuViews, setPromptuViews] = useState<Record<string, PromptuView | null>>({});
+  const [rail, setRail] = useState<HTMLDivElement | null>(null);
   // The desk's reference index (decision 88), set whole by the host: each one draws the rows that read it again.
   const [refsV, setRefsV] = useState(0);
   const live = useRef<ChatState | null>(null);
@@ -244,6 +252,15 @@ function App() {
         case "refs":
           setRefs(m.refs);
           setRefsV((v) => v + 1);
+          return;
+        case "promptuState":
+          setPromptu(m.state);
+          return;
+        case "promptu":
+          setPromptuViews((v) => ({ ...v, [m.sid]: m.view }));
+          return;
+        case "promptuResult":
+          promptuLanded(m.result);
           return;
       }
     };
@@ -458,101 +475,114 @@ function App() {
     );
   };
   const placeholder = view.readOnly ? "" : view.resumable ? "Message to resume this chat here" : busy ? "Queue a message…" : "Message Claude — @ for files, / for commands";
+  // A task start: no message of the owner's in this chat yet (96).
+  const taskStart = !state.timeline.some((id) => state.entries[id]?.kind === "user");
+  const pv = promptuViews[state.sessionId] ?? null;
 
   return (
     // A chat of this window's gets Mark as Unread on right-click (package.json, webview/context).
     <div class="chat" data-vscode-context={view.ours ? JSON.stringify({ webviewSection: "embarchChat", sid: state.sessionId }) : undefined}>
       <HeaderBar h={model.header} state={state} view={view} />
-      {/* What gives way in a short panel, so the input and Send never leave it (style.css; review r5 N1). */}
-      <div class="middle">
-        <div
-          class="timeline"
-          ref={scroller}
-          onScroll={(e) => {
-            const el = e.currentTarget as HTMLDivElement;
-            stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-          }}
-        >
-          {!state.timeline.length && !liveB.length && (
-            <div class="empty-note">{view.ours ? "A new chat. The first message starts Claude, in this window's folder." : "Nothing in this chat's transcript yet."}</div>
-          )}
-          {turns(rows, get, entries).map((t, k) => (
-            // A turn none of whose entries changed is not drawn again (decision 85): its rows read only these and the page's ctx,
-            // view, cwd, each reply's whole text, the stamps' date lines and a reload's offer to continue.
-            <Settled
-              key={t.key}
-              deps={[ctx, view, cwd, ...t.deps, ...t.rows.map((r) => reply.get(r.key)), ...t.rows.map((r) => stamps.get(r.key)?.day), ...t.rows.map((r) => offering(get(r.ids[0])))]}
-              render={() => t.rows.map((r, i) => row(r, k === 0 && i === 0))}
+      <div class="body">
+        {!view.readOnly && <div class="rail" ref={setRail} />}
+        <div class="main">
+          {/* What gives way in a short panel, so the input and Send never leave it (style.css; review r5 N1). */}
+          <div class="middle">
+            <div
+              class="timeline"
+              ref={scroller}
+              onScroll={(e) => {
+                const el = e.currentTarget as HTMLDivElement;
+                stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+              }}
+            >
+              {!state.timeline.length && !liveB.length && (
+                <div class="empty-note">{view.ours ? "A new chat. The first message starts Claude, in this window's folder." : "Nothing in this chat's transcript yet."}</div>
+              )}
+              {turns(rows, get, entries).map((t, k) => (
+                // A turn none of whose entries changed is not drawn again (decision 85): its rows read only these and the page's ctx,
+                // view, cwd, each reply's whole text, the stamps' date lines and a reload's offer to continue.
+                <Settled
+                  key={t.key}
+                  deps={[ctx, view, cwd, ...t.deps, ...t.rows.map((r) => reply.get(r.key)), ...t.rows.map((r) => stamps.get(r.key)?.day), ...t.rows.map((r) => offering(get(r.ids[0])))]}
+                  render={() => t.rows.map((r, i) => row(r, k === 0 && i === 0))}
+                />
+              ))}
+            </div>
+            {/* Each chat's own: another chat put in this view closes them, so a rewind never acts on a message of the chat before (73, 74). */}
+            <RewindDialog key={`rewind:${state.sessionId}`} state={state} view={view} />
+            <ExportDialog key={`export:${state.sessionId}`} />
+            <Toast />
+            <PendingCards
+              pending={state.pending}
+              ctx={ctx}
+              readOnly={view.readOnly}
+              permDestination={view.permDestination}
+              recall={() => {
+                // A flagged message back into the draft, to edit and retry (66).
+                const last = [...state.timeline].reverse().find((id) => entries[id]?.kind === "user");
+                const u = last ? entries[last] : undefined;
+                if (u?.kind === "user" && u.text.trim()) returnToDraft(state.sessionId, u.text);
+              }}
             />
-          ))}
+            <LimitBannerView info={state.rateLimit} busy={busy} />
+            {bgOpen[sid] && <BackgroundPanel state={state} readOnly={view.readOnly} />}
+            <StatusLine
+              state={state}
+              warning={model.warning}
+              bg={<BackgroundToggle n={state.background.length} open={!!bgOpen[sid]} onToggle={() => setBgOpen((o) => ({ ...o, [sid]: !o[sid] }))} />}
+            />
+            <SideQuestions items={state.side ?? []} ctx={ctx} />
+            <Queued state={state} readOnly={view.readOnly} />
+          </div>
+          {view.readOnly ? (
+            <div class="readonly">
+              <span style="flex:1">{view.where ? `Runs in ${view.where}` : "Not run by this window"} — read-only here.</span>
+              <button class="primary" onClick={() => post({ t: "jump" })}>
+                Jump
+              </button>
+            </div>
+          ) : (
+            <Composer
+              key={state.sessionId}
+              sid={state.sessionId}
+              busy={busy}
+              waiting={state.pending.length > 0}
+              mode={state.mode}
+              slashCommands={commands}
+              placeholder={placeholder}
+              mentions={mentions}
+              prompts={prompts}
+              library={library.entries}
+              assistant={library.assistant && view.ours}
+              canAsk={view.ours && (state.timeline.length > 0 || state.process === "running")}
+              editor={editor}
+              chips={chips?.sid === state.sessionId && view.ours ? chips.chips : []}
+              rail={rail}
+              promptu={promptu}
+              taskStart={taskStart}
+              promptuView={pv}
+              footer={
+                <>
+                  <ModelPill state={state} />
+                  {view.ours && <McpPill state={state} />}
+                  <RemotePill state={state} />
+                </>
+              }
+              onCommand={(text) => localCommand(text, live.current) || (view.ours && footerCommand(text))}
+              onSend={(text, opts) => {
+                stick.current = true;
+                post({ t: "send", text, ...opts });
+              }}
+              onChip={(c) => {
+                stick.current = true;
+                post(c.action === "freshChat" ? { t: "freshChat" } : { t: "send", text: c.text });
+              }}
+            />
+          )}
         </div>
-        {/* Each chat's own: another chat put in this view closes them, so a rewind never acts on a message of the chat before (73, 74). */}
-        <RewindDialog key={`rewind:${state.sessionId}`} state={state} view={view} />
-        <ExportDialog key={`export:${state.sessionId}`} />
-        <Toast />
-        <PendingCards
-          pending={state.pending}
-          ctx={ctx}
-          readOnly={view.readOnly}
-          permDestination={view.permDestination}
-          recall={() => {
-            // A flagged message back into the draft, to edit and retry (66).
-            const last = [...state.timeline].reverse().find((id) => entries[id]?.kind === "user");
-            const u = last ? entries[last] : undefined;
-            if (u?.kind === "user" && u.text.trim()) returnToDraft(state.sessionId, u.text);
-          }}
-        />
-        <LimitBannerView info={state.rateLimit} busy={busy} />
-        {bgOpen[sid] && <BackgroundPanel state={state} readOnly={view.readOnly} />}
-        <StatusLine
-          state={state}
-          warning={model.warning}
-          bg={<BackgroundToggle n={state.background.length} open={!!bgOpen[sid]} onToggle={() => setBgOpen((o) => ({ ...o, [sid]: !o[sid] }))} />}
-        />
-        <SideQuestions items={state.side ?? []} ctx={ctx} />
-        <Queued state={state} readOnly={view.readOnly} />
       </div>
-      {view.readOnly ? (
-        <div class="readonly">
-          <span style="flex:1">{view.where ? `Runs in ${view.where}` : "Not run by this window"} — read-only here.</span>
-          <button class="primary" onClick={() => post({ t: "jump" })}>
-            Jump
-          </button>
-        </div>
-      ) : (
-        <Composer
-          key={state.sessionId}
-          sid={state.sessionId}
-          busy={busy}
-          waiting={state.pending.length > 0}
-          mode={state.mode}
-          slashCommands={commands}
-          placeholder={placeholder}
-          mentions={mentions}
-          prompts={prompts}
-          library={library.entries}
-          assistant={library.assistant && view.ours}
-          canAsk={view.ours && (state.timeline.length > 0 || state.process === "running")}
-          editor={editor}
-          chips={chips?.sid === state.sessionId && view.ours ? chips.chips : []}
-          footer={
-            <>
-              <ModelPill state={state} />
-              {view.ours && <McpPill state={state} />}
-              <RemotePill state={state} />
-            </>
-          }
-          onCommand={(text) => localCommand(text, live.current) || (view.ours && footerCommand(text))}
-          onSend={(text, opts) => {
-            stick.current = true;
-            post({ t: "send", text, ...opts });
-          }}
-          onChip={(c) => {
-            stick.current = true;
-            post(c.action === "freshChat" ? { t: "freshChat" } : { t: "send", text: c.text });
-          }}
-        />
-      )}
+      {pv && !view.readOnly && <PromptuDialog view={pv} />}
     </div>
   );
 }

@@ -488,7 +488,7 @@ export function useEscEsc(enabled: boolean): void {
       const ta = document.querySelector<HTMLTextAreaElement>(".composer textarea");
       // Not while the input asks aside (57): that Esc leaves the side-question
       // mode; nor with a footer pill's panel open (81, 82): that Esc closes it.
-      const free = on.current && !ta?.value && !ta?.classList.contains("aside") && !document.querySelector(".popup, .menu, .dialog-back, .msg-menu, .pop");
+      const free = on.current && !ta?.value && !ta?.classList.contains("aside") && !document.querySelector(".popup, .menu, .dialog-back, .msg-menu, .pop, .rail-pop");
       if (!free) {
         last.current = 0;
         return;

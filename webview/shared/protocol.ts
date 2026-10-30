@@ -12,6 +12,9 @@ import type { Card, Chip, PastPrompt } from "../../src/assistant/edits";
 import type { LibraryEntry } from "../../src/library/entries";
 import type { Attachment } from "../../src/wire/message";
 import type { EditorItem } from "../../src/editorContext";
+import type { MemoryOut } from "../../src/promptu/cli";
+import type { PromptuResult, PromptuView } from "../../src/promptu/runs";
+import type { PromptuState } from "../../src/promptu/service";
 
 /** The chat's card in two lines (decision 18). */
 export interface Header {
@@ -95,7 +98,15 @@ export type HostToChat =
   /** A reply kept on the work item (decision 40), held until the chat has one, or not kept and why. */
   | { t: "kept"; entryId: string; kind: KeepKind; held?: boolean; error?: string }
   /** The window's desk's reference index, whole, each time it changes (decision 88); null: none. */
-  | { t: "refs"; refs: { issues: IndexIssue[]; prs: IndexPr[] } | null };
+  | { t: "refs"; refs: { issues: IndexIssue[]; prs: IndexPr[] } | null }
+  /** Promptu's card (95): found or not, its two switches, the pattern set for the picker. */
+  | { t: "promptuState"; state: PromptuState }
+  /** A chat's Promptu dialog (96), each time it changes; null: none open. */
+  | { t: "promptu"; sid: string; view: PromptuView | null }
+  /** How a chat's Promptu run ended: the prompt for the draft, or one line and the draft as it was (96). */
+  | { t: "promptuResult"; result: PromptuResult }
+  /** The Memory menu's data (98): `promptu memory --json` for the chat's folder, or why there is none. */
+  | { t: "promptuMemory"; data?: MemoryOut; error?: string };
 
 /** What a kept reply is on the work item: the desk's note kinds a reply can be. */
 export type KeepKind = "finding" | "decision";
@@ -195,7 +206,23 @@ export type ChatToHost =
   /** Keep a reply on the chat's work item as a note of this kind (Claude Code's bookmark, the desk's way). */
   | { t: "keep"; entryId: string; kind: KeepKind }
   /** Continue the step a reload interrupted (decision 63): the owner's word, never the reload's. */
-  | { t: "continueStep" };
+  | { t: "continueStep" }
+  /**
+   * Promptu (96): `prep` runs the pass on the draft — Enter at a task start,
+   * or the 💡's handoff card with `pattern: "handoff"` (97); `answer` sends a
+   * page; `finish` ends the dialog, every recommendation taken or (Esc) the
+   * rest as assumptions; `cancel` stops a pass still reading the prompt.
+   */
+  | { t: "promptu"; op: "prep"; text: string; pattern?: string | null; origin?: "enter" | "handoff" }
+  | { t: "promptu"; op: "answer"; seq: number; input: unknown }
+  | { t: "promptu"; op: "finish"; seq: number; input: unknown; rest: "recommended" | "assume" }
+  | { t: "promptu"; op: "cancel"; seq: number }
+  /** The card's switches (95). */
+  | { t: "promptuSettings"; enabled?: boolean; quick?: boolean }
+  /** The Memory menu opened (98): its data, for the chat's folder. */
+  | { t: "promptuMemory" }
+  /** A memory entry clicked: its file beside the chat (92, 98) — only one the menu was given. */
+  | { t: "promptuOpen"; file: string; line?: number };
 
 export type HostToList = {
   t: "groups";

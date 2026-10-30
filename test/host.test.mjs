@@ -31,6 +31,7 @@ Module._load = function (request, ...rest) {
 
 const PORT = PORT_BASE + 2;
 const FAKE = path.join(here, "fake-claude.mjs");
+const FAKE_PROMPTU = path.join(here, "fake-promptu.mjs");
 let dir, desk, ext, client, folder, context;
 const core = require("../test-out/core.js");
 
@@ -69,7 +70,11 @@ before(async () => {
     "embarchUi.port": 1,
     // These tests drive the sidebar's chat; chats in tabs, the default, have their own (decision 92).
     "embarchChat.chatLocation": "sidebar",
+    // Promptu is not here until a test says so: never the owner's own binary (96).
+    "embarchChat.promptuPath": path.join(dir, "no-promptu"),
   });
+  process.env.FAKE_PROMPTU_DIR = path.join(dir, "promptu");
+  fs.chmodSync(FAKE_PROMPTU, 0o755);
   mock.state.folders = [folder];
   ext = require("../dist/extension.js");
   context = { subscriptions: [], extensionUri: mock.vscode.Uri.file(root), workspaceState: new mock.Memento(), globalState: new mock.Memento() };
@@ -90,6 +95,7 @@ after(async () => {
   if (dir) fs.rmSync(dir, { recursive: true, force: true });
   delete process.env.CLAUDE_CONFIG_DIR;
   delete process.env.FAKE_CLAUDE_ARGS_LOG;
+  delete process.env.FAKE_PROMPTU_DIR;
   Module._load = load;
 });
 
@@ -148,14 +154,18 @@ test("the + picks a work item, assigns the session on the desk, and the chat run
   await waitFor(() => lastGroups()?.groups.some((g) => g.item?.id === item && g.threads.some((t) => t.sessionId === sid && t.ours)), 5000, "the thread in the list");
 });
 
-test("Start work's mailbox entry starts a chat on the item and sends the prompt", { skip }, async () => {
+test("Start work's mailbox entry starts a chat on the item; with Promptu not installed its prompt waits in the draft, unsent (11 reversed)", { skip }, async () => {
   const { id: item } = await client.call("POST", "/items", { title: "ABC-124 from the Desk", desk: "none" });
   const before = chatView.webview.posted.length;
   // Start work leaves the entry server-side; the test seeds the desk's store as it would.
-  const id = await desk.withStart({ item_id: item, folder, prompt: "Run the bash command `echo hello-from-bash` and then reply with just: done" });
+  const prompt = "Run the bash command `echo hello-from-bash` and then reply with just: done";
+  const id = await desk.withStart({ item_id: item, folder, prompt });
   const snap = await waitFor(() => chatView.webview.posted.slice(before).find((m) => m.t === "snapshot" && m.header?.itemId === item), 10000, "the mailbox chat");
-  await waitFor(() => chatView.webview.posted.slice(before).some((m) => m.t === "event" && m.e.type === "result"), 5000, "its first turn");
+  const d = await waitFor(() => chatView.webview.posted.slice(before).find((m) => m.t === "draft" && m.sid === snap.state.sessionId), 5000, "the draft");
+  assert.equal(d.text, prompt);
   assert.ok(snap.view.ours);
+  await new Promise((r) => setTimeout(r, 300));
+  assert.ok(!chatView.webview.posted.slice(before).some((m) => m.t === "event" && m.e.type === "_sent"), "nothing sent");
   assert.equal(await client.take(id), null, "taken once");
 });
 
@@ -1741,5 +1751,127 @@ test("chats open in editor tabs by default: a new chat is a tab, what it opens g
   } finally {
     mock.state.config["embarchChat.chatLocation"] = "sidebar";
     mock.state.quickPick = async () => undefined;
+  }
+});
+
+// ------------------------------------------------------------ Promptu (decisions 94–98)
+
+const promptuCalls = () => {
+  const f = path.join(process.env.FAKE_PROMPTU_DIR, "log.jsonl");
+  return fs.existsSync(f) ? fs.readFileSync(f, "utf8").trim().split("\n").map((l) => JSON.parse(l)) : [];
+};
+
+test("Start work with Promptu: the pass on the issue, its dialog over the empty chat, the prompt in the draft, nothing sent (96, reversing 11)", { skip }, async () => {
+  mock.state.config["embarchChat.promptuPath"] = FAKE_PROMPTU;
+  try {
+    const { id: item } = await client.call("POST", "/items", { title: "ABC-130 Loader retries", desk: "none" });
+    await mock.state.commands.get("embarchChat.refresh")();
+    const before = chatView.webview.posted.length;
+    const starter = "Read ABC-130 with the desk's linear_get_issue tool, then wait.";
+    await desk.withStart({ item_id: item, folder, prompt: starter });
+    const snap = await waitFor(() => chatView.webview.posted.slice(before).find((m) => m.t === "snapshot" && m.header?.itemId === item), 10000, "the mailbox chat");
+    const sid = snap.state.sessionId;
+    const ask = await waitFor(() => chatView.webview.posted.slice(before).find((m) => m.t === "promptu" && m.sid === sid && m.view?.phase === "ask"), 10000, "the dialog's first page");
+    assert.equal(ask.view.origin, "start");
+    const prep = promptuCalls().filter((c) => c.cmd === "prep").at(-1);
+    assert.ok(prep.args.includes("--start"), prep.args.join(" "));
+    // The desk answered; the bench tools are here when this machine has the embarch-api binary on PATH.
+    assert.equal(prep.args[prep.args.indexOf("--have") + 1], ["desk", ...(core.findBinary("embarch-api") ? ["embarch-api"] : [])].join(","));
+    assert.match(prep.stdin, /^Work on /);
+    assert.ok(prep.desk && prep.desk.id === item && prep.desk.text.includes("ABC-130"), "the desk's brief, read by the host");
+    assert.equal(fs.realpathSync(prep.cwd), fs.realpathSync(folder));
+    const stateMsg = [...chatView.webview.posted].reverse().find((m) => m.t === "promptuState");
+    assert.equal(stateMsg.state.available, true);
+    assert.ok(!JSON.stringify(chatView.webview.posted.slice(before)).includes(fs.readFileSync(desk.tokenPath, "utf8").trim()), "the token never reaches the page (20)");
+    // The owner answers the page: nothing left, the prompt comes back for the draft.
+    chatView.webview.fromPage({ t: "promptu", op: "answer", seq: ask.view.seq, input: { answers: { done: "Build and tests pass (Recommended)", goal: { other: "so units recover" } } } });
+    const res = await waitFor(() => chatView.webview.posted.slice(before).find((m) => m.t === "promptuResult" && m.result.sid === sid), 5000, "the result");
+    assert.match(res.result.prompt, /^## Goal\nWork on /);
+    assert.match(res.result.prompt, /— promptu implement-issue@1 /);
+    assert.equal(res.result.fallback, undefined);
+    await new Promise((r) => setTimeout(r, 200));
+    assert.ok(!chatView.webview.posted.slice(before).some((m) => m.t === "event" && (m.e.type === "_sent" || m.e.type === "result")), "nothing sent");
+    assert.ok(!fs.readFileSync(process.env.FAKE_CLAUDE_ARGS_LOG, "utf8").includes(starter), "the starter never went");
+  } finally {
+    mock.state.config["embarchChat.promptuPath"] = path.join(dir, "no-promptu");
+  }
+});
+
+test("Start work with Promptu failing: one line, and the desk's starter waits in the draft, unsent", { skip }, async () => {
+  mock.state.config["embarchChat.promptuPath"] = FAKE_PROMPTU;
+  process.env.FAKE_PROMPTU_FAIL = "prep:1:the pass broke";
+  try {
+    const { id: item } = await client.call("POST", "/items", { title: "ABC-131 Fan curve", desk: "none" });
+    const before = chatView.webview.posted.length;
+    const starter = "Read ABC-131, then wait.";
+    await desk.withStart({ item_id: item, folder, prompt: starter });
+    const res = await waitFor(() => chatView.webview.posted.slice(before).find((m) => m.t === "promptuResult"), 10000, "the result");
+    assert.equal(res.result.error, "promptu prep failed (exit 1): the pass broke");
+    assert.equal(res.result.fallback, starter);
+    assert.equal(res.result.prompt, undefined);
+  } finally {
+    delete process.env.FAKE_PROMPTU_FAIL;
+    mock.state.config["embarchChat.promptuPath"] = path.join(dir, "no-promptu");
+  }
+});
+
+test("Enter at a task start: the page asks for the pass, Esc takes the rest as assumptions; Promptu off answers with one line", { skip }, async () => {
+  mock.state.config["embarchChat.promptuPath"] = FAKE_PROMPTU;
+  try {
+    mock.state.quickPick = async (items) => items.find((i) => i.label.includes("Untracked"));
+    await mock.state.commands.get("embarchChat.newChat")();
+    const sid = await waitFor(() => {
+      const s = lastSnapshot();
+      return s && s.header?.untracked && !s.state.timeline.length && s.state.sessionId;
+    }, 5000, "a new untracked chat");
+    const before = chatView.webview.posted.length;
+    chatView.webview.fromPage({ t: "promptu", op: "prep", text: "add a watchdog to the loader", pattern: "debug-failure" });
+    const ask = await waitFor(() => chatView.webview.posted.slice(before).find((m) => m.t === "promptu" && m.sid === sid && m.view?.phase === "ask"), 5000, "the page");
+    const prep = promptuCalls().at(-1);
+    assert.deepEqual([prep.cmd, prep.args.includes("--pattern") && prep.args[prep.args.indexOf("--pattern") + 1], prep.desk], ["prep", "debug-failure", null], "a forced pattern; untracked: no work item");
+    chatView.webview.fromPage({ t: "promptu", op: "finish", seq: ask.view.seq, rest: "assume", input: { answers: {} } });
+    const res = await waitFor(() => chatView.webview.posted.slice(before).find((m) => m.t === "promptuResult" && m.result.sid === sid), 5000, "the result");
+    assert.match(res.result.prompt, /assume=done,goal$/);
+    // Turned off on the card: the next ask is one line, and nothing runs.
+    chatView.webview.fromPage({ t: "promptuSettings", enabled: false });
+    await waitFor(() => [...chatView.webview.posted].reverse().find((m) => m.t === "promptuState")?.state.enabled === false, 3000, "the card off");
+    const n = promptuCalls().length;
+    chatView.webview.fromPage({ t: "promptu", op: "prep", text: "again" });
+    const off = await waitFor(() => chatView.webview.posted.slice(before).find((m) => m.t === "promptuResult" && m.result.rough === "again"), 3000, "the one line");
+    assert.match(off.result.error, /off or not installed/);
+    assert.equal(promptuCalls().length, n);
+    chatView.webview.fromPage({ t: "promptuSettings", enabled: true });
+  } finally {
+    mock.state.config["embarchChat.promptuPath"] = path.join(dir, "no-promptu");
+    mock.state.quickPick = async () => undefined;
+  }
+});
+
+test("the Memory menu: promptu memory --json for the chat's folder, and a click opens only a file it listed (98)", { skip }, async () => {
+  mock.state.config["embarchChat.promptuPath"] = FAKE_PROMPTU;
+  try {
+    const before = chatView.webview.posted.length;
+    chatView.webview.fromPage({ t: "promptuMemory" });
+    const m = await waitFor(() => chatView.webview.posted.slice(before).find((x) => x.t === "promptuMemory"), 5000, "the menu's data");
+    const soak = m.data.entries.find((e) => e.id === "08841b");
+    assert.deepEqual([soak.stale, soak.used[0].pattern], [true, "bench-session"]);
+    fs.mkdirSync(path.dirname(soak.file), { recursive: true });
+    fs.writeFileSync(soak.file, "---\nname: x\n---\n");
+    const n = mock.state.executedArgs.length;
+    chatView.webview.fromPage({ t: "promptuOpen", file: soak.file });
+    const opened = await waitFor(() => mock.state.executedArgs.slice(n).find(([id]) => id === "vscode.open"), 3000, "the file");
+    assert.equal(opened[1].fsPath, soak.file);
+    const k = mock.state.executedArgs.length;
+    chatView.webview.fromPage({ t: "promptuOpen", file: "/etc/passwd" });
+    await new Promise((r) => setTimeout(r, 200));
+    assert.ok(!mock.state.executedArgs.slice(k).some(([id]) => id === "vscode.open"), "a path the menu never listed is not opened");
+    // Without the binary: one line.
+    mock.state.config["embarchChat.promptuPath"] = path.join(dir, "no-promptu");
+    const b2 = chatView.webview.posted.length;
+    chatView.webview.fromPage({ t: "promptuMemory" });
+    const e = await waitFor(() => chatView.webview.posted.slice(b2).find((x) => x.t === "promptuMemory"), 5000, "the error");
+    assert.match(e.error, /not installed/);
+  } finally {
+    mock.state.config["embarchChat.promptuPath"] = path.join(dir, "no-promptu");
   }
 });
