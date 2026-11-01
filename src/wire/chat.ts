@@ -42,6 +42,8 @@ export interface ChatOptions {
   settle?: boolean;
   /** Why something outside the process keeps it up — a Promptu dialog or prompt still the owner's (96) — or null. */
   hold?: () => string | null;
+  /** Whether the chat is open — a tab, or the sidebar's chat: a bridge the CLI started by itself holds the process only then (100). */
+  open?: () => boolean;
 }
 
 /**
@@ -1087,10 +1089,12 @@ export class Chat extends EventEmitter {
     if (!this.running) return null;
     if (this.state.pending.length) return "waits on the owner";
     if (this.state.background.length) return "a background task runs";
-    // Closing would drop the phone's session: the owner may answer, or write, from there. Only
-    // a bridge the owner turned on here (83): one the CLI started by itself — its
-    // remoteControlAtStartup, Claude Code's default — would keep every chat's process for good.
-    if (this.state.remote && this.state.remote.status !== "failed" && !this.state.remote.auto) return "Remote Control is on";
+    // Closing would drop the phone's session: the owner may answer, or write, from there. A
+    // bridge the owner turned on here (83), or one the CLI started by itself — its
+    // remoteControlAtStartup — while the chat is open (100): held for every chat, a closed one
+    // would keep its process for good.
+    const remote = this.state.remote;
+    if (remote && remote.status !== "failed" && (!remote.auto || this.opts.open?.())) return "Remote Control is on";
     if (this.state.busy || this.state.compacting) return "a turn is running";
     if ((this.state.side ?? []).some((q) => q.pending)) return "a side question is out";
     return this.opts.hold?.() ?? null;

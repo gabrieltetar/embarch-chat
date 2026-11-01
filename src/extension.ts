@@ -100,7 +100,9 @@ export function activate(context: vscode.ExtensionContext): void {
 
   /** Whether a chat's page is on screen (`onScreen` below, once the views exist): Promptu holds a process only then (review F11). */
   let shownNow: (sid: string) => boolean = () => false;
-  chats = new ChatManager(() => ({ claudePath: cfg().claudePath, idleMs: cfg().idleMs, log, hooks: (cwd) => hostHooks(log, cwd), hold: (sid) => promptuRuns?.holdReason(sid, shownNow(sid)) ?? null }));
+  /** Whether a chat is open (`isOpen` below): a bridge the CLI started by itself holds its process only then (100). */
+  let openNow: (sid: string) => boolean = () => false;
+  chats = new ChatManager(() => ({ claudePath: cfg().claudePath, idleMs: cfg().idleMs, log, hooks: (cwd) => hostHooks(log, cwd), hold: (sid) => promptuRuns?.holdReason(sid, shownNow(sid)) ?? null, open: (sid) => openNow(sid) }));
   const manager = chats;
   deskService = new DeskService(() => client, manager, folders, log);
   const desk = deskService;
@@ -253,6 +255,8 @@ export function activate(context: vscode.ExtensionContext): void {
   /** On screen: the sidebar's chat while the sidebar shows, or a visible editor tab (decision 34). */
   const onScreen = (sid: string) => (manager.current === sid && !!chatView.view?.visible) || panels.visible(sid);
   shownNow = onScreen;
+  /** Open, shown or not: a tab, or with `chatLocation` = `sidebar` the sidebar's chat (100). */
+  openNow = (sid: string) => panels.has(sid) || (!cfg().inTabs && manager.current === sid);
   /** The chats waiting on the owner off screen, oldest first: the count, and what a click opens (decision 35). */
   const waitingOff = () => desk.waiting().filter((t) => !onScreen(t.sessionId));
   const refreshCount = () => {

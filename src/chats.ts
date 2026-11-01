@@ -65,6 +65,8 @@ export interface ChatSettings {
   hooks?: (cwd: string) => HostHooks;
   /** Why a chat's process stays up from outside it — a Promptu run of its own while its page shows (96, review F11) — or null. */
   hold?: (sessionId: string) => string | null;
+  /** Whether a chat is open, a tab or the sidebar's chat: a bridge the CLI started by itself holds its process only then (100). */
+  open?: (sessionId: string) => boolean;
 }
 
 /**
@@ -142,7 +144,7 @@ export class ChatManager extends EventEmitter {
     opts: { untracked?: boolean; deskDue?: DeskDue | null; fork?: { from: string; at: string }; mode?: string; settle?: boolean } = {},
   ): ChatRecord {
     const s = this.settings();
-    const chat = new Chat({ sessionId, cwd, claudePath: s.claudePath, existing: false, idleMs: s.idleMs, log: s.log, hooks: s.hooks, fork: opts.fork, mode: opts.mode, settle: opts.settle, hold: s.hold && (() => s.hold!(sessionId)) });
+    const chat = new Chat({ sessionId, cwd, claudePath: s.claudePath, existing: false, idleMs: s.idleMs, log: s.log, hooks: s.hooks, fork: opts.fork, mode: opts.mode, settle: opts.settle, hold: s.hold && (() => s.hold!(sessionId)), open: s.open && (() => s.open!(sessionId)) });
     const rec: ChatRecord = {
       chat,
       ours: true,
@@ -183,7 +185,7 @@ export class ChatManager extends EventEmitter {
     const s = this.settings();
     const ran = file ? transcriptMode(file) : null;
     const m = mode ?? (ran && (PERMISSION_MODES as string[]).includes(ran) ? ran : "default");
-    const chat = new Chat({ sessionId, cwd: cwd ?? "", claudePath: s.claudePath, existing: true, idleMs: s.idleMs, log: s.log, hooks: s.hooks, mode: m, hold: s.hold && (() => s.hold!(sessionId)) });
+    const chat = new Chat({ sessionId, cwd: cwd ?? "", claudePath: s.claudePath, existing: true, idleMs: s.idleMs, log: s.log, hooks: s.hooks, mode: m, hold: s.hold && (() => s.hold!(sessionId)), open: s.open && (() => s.open!(sessionId)) });
     const rec: ChatRecord = { chat, ours: false, viewer: true, resumable, itemId, itemTitle, untracked: false, deskDue: null, createdMs: Date.now(), lastMs: Date.now() };
     this.records.set(sessionId, rec);
     this.wire(sessionId, rec);

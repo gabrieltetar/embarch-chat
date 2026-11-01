@@ -33,6 +33,7 @@ function makeChat(name, opts = {}) {
     mode: opts.mode,
     env: { ...process.env, FAKE_CLAUDE_FIXTURE: opts.fixture ?? fixture(name), FAKE_CLAUDE_ARGS_LOG: argsLog, FAKE_CLAUDE_INPUT_LOG: path.join(dir, "input.jsonl") },
     hooks: opts.hooks,
+    open: opts.open,
   });
   const events = [];
   chat.on("event", (e) => events.push(e));
@@ -1305,7 +1306,7 @@ test("Remote Control's failures stay on the pill until dismissed; a bridge of an
   assert.ok(!Object.values(s.entries).some((e) => e.kind === "note"), "the owner's own setting turned it on: no notice");
 });
 
-test("a bridge the CLI starts by itself is on: the pill, and — when Claude Code's default turned it on — its notice, once, but no process held open past the idle close; /remote-control turns it off (decision 83; review r4 L6, r6 L4)", async () => {
+test("a bridge the CLI starts by itself is on: the pill, and — when Claude Code's default turned it on — its notice, once; the process held open past the idle close only while the chat is open; /remote-control turns it off (decisions 83, 100; review r4 L6, r6 L4)", async () => {
   // The recorded session, as a CLI whose remoteControlAtStartup default bridges every session would send it: no remote_control from the panel, the bridge connecting on its own.
   const lines = fs.readFileSync(fixture("remote"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
   const rc1 = lines.find((e) => e.d === "in" && e.o.request?.subtype === "remote_control").o.request_id;
@@ -1314,12 +1315,16 @@ test("a bridge the CLI starts by itself is on: the pill, and — when Claude Cod
     .map((e) => (e.o.response?.request_id === "init-1" ? { ...e, o: { ...e.o, response: { ...e.o.response, response: { ...e.o.response.response, remote_control_auto_enable: true, remote_control_auto_on_by_default: true } } } } : e));
   const file = path.join(tmp("rcauto-"), "remote-auto.jsonl");
   fs.writeFileSync(file, auto.map((e) => JSON.stringify(e)).join("\n") + "\n");
-  const { chat, inputs, events } = makeChat("remote", { mode: "default", fixture: file });
+  let open = false;
+  const { chat, inputs, events } = makeChat("remote", { mode: "default", fixture: file, open: () => open });
   chat.send("Reply with just: ok");
   await turns(chat, 1);
   await waitFor(() => chat.state.remote?.status === "connected");
   assert.deepEqual(chat.state.remote, { status: "connected", auto: true, epoch: 1 });
-  assert.equal(chat.holdReason(), null, "the owner did not turn it on here: it would hold every chat's process for good");
+  assert.equal(chat.holdReason(), null, "the chat is not open: held, every closed chat would keep its process for good");
+  open = true;
+  assert.equal(chat.holdReason(), "Remote Control is on", "open, the phone keeps reaching it");
+  open = false;
   const notices = () => Object.values(chat.state.entries).filter((e) => e.kind === "note" && e.text === core.REMOTE_DEFAULT_NOTICE);
   assert.equal(notices().length, 1);
   assert.match(core.REMOTE_DEFAULT_NOTICE, /To keep sessions in this IDE only, turn off "Enable Remote Control for all sessions" in Claude settings/, "Claude Code's words");
