@@ -51,7 +51,7 @@ export function loopbackUrl(raw: string): URL | null {
 
 export interface MailboxEntry {
   id: string;
-  kind: "start" | "focus";
+  kind: "start" | "focus" | "open";
   item_id?: string;
   session_id?: string;
   folder: string;

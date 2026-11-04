@@ -807,7 +807,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // ------------------------------------------------------------ the mailbox
 
-  /** Start work and Open chat from the Desk land here (desk decisions 11, 32, 33). */
+  /** Start work, Open chat and an untracked open from the Desk land here (desk decisions 11, 32, 33, 70). */
   desk.on("mail", async (m: MailboxEntry) => {
     try {
       if (m.kind === "start" && m.item_id) {
@@ -837,6 +837,10 @@ export function activate(context: vscode.ExtensionContext): void {
         }
       } else if (m.kind === "focus" && m.session_id) {
         await open(m.session_id);
+      } else if (m.kind === "open") {
+        // A session on no work item, from a button on the desk's page: it
+        // starts untracked, so the desk never asks (desk decision 70).
+        await startChat({ untracked: true }, windowCwd(m.folder) ?? m.folder, null);
       }
     } catch (e) {
       log(`mailbox ${m.id}: ${(e as Error).message}`);
