@@ -81,6 +81,11 @@
         "icon": "$(add)"
       },
       {
+        "command": "embarchChat.pickLogin",
+        "title": "Pick Login for New Chats",
+        "category": "EmbArch Chat"
+      },
+      {
         "command": "embarchChat.openInEditor",
         "title": "Open Chat in Editor",
         "category": "EmbArch Chat",
@@ -388,6 +393,24 @@
             "default": true,
             "scope": "machine",
             "description": "Add the lines you select in the editor, with their text, to your messages, shown as a chip under the input with an × (decision 60, as Claude Code's claudeCode.attachSelection). Off, @ still inserts the selected lines. User or Remote settings only."
+          },
+          "embarchChat.logins": {
+            "type": "object",
+            "default": { "work": {} },
+            "scope": "machine",
+            "description": "The Claude logins this machine runs chats under. Each key names one; `configDir` runs its `claude` with `CLAUDE_CONFIG_DIR` set there, and with none it uses the CLI's default folder (decision 101). User or Remote settings only — a workspace cannot set it."
+          },
+          "embarchChat.desks": {
+            "type": "object",
+            "default": {},
+            "scope": "machine",
+            "description": "embarch-desk services other than the default one. Each key names one, with `url`, `tokenPath` and an optional `env` set on every process of a chat on that desk, `~/` expanded (decision 101). User or Remote settings only — a workspace cannot set it."
+          },
+          "embarchChat.folderRules": {
+            "type": "array",
+            "default": [],
+            "scope": "machine",
+            "description": "A window's default login and desk, by folder: each rule sets `folder`, `login` (a key of embarchChat.logins) and optionally `desk` (a key of embarchChat.desks). The first rule whose folder is or holds one of the window's folders applies. The status bar's picker changes the login for this window's new chats; the desk follows the rule only (decision 101). User or Remote settings only — a workspace cannot set it."
           }
         }
       },

@@ -267,6 +267,9 @@ The extension does not run in an untrusted workspace.
 | `embarchChat.idleMinutes` | `5` | How long an idle chat's process lives. |
 | `embarchChat.deskUrl` | `"http://127.0.0.1:4891"` | The desk. |
 | `embarchChat.deskTokenPath` | `"~/.config/embarch-desk/desk-token"` | The desk's token. |
+| `embarchChat.logins` | `{ "work": {} }` | The Claude logins chats can run under. `configDir` sets `CLAUDE_CONFIG_DIR`. With more than one, the status bar shows this window's and picks it for new chats; a running chat keeps its own. |
+| `embarchChat.desks` | `{}` | Desks other than the default: `url`, `tokenPath`, and `env` set on each process of a chat on that desk. |
+| `embarchChat.folderRules` | `[]` | A window's default login and desk by folder: `folder`, `login`, optional `desk`. The first rule holding one of the window's folders applies. |
 | `embarchChat.assistant` | `true` | The Haiku assistant: ghost text, cards, chips, naming. Off, the instant prefix match and the CLI's own suggestion remain. |
 | `embarchChat.autosave` | `true` | Save an open file's unsaved changes before Claude reads, edits or writes it. |
 | `embarchChat.continueAfterReload` | `true` | After a reload, a chat cut off mid-turn offers to continue the interrupted step (a button; never by itself). |

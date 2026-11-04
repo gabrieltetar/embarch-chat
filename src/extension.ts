@@ -31,6 +31,9 @@ import { startRough } from "./promptu/text";
 import { UsageStore } from "./usageStore";
 import { CHAT_VIEW, ChatPanels, ChatViewProvider, THREADS_VIEW, ThreadsViewProvider } from "./views/views";
 import { claudeVersion, versionWarning } from "./wire/version";
+import { chatEnv } from "./wire/process";
+import { DEFAULT_LOGIN, DeskConfig, FolderRule, LoginConfig, currentLogin, loginEnv, matchFolderRule, ruleDesk } from "./logins";
+import { haikuEnv } from "./assistant/haiku";
 import { findTranscript, isSessionId } from "./wire/transcript";
 import { appendTitle, forkPoint, historyUpTo } from "./wire/history";
 import type { WireMessage } from "./wire/types";
@@ -55,6 +58,9 @@ function cfg() {
     inTabs: c.get<string>("chatLocation", "editor") !== "sidebar",
     // Promptu's CLI (decision 95): on PATH unless a path is set.
     promptuPath: c.get<string>("promptuPath", "promptu") || "promptu",
+    logins: c.get<Record<string, LoginConfig>>("logins", { [DEFAULT_LOGIN]: {} }),
+    desks: c.get<Record<string, DeskConfig>>("desks", {}),
+    folderRules: c.get<FolderRule[]>("folderRules", []),
   };
 }
 
@@ -83,18 +89,56 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   }
 
+  // ------------------------------------------------------------ login and desk
+
+  const LOGIN_STATE_KEY = "embarchChat.login";
+  let pickedLogin: string | undefined = context.workspaceState.get<string>(LOGIN_STATE_KEY);
+
+  const folderRule = () => matchFolderRule(cfg().folderRules, folders());
+  const windowLogin = () => currentLogin(pickedLogin, folderRule(), cfg().logins);
+  const activeDesk = () => ruleDesk(folderRule(), cfg().desks);
+  /** What a chat, the assistant or Promptu starts with. A chat reads it once, when it is created: it keeps that login for life, across idle closes. */
+  const spawnEnv = (): NodeJS.ProcessEnv => loginEnv(chatEnv(), cfg().logins[windowLogin()], activeDesk());
+
+  const loginStatus = vscode.window.createStatusBarItem("embarchChat.login", vscode.StatusBarAlignment.Right);
+  loginStatus.name = "EmbArch Chat login";
+  loginStatus.command = "embarchChat.pickLogin";
+  const refreshLoginStatus = () => {
+    const names = Object.keys(cfg().logins);
+    // Only one login configured (today's default): nothing to pick, so stay out of the way.
+    if (names.length <= 1) {
+      loginStatus.hide();
+      return;
+    }
+    loginStatus.text = `$(account) ${windowLogin()}`;
+    loginStatus.tooltip = "Login for new EmbArch chats — click to change (a running chat keeps its own)";
+    loginStatus.show();
+  };
+  refreshLoginStatus();
+  context.subscriptions.push(loginStatus);
+
   // The desk is this machine's, and its URL and token path come from user or
   // remote settings only (machine scope): a repo's .vscode/settings.json
-  // cannot point the window, or its token, anywhere else.
+  // cannot point the window, or its token, anywhere else. A folder rule can
+  // name another desk, from the same settings.
   const makeClient = () => {
-    const c = new DeskClient({ baseUrl: cfg().deskUrl, tokenPath: expandHome(cfg().deskTokenPath) });
+    const desk = activeDesk();
+    const c = new DeskClient({ baseUrl: desk?.url ?? cfg().deskUrl, tokenPath: expandHome(desk?.tokenPath ?? cfg().deskTokenPath) });
     if (c.refusal) log(`desk: ${c.refusal}`);
     return c;
   };
   let client = makeClient();
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration("embarchChat.deskUrl") || e.affectsConfiguration("embarchChat.deskTokenPath")) client = makeClient();
+      if (
+        e.affectsConfiguration("embarchChat.deskUrl") ||
+        e.affectsConfiguration("embarchChat.deskTokenPath") ||
+        e.affectsConfiguration("embarchChat.desks") ||
+        e.affectsConfiguration("embarchChat.folderRules")
+      ) {
+        client = makeClient();
+      }
+      if (e.affectsConfiguration("embarchChat.logins") || e.affectsConfiguration("embarchChat.folderRules")) refreshLoginStatus();
     }),
   );
 
@@ -102,7 +146,7 @@ export function activate(context: vscode.ExtensionContext): void {
   let shownNow: (sid: string) => boolean = () => false;
   /** Whether a chat is open (`isOpen` below): a bridge the CLI started by itself holds its process only then (100). */
   let openNow: (sid: string) => boolean = () => false;
-  chats = new ChatManager(() => ({ claudePath: cfg().claudePath, idleMs: cfg().idleMs, log, hooks: (cwd) => hostHooks(log, cwd), hold: (sid) => promptuRuns?.holdReason(sid, shownNow(sid)) ?? null, open: (sid) => openNow(sid) }));
+  chats = new ChatManager(() => ({ claudePath: cfg().claudePath, idleMs: cfg().idleMs, log, hooks: (cwd) => hostHooks(log, cwd), hold: (sid) => promptuRuns?.holdReason(sid, shownNow(sid)) ?? null, open: (sid) => openNow(sid), env: spawnEnv }));
   const manager = chats;
   deskService = new DeskService(() => client, manager, folders, log);
   const desk = deskService;
@@ -149,7 +193,7 @@ export function activate(context: vscode.ExtensionContext): void {
     return libraryCache.entries;
   };
 
-  assistant = new HaikuAssistant(() => ({ claudePath: cfg().claudePath, enabled: cfg().assistant, log }));
+  assistant = new HaikuAssistant(() => ({ claudePath: cfg().claudePath, enabled: cfg().assistant, log, env: haikuEnv(spawnEnv()) }));
   const haiku = assistant;
 
   // The open file and the selection go with a message by default (decision 60).
@@ -157,7 +201,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(editor);
 
   // Promptu (decisions 94–98): the CLI, the card's switches, one run per chat.
-  const promptuCli = new PromptuCli(() => ({ bin: cfg().promptuPath, log }));
+  const promptuCli = new PromptuCli(() => ({ bin: cfg().promptuPath, log, env: spawnEnv() }));
   const promptu = new PromptuService(promptuCli, context.globalState, log);
   promptuRuns = new PromptuRuns(promptuCli, log);
   const runs = promptuRuns;
@@ -803,6 +847,15 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.commands.registerCommand("embarchChat.newChat", () => newChat()),
+    vscode.commands.registerCommand("embarchChat.pickLogin", async () => {
+      const names = Object.keys(cfg().logins);
+      const picks = names.map((name) => ({ label: name, description: name === currentLogin(undefined, folderRule(), cfg().logins) ? "folder default" : undefined, name }));
+      const picked = await vscode.window.showQuickPick(picks, { placeHolder: "Login for new EmbArch chats in this window" });
+      if (!picked) return;
+      pickedLogin = picked.name;
+      await context.workspaceState.update(LOGIN_STATE_KEY, pickedLogin);
+      refreshLoginStatus();
+    }),
     vscode.commands.registerCommand("embarchChat.openInEditor", () => {
       if (manager.current) openInEditor(manager.current);
     }),
