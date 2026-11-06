@@ -4,7 +4,10 @@ A Claude Code chat of the owner's own, as a VS Code extension: it replaces
 Claude Code's panel for EmbArch work, knows each chat's work item, and shows
 every thread of the window's desk at a glance, waiting-on-you first. It also
 carries the [embarch-ui](../embarch-ui) launcher, which moved in from
-embarch-ui's own `vscode-extension/`.
+embarch-ui's own `vscode-extension/`. It spawns nothing: embarch-ui runs as the
+user service `embarch-ui.service` (`embarch-ui service install`), and the
+launcher shows its state and starts, stops and restarts it through
+`systemctl --user`.
 
 The design is in `embarch-doc`: [the spec](../embarch-doc/embarch-chat/spec.md)
 and [its decisions](../embarch-doc/embarch-chat/decisions.md), whose numbers the
@@ -255,7 +258,7 @@ settings, or in a WSL window from the **Remote [WSL]** settings
 (`~/.vscode-server/data/Machine/settings.json`), never from a workspace's
 `.vscode/settings.json` — a cloned repo cannot point the chat at another
 `claude`, the desk's token at another server, or the launcher at another
-binary, turn the assistant back on after you turned it off, or keep chats'
+address, turn the assistant back on after you turned it off, or keep chats'
 processes up. In a WSL window a value set in the local user settings does not
 apply; set it in the Remote settings. The desk URL must be this machine's
 (`127.0.0.1`, `::1` or `localhost`): the extension calls nothing else.
@@ -277,10 +280,7 @@ The extension does not run in an untrusted workspace.
 | `embarchChat.attachOpenFile` | `true` | The file open in the editor goes with each message. Off, a file goes only with selected lines. |
 | `embarchChat.attachSelection` | `true` | The selected lines, with their text, go with each message. Off, `@` still inserts them. |
 | `embarchChat.promptuPath` | `"promptu"` | Promptu's CLI. Not found, the Promptu icon stays dark and Enter sends as always. |
-| `embarchUi.binaryPath` | `"embarch-ui"` | The embarch-ui binary the launcher starts. |
-| `embarchUi.host` / `embarchUi.port` | `127.0.0.1` / `4890` | Where embarch-ui serves (also the Desk link). |
-| `embarchUi.configPath` | `""` | An embarch-ui TOML config, as `EMBARCH_UI_CONFIG`. |
-| `embarchUi.autoStart` | `false` | Start embarch-ui with VS Code. |
+| `embarchUi.host` / `embarchUi.port` | `127.0.0.1` / `4890` | Where `embarch-ui.service` serves (also the Desk link); the binary and its config are the unit's. |
 
 ## Developing
 

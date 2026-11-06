@@ -21,7 +21,7 @@ import { DIFF_SCHEME, DiffContent, registerProposals } from "./diff";
 import { hostHooks } from "./hostHooks";
 import { EditorContext } from "./editorContext";
 import { agentPid, jump } from "./jump";
-import { activateLauncher, deactivateLauncher, serverUrl } from "./launcher/launcher";
+import { activateLauncher, serverUrl } from "./launcher/launcher";
 import { ReloadMemory, restoreAfterReload } from "./reload";
 import { HostCtx, assistInput, beginPromptu } from "./views/chatHost";
 import { PromptuCli, findBinary } from "./promptu/cli";
@@ -962,6 +962,5 @@ export function deactivate(): Thenable<void> | undefined {
   assistant?.dispose();
   deskService?.dispose();
   chats?.dispose();
-  deactivateLauncher();
   return saved;
 }

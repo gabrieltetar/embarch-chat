@@ -1,11 +1,13 @@
 // The embarch-ui launcher, moved in from embarch-ui's vscode-extension
-// unchanged (decision 29): one sideloaded extension, so the silent drop a VS
-// Code server update causes costs one reinstall. Its commands, status bar
-// item and `embarchUi.*` settings keep their names. The original header:
+// (decision 29): one sideloaded extension, so the silent drop a VS Code
+// server update causes costs one reinstall. Its commands, status bar item
+// and `embarchUi.*` settings keep their names.
 //
-// EmbArch UI Launcher: a thin VS Code extension that starts/stops the
-// `embarch-ui` binary as a subprocess and opens it in the system browser.
-// Nothing renders inside the editor — no webview, no custom TreeView/editor
+// It spawns nothing (decision 102, embarch-ui decision 101): embarch-ui runs
+// as the systemd user unit `embarch-ui.service`, one per machine and alive
+// with no window open. This reads the unit's state, drives it through
+// `systemctl --user` and shows the page in the system browser. Nothing
+// renders inside the editor — no webview, no custom TreeView/editor
 // (embarch-ui decision 3).
 
 import * as cp from "child_process";
@@ -22,29 +24,30 @@ import { focusExistingTab } from "./focus";
  * again, which is the original bug back with no error anywhere. */
 const PAGE_TITLE = "EmbArch";
 
-/** What the status bar is reporting. `external` — a server answering on
- * the configured address that this extension did not spawn — is knowable
- * only because `start()` now pre-flights the address; before that it was
- * indistinguishable from `stopped`. */
-type ServerState = "stopped" | "ours" | "external";
+const UNIT = "embarch-ui.service";
+const INSTALL_HINT = "Run `embarch-ui service install` with the binary the service should run.";
 
-/** Tracks the one subprocess this extension may have spawned. `undefined`
- * when embarch-ui isn't running under this extension's control — which
- * also covers the case where it's already running from somewhere else
- * (a terminal, another VS Code window): this extension only ever manages
- * a server it started itself, and `openInBrowser` works either way. */
-let child: cp.ChildProcess | undefined;
+/** How often the status bar re-reads the unit: a Stop or Restart from
+ * another window, a terminal or a crash shows here within this. */
+const REFRESH_MS = 5000;
+
+/** How long Start waits for the address to answer before showing it. */
+const READY_MS = 5000;
+
+/** What the status bar is reporting. `external` is a server answering on
+ * the configured address while the unit is not running it: started by
+ * hand, so nothing here can stop it. `missing` is no unit at all. */
+type ServerState = "running" | "stopped" | "external" | "missing";
+
 let statusItem: vscode.StatusBarItem;
 let output: vscode.OutputChannel;
+let refreshing = false;
 
 function config() {
   const cfg = vscode.workspace.getConfiguration("embarchUi");
   return {
-    binaryPath: cfg.get<string>("binaryPath", "embarch-ui"),
     host: cfg.get<string>("host", "127.0.0.1"),
     port: cfg.get<number>("port", 4890),
-    configPath: cfg.get<string>("configPath", ""),
-    autoStart: cfg.get<boolean>("autoStart", false),
   };
 }
 
@@ -53,25 +56,30 @@ export function serverUrl(): string {
   return `http://${host}:${port}/`;
 }
 
-function setStatus(state: ServerState) {
-  if (state === "ours") {
-    statusItem.text = "$(server-process) embarch-ui";
-    statusItem.tooltip = `embarch-ui running at ${serverUrl()} — click to stop`;
-    statusItem.command = "embarchUi.stop";
-    return;
+/** `systemctl --user ARGS`; rejects with its own words on a non-zero exit. */
+function systemctl(args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    cp.execFile("systemctl", ["--user", ...args], { timeout: 15000 }, (err, stdout, stderr) => {
+      if (err) {
+        reject(new Error((stderr || stdout || err.message).trim()));
+        return;
+      }
+      resolve(stdout);
+    });
+  });
+}
+
+/** The unit's load and active state; `not-found` / `inactive` when
+ * `systemctl` itself cannot answer. */
+async function unitState(): Promise<{ load: string; active: string }> {
+  try {
+    const out = await systemctl(["show", UNIT, "--property=LoadState,ActiveState"]);
+    const prop = (k: string) => out.match(new RegExp(`^${k}=(.*)$`, "m"))?.[1] ?? "";
+    return { load: prop("LoadState"), active: prop("ActiveState") };
+  } catch (e) {
+    output.appendLine(`systemctl --user show ${UNIT}: ${(e as Error).message}`);
+    return { load: "not-found", active: "inactive" };
   }
-  if (state === "external") {
-    statusItem.text = "$(server-process) embarch-ui (external)";
-    // `stop()` can only kill a child this extension spawned, so an
-    // external server's click goes to `start()` — which, finding the
-    // address already answered, focuses its tab instead of adding one.
-    statusItem.tooltip = `embarch-ui running at ${serverUrl()}, started outside this window — click to show it`;
-    statusItem.command = "embarchUi.start";
-    return;
-  }
-  statusItem.text = "$(server-process) embarch-ui (stopped)";
-  statusItem.tooltip = "embarch-ui is not running — click to start";
-  statusItem.command = "embarchUi.start";
 }
 
 /** Is something already serving the configured address? A 400 ms GET that
@@ -94,6 +102,59 @@ function probe(): Promise<boolean> {
   });
 }
 
+/** Waits for the address to answer after a start, so the tab opens on a
+ * page rather than on a refused connection. */
+async function answered(): Promise<boolean> {
+  for (const deadline = Date.now() + READY_MS; Date.now() < deadline; ) {
+    if (await probe()) {
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  return false;
+}
+
+async function readState(): Promise<ServerState> {
+  const { load, active } = await unitState();
+  if (active === "active") {
+    return "running";
+  }
+  if (await probe()) {
+    return "external";
+  }
+  return load === "not-found" ? "missing" : "stopped";
+}
+
+/** Every state's click goes to `start()`, which shows a running server and
+ * starts a stopped one; Stop and Restart are palette commands, since the
+ * unit is shared by every window. */
+function setStatus(state: ServerState) {
+  statusItem.command = "embarchUi.start";
+  if (state === "running") {
+    statusItem.text = "$(server-process) embarch-ui";
+    statusItem.tooltip = `${UNIT} is running at ${serverUrl()} — click to show it`;
+    return;
+  }
+  if (state === "external") {
+    statusItem.text = "$(server-process) embarch-ui (external)";
+    statusItem.tooltip = `embarch-ui is answering at ${serverUrl()}, but not as ${UNIT} — click to show it`;
+    return;
+  }
+  if (state === "missing") {
+    statusItem.text = "$(server-process) embarch-ui (not installed)";
+    statusItem.tooltip = `${UNIT} is not installed. ${INSTALL_HINT}`;
+    return;
+  }
+  statusItem.text = "$(server-process) embarch-ui (stopped)";
+  statusItem.tooltip = `${UNIT} is stopped — click to start it`;
+}
+
+async function refresh(): Promise<ServerState> {
+  const state = await readState();
+  setStatus(state);
+  return state;
+}
+
 /** Show the running server: focus the tab that already has it open, and
  * only open a new one if there is no such tab. Every `start()` path goes
  * through here; `embarchUi.openInBrowser` deliberately does not, so there
@@ -105,117 +166,62 @@ async function reveal(): Promise<void> {
   await openInBrowser();
 }
 
-/** Starts embarch-ui unless something is already serving its address, then
+/** Runs one `systemctl --user` verb on the unit, then refreshes the status
+ * bar; false, with the error shown, when it fails. */
+async function drive(verb: "start" | "stop" | "restart"): Promise<boolean> {
+  output.appendLine(`systemctl --user ${verb} ${UNIT}`);
+  try {
+    await systemctl([verb, UNIT]);
+    return true;
+  } catch (e) {
+    const message = (e as Error).message;
+    output.appendLine(message);
+    vscode.window.showErrorMessage(`systemctl --user ${verb} ${UNIT} failed: ${message} Its log: journalctl --user -u embarch-ui`);
+    return false;
+  } finally {
+    await refresh();
+  }
+}
+
+/** Starts the unit unless something already serves its address, then
  * shows it — focusing the tab that already has it open rather than opening
- * another one.
- *
- * The address is pre-flighted before spawning, so a server started some
- * other way (a terminal, another VS Code window) is recognised as such
- * instead of being inferred from a failed bind after the fact. That
- * inference is kept below as a backstop for the race where something binds
- * the port between the probe and the spawn. */
+ * another one. */
 async function start(): Promise<void> {
-  if (child) {
+  const state = await refresh();
+  if (state === "running" || state === "external") {
     await reveal();
     return;
   }
-
-  if (await probe()) {
-    output.appendLine(`embarch-ui is already serving ${serverUrl()} — not spawning another.`);
-    setStatus("external");
-    await reveal();
+  if (state === "missing") {
+    vscode.window.showErrorMessage(`${UNIT} is not installed. ${INSTALL_HINT}`);
     return;
   }
-
-  const { binaryPath, configPath, host, port } = config();
-  const env = { ...process.env };
-  // Forward the configured host/port to the binary. Without this the two
-  // disagreed: the binary bound its own hardcoded 127.0.0.1:4890 while
-  // `serverUrl()` above built the URL to open from these settings, so any
-  // non-default value opened a browser at an address nothing was serving.
-  env.EMBARCH_UI_HOST = host;
-  env.EMBARCH_UI_PORT = String(port);
-  if (configPath) {
-    env.EMBARCH_UI_CONFIG = configPath;
-  }
-
-  output.appendLine(`Starting: ${binaryPath}`);
-  const proc = cp.spawn(binaryPath, [], { env });
-  child = proc;
-  setStatus("ours");
-
-  let settled = false;
-  let sawListening = false;
-
-  const onLine = (data: Buffer) => {
-    const text = data.toString();
-    output.append(text);
-    if (!sawListening && text.includes("listening on")) {
-      sawListening = true;
-    }
-  };
-  proc.stdout?.on("data", onLine);
-  proc.stderr?.on("data", onLine);
-
-  proc.on("error", (err) => {
-    output.appendLine(`Failed to start embarch-ui: ${err.message}`);
-    vscode.window.showErrorMessage(
-      `Failed to start embarch-ui (binary: "${binaryPath}"). Set "embarchUi.binaryPath" if it isn't on PATH. ${err.message}`
-    );
-    if (child === proc) {
-      child = undefined;
-      setStatus("stopped");
-    }
-    settled = true;
-  });
-
-  proc.on("exit", (code, signal) => {
-    output.appendLine(`embarch-ui exited (code=${code ?? "null"}, signal=${signal ?? "null"})`);
-    if (child === proc) {
-      child = undefined;
-      setStatus("stopped");
-    }
-    // A near-immediate exit before we ever saw "listening on" most likely
-    // means the port is already taken by another embarch-ui instance —
-    // not a real failure from this extension's point of view. The probe
-    // above catches this case first now; this stays for the race where
-    // something bound the port in between.
-    if (!settled && !sawListening) {
-      settled = true;
-      setStatus("external");
-      void reveal();
-    }
-  });
-
-  // Don't block the command on a fixed sleep: open as soon as we see the
-  // real "listening on" log line, falling back to a short timeout in case
-  // the binary's own logging ever changes shape.
-  await new Promise<void>((resolve) => {
-    const timeout = setTimeout(() => resolve(), 3000);
-    const check = setInterval(() => {
-      if (sawListening || settled) {
-        clearInterval(check);
-        clearTimeout(timeout);
-        resolve();
-      }
-    }, 100);
-  });
-  settled = true;
-
-  if (child) {
+  if ((await drive("start")) && (await answered())) {
     await reveal();
   }
 }
 
 async function stop(): Promise<void> {
-  if (!child) {
-    vscode.window.showInformationMessage("embarch-ui is not running (or was started outside this extension).");
+  const state = await refresh();
+  if (state === "missing") {
+    vscode.window.showInformationMessage(`${UNIT} is not installed.`);
     return;
   }
-  output.appendLine("Stopping embarch-ui.");
-  child.kill();
-  child = undefined;
-  setStatus("stopped");
+  if (state === "external") {
+    vscode.window.showInformationMessage(`embarch-ui at ${serverUrl()} was not started by ${UNIT}; stop it where it was started.`);
+    return;
+  }
+  await drive("stop");
+}
+
+/** Restarts the unit — after a dev build, onto the new binary. The open
+ * tab reconnects by itself, so nothing is opened. */
+async function restart(): Promise<void> {
+  if ((await refresh()) === "missing") {
+    vscode.window.showErrorMessage(`${UNIT} is not installed. ${INSTALL_HINT}`);
+    return;
+  }
+  await drive("restart");
 }
 
 async function openInBrowser(): Promise<void> {
@@ -228,27 +234,25 @@ export function activateLauncher(context: vscode.ExtensionContext): void {
   setStatus("stopped");
   statusItem.show();
 
+  // Unref'd: a status refresh never keeps the extension host alive.
+  const timer = setInterval(() => {
+    if (refreshing) {
+      return;
+    }
+    refreshing = true;
+    void refresh().finally(() => (refreshing = false));
+  }, REFRESH_MS);
+  timer.unref();
+
   context.subscriptions.push(
     output,
     statusItem,
+    { dispose: () => clearInterval(timer) },
     vscode.commands.registerCommand("embarchUi.start", start),
     vscode.commands.registerCommand("embarchUi.stop", stop),
+    vscode.commands.registerCommand("embarchUi.restart", restart),
     vscode.commands.registerCommand("embarchUi.openInBrowser", openInBrowser)
   );
 
-  if (config().autoStart) {
-    void start();
-  }
-}
-
-/** Stops a subprocess this extension spawned when VS Code closes — never
- * leave an orphaned embarch-ui running past the editor session that
- * started it. A server started outside this extension (`child` unset) is
- * left alone, matching the same "only manage what we started" rule as
- * `start()`/`stop()` above. */
-export function deactivateLauncher(): void {
-  if (child) {
-    child.kill();
-    child = undefined;
-  }
+  void refresh();
 }
