@@ -1286,9 +1286,6 @@ details.report > summary {
   align-items: center;
   gap: 2px;
 }
-.bulb:not(.lit) {
-  filter: grayscale(1);
-}
 .bulb .count {
   font-size: 0.78em;
   background: var(--waiting);
@@ -2319,6 +2316,22 @@ body.in-editor .rail-col {
   background: var(--active);
   color: var(--on-active);
 }
+.rail-svg {
+  display: block;
+}
+/* One-colour icons (94): unlit is dimmed, lit is full strength in the theme's own colour; no filter. */
+.rail-entry .rail-icon {
+  opacity: 0.65;
+}
+.rail-entry.lit .rail-icon,
+.rail-entry.memory .rail-icon,
+.rail-entry.library:not(:disabled) .rail-icon,
+.rail-entry.usage:not(.none) .rail-icon {
+  opacity: 1;
+}
+.rail-entry:disabled .rail-icon {
+  opacity: 0.4;
+}
 .rail-icon {
   position: relative;
   flex: 0 0 21px;
@@ -2352,18 +2365,14 @@ body.in-editor .rail-col {
   height: 8px;
 }
 /* Promptu's icon is an indicator (95): lit, the next Enter runs the pass. */
-.rail-entry.promptu:not(.lit) .rail-icon {
-  filter: grayscale(1);
-  opacity: 0.7;
-}
 .rail-entry.promptu.lit {
   box-shadow: inset 2px 0 0 var(--accent);
 }
 .rail-entry.promptu.lit .rail-icon {
-  filter: drop-shadow(0 0 3px var(--accent));
+  color: var(--accent);
 }
-.rail-entry.memory .rail-icon {
-  filter: grayscale(0.4);
+.rail-entry.bulb.lit .rail-icon {
+  color: var(--waiting);
 }
 .rail-pop {
   position: absolute;
@@ -2573,20 +2582,19 @@ body.in-editor .rail-col {
   margin-bottom: auto;
 }
 .rail-entry.usage.none .rail-icon {
-  filter: grayscale(1);
   opacity: 0.6;
 }
 .rail-entry.usage.amber {
   box-shadow: inset 2px 0 0 var(--waiting);
 }
 .rail-entry.usage.amber .rail-icon {
-  filter: drop-shadow(0 0 3px var(--waiting));
+  color: var(--waiting);
 }
 .rail-entry.usage.red {
   box-shadow: inset 2px 0 0 var(--err);
 }
 .rail-entry.usage.red .rail-icon {
-  filter: drop-shadow(0 0 3px var(--err));
+  color: var(--err);
 }
 .usage-title {
   margin-bottom: 6px;

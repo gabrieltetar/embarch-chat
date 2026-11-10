@@ -3576,6 +3576,12 @@ await check("the rail: Memory, Promptu, the 📚 and the 💡 down the chat's le
   await keys("\uE015");
   assert.equal(await exec("return document.activeElement.classList.contains('promptu')"), true, "↓ moves to the next entry");
   assert.deepEqual(await text(".composer .bar .bulb, .composer .bar .library"), [], "not in the bar any more");
+  // One-colour SVGs in currentColor, no emoji and no filter (EMB-56).
+  assert.deepEqual(
+    await exec("return [...document.querySelectorAll('.rail .rail-entry .rail-icon')].map((i) => [i.querySelectorAll('svg path').length, i.textContent.trim(), getComputedStyle(i).filter, getComputedStyle(i.querySelector('svg')).stroke === getComputedStyle(i).color])"),
+    [1, 2, 3, 4, 5].map(() => [1, "", "none", true]),
+    "each rail icon is one SVG path in currentColor, no text, no filter",
+  );
   assert.deepEqual(await text(".composer .bar .btw"), ["💬"], "the side question stays by the input");
   const width = () => exec("return Math.round(document.querySelector('.rail-col').getBoundingClientRect().width)");
   const shown = () => exec("return getComputedStyle(document.querySelector('.rail .rail-label')).opacity");

@@ -1283,7 +1283,7 @@ export function Composer(p: Props) {
           <>
             <div class={`rail-col ${railPop ? "popped" : ""}`} onKeyDown={railKeys}>
               <RailEntry
-                icon="📊"
+                icon="usage"
                 label="Usage"
                 cls={`usage ${usageLevel(p.usage, usageNow)}`}
                 title={`Claude plan usage: ${usageSummary(p.usage, usageNow)} — hover for its card`}
@@ -1295,7 +1295,7 @@ export function Composer(p: Props) {
                 onLeave={() => leaveHover("usage")}
               />
               <RailEntry
-                icon="🧠"
+                icon="memory"
                 label="Memory"
                 cls="memory"
                 title="Memory: what loads in this folder, by scope, domain and kind, with stale flags"
@@ -1304,7 +1304,7 @@ export function Composer(p: Props) {
                 onClick={(byKey) => (railPop === "memory" ? setRailPop(null) : (setPopByKey(byKey), setRailPop("memory"), loadMemory()))}
               />
               <RailEntry
-                icon="✨"
+                icon="promptu"
                 label="Promptu"
                 cls="promptu"
                 lit={lit}
@@ -1326,9 +1326,9 @@ export function Composer(p: Props) {
                 onEnter={() => openPromptu()}
                 onLeave={leavePromptu}
               />
-              <RailEntry icon="📚" label="Library" cls="library" title="Library" btnRef={libBtn} disabled={!library.length} onClick={() => (setMenu(menu === "library" ? null : "library"), ta.current?.focus())} />
+              <RailEntry icon="library" label="Library" cls="library" title="Library" btnRef={libBtn} disabled={!library.length} onClick={() => (setMenu(menu === "library" ? null : "library"), ta.current?.focus())} />
               <RailEntry
-                icon="💡"
+                icon="bulb"
                 label="Suggestions"
                 cls={`bulb ${holding ? "checking" : ""}`}
                 btnRef={bulbBtn}
