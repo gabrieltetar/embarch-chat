@@ -51,7 +51,7 @@ export function loopbackUrl(raw: string): URL | null {
 
 export interface MailboxEntry {
   id: string;
-  kind: "start" | "focus" | "open";
+  kind: "start" | "focus" | "open" | "end" | "unfinished";
   item_id?: string;
   session_id?: string;
   folder: string;
@@ -253,6 +253,21 @@ export class DeskClient {
    */
   addLine(sid: string, text: string, kind: string): Promise<{ tile?: string; note_id?: string; held?: boolean }> {
     return this.call("POST", `/sessions/${encodeURIComponent(sid)}/line`, { text, kind });
+  }
+
+  /**
+   * Finish (embarch-desk 025; this panel's 104): the desk re-runs the item's
+   * checks and posts a fresh `end` or `unfinished` for its folder. The
+   * panel acts on that mailbox entry, never on this answer. Null when the
+   * desk has no such route yet (404).
+   */
+  async finish(itemId: string): Promise<{ ended: boolean; blockers?: unknown[] } | null> {
+    try {
+      return await this.call("POST", `/items/${encodeURIComponent(itemId)}/finish`);
+    } catch (e) {
+      if (e instanceof DeskError && e.status === 404) return null;
+      throw e;
+    }
   }
 
   setStatus(itemId: string, stateId: string): Promise<unknown> {

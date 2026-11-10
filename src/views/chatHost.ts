@@ -42,6 +42,7 @@ import { cleanInput } from "../promptu/runs";
 import type { UsageStore } from "../usageStore";
 import * as fs from "fs";
 import { expandHome } from "../desk/client";
+import type { Endings } from "../ending";
 import type { MemoryPassConfig } from "../memoryPass";
 import { memoryPassState } from "../memoryPass";
 
@@ -93,6 +94,12 @@ export interface HostCtx {
   memoryPass: () => MemoryPassConfig | null;
   /** A new chat in this folder whose first message is the pass's command (98). */
   startMemoryPass: (cwd: string, command: string) => void;
+  /** What each issue's chat shows when its issue is Done or Canceled (104). */
+  endings: Endings;
+  /** An ended chat's Close window (104): closes this VS Code window. */
+  closeWindow: () => void;
+  /** An unfinished issue's Finish (104): asks the desk to check again; it reports its own failure. */
+  finish: (itemId: string) => void;
 }
 
 /** Where an "always allow" was last saved, in the extension's global state (78). */
@@ -198,6 +205,14 @@ export class ChatHost implements vscode.Disposable {
   private onDesk = () => {
     if (this.ready && this.sid) this.post({ t: "header", header: this.header() });
   };
+  /** What an issue's chat shows changed: the page showing a chat of that issue gets it (104). */
+  private onEnding = (itemId: string) => {
+    const rec = this.sid ? this.ctx.chats.get(this.sid) : undefined;
+    if (this.ready && rec && headerFor(this.ctx, rec).itemId === itemId) this.post({ t: "ending", sid: rec.chat.sessionId, ending: this.ending(rec) });
+  };
+  private ending(rec: ChatRecord) {
+    return this.ctx.endings.get(headerFor(this.ctx, rec).itemId);
+  }
   private onDraft = (sid: string) => {
     if (sid === this.sid && this.ready) this.pushDraft();
   };
@@ -251,6 +266,7 @@ export class ChatHost implements vscode.Disposable {
     ctx.chats.on("snapshot", this.onSnapshot);
     ctx.chats.on("changed", this.onSnapshotIfView);
     ctx.chats.on("draft", this.onDraft);
+    ctx.endings.on("changed", this.onEnding);
     ctx.desk.on("changed", this.onDesk);
     ctx.desk.on("refs", this.onRefs);
     ctx.assistant.on("chips", this.onChips);
@@ -312,6 +328,7 @@ export class ChatHost implements vscode.Disposable {
         githubRepo: githubRepo(rec.chat.opts.cwd || rec.chat.state.cwd || ""),
         timestamps: vscode.workspace.getConfiguration("embarchChat").get<boolean>("showMessageTimestamps", false),
         permDestination: this.ctx.remembered.get<string>(DESTINATION_KEY),
+        ending: this.ending(rec),
       },
       header: this.header(),
       warning: this.ctx.warning(),
@@ -423,7 +440,18 @@ export class ChatHost implements vscode.Disposable {
     // A permission, question or plan prompt; a dialog or an elicitation takes `respond` (66).
     const pending = (id: string) => chat.state.pending.find((p) => p.requestId === id && p.form !== "dialog" && p.form !== "elicitation" && p.form !== "handoff");
     switch (m.t) {
+      case "closeWindow":
+        // Only an ended chat's button: the page asks for nothing else of the window (104).
+        if (this.ending(rec)?.kind === "ended") this.ctx.closeWindow();
+        return;
+      case "finish": {
+        const itemId = headerFor(this.ctx, rec).itemId;
+        if (itemId && this.ending(rec)?.kind === "unfinished") this.ctx.finish(itemId);
+        return;
+      }
       case "send":
+        // An ended chat takes none; its page has no input, so this is a stale one (104).
+        if (chat.hasEnded) return;
         // One that waits nowhere goes at once, as it always did.
         if (!this.waiting && rec.ours && !m.terminals?.length) return this.deliver(rec, m, []);
         this.waiting++;
@@ -802,6 +830,7 @@ export class ChatHost implements vscode.Disposable {
     this.ctx.chats.off("snapshot", this.onSnapshot);
     this.ctx.chats.off("changed", this.onSnapshotIfView);
     this.ctx.chats.off("draft", this.onDraft);
+    this.ctx.endings.off("changed", this.onEnding);
     this.ctx.desk.off("changed", this.onDesk);
     this.ctx.desk.off("refs", this.onRefs);
     this.ctx.assistant.off("chips", this.onChips);

@@ -17,6 +17,7 @@ import type { PromptuResult, PromptuView } from "../../src/promptu/runs";
 import type { PromptuState } from "../../src/promptu/service";
 import type { Usage } from "../../src/usage";
 import type { MemoryPass } from "../../src/memoryPass";
+import type { ChatEnding } from "../../src/ending";
 
 /** The chat's card in two lines (decision 18). */
 export interface Header {
@@ -54,12 +55,16 @@ export interface ChatView {
   timestamps?: boolean;
   /** Where the owner last chose to save an "always allow" (78). */
   permDestination?: string;
+  /** The issue's end or its blockers, on top of the chat (104); absent: neither. */
+  ending?: ChatEnding | null;
 }
 
 export type HostToChat =
   | { t: "snapshot"; state: ChatState; view: ChatView; header: Header | null; warning: string | null }
   | { t: "event"; e: WireMessage }
   | { t: "header"; header: Header | null }
+  /** What the issue's chat shows on top now (104); null: nothing. */
+  | { t: "ending"; sid: string; ending: ChatEnding | null }
   | { t: "empty"; warning: string | null }
   | { t: "mentions"; q: string; items: MentionItem[] }
   | { t: "states"; states: Array<{ id: string; name: string; type: string }>; error?: string }
@@ -173,6 +178,10 @@ export type ChatToHost =
   | { t: "states" }
   | { t: "setStatus"; stateId: string }
   | { t: "newChat" }
+  /** An ended chat's Close window (104): this VS Code window closes. */
+  | { t: "closeWindow" }
+  /** An unfinished issue's Finish (104): the desk checks again and posts what the window shows. */
+  | { t: "finish" }
   /** The owner's unsent draft of chat `sid`, a moment after the last key: kept by the host for a reload (63). */
   | { t: "typed"; sid: string; text: string }
   | { t: "refreshContext" }

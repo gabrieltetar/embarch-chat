@@ -109,6 +109,29 @@ export class ScratchDesk {
     return id;
   }
 
+  /**
+   * Leaves an `end` or `unfinished` entry as the desk's Done/Canceled check
+   * would (embarch-desk 025), in the store, while the desk is stopped: the
+   * desk refuses one posted to /mailbox, as it refuses a `start`.
+   */
+  seedEnding(kind, fields) {
+    const file = path.join(this.dir, "data", "state.json");
+    const st = this.state();
+    const now = Date.now();
+    const id = `m-seed-${kind}-${now.toString(36)}`;
+    st.mailbox = [...(st.mailbox ?? []), { id, kind, session_id: null, prompt: null, created_ms: now, expires_ms: now + 24 * 3600_000, taken_ms: null, ...fields }];
+    fs.writeFileSync(file, JSON.stringify(st, null, 2));
+    return id;
+  }
+
+  /** Stops the desk, seeds an ending entry, starts it again. */
+  async withEnding(kind, fields) {
+    await this.stop();
+    const id = this.seedEnding(kind, fields);
+    await this.start();
+    return id;
+  }
+
   /** Stops the desk, seeds a start entry, starts it again. */
   async withStart(entry) {
     await this.stop();

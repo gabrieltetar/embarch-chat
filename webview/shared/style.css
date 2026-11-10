@@ -2704,3 +2704,24 @@ body.in-editor .rail-col {
 .usage-note {
   font-size: 0.86em;
 }
+
+/* An ended issue's message on top of its chat, and an unfinished one's blockers (decision 104). */
+.ending {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px var(--inset);
+  border-bottom: 1px solid var(--border);
+  background: var(--vscode-editorWidget-background);
+}
+.ending .ending-text {
+  flex: 1;
+  min-width: 0;
+}
+.ending.unfinished .ending-text {
+  color: var(--warn);
+}
+.ending ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}

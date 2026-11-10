@@ -17,6 +17,7 @@ import { ChatState, Entry, chatStatus, liveBlocks, reduce } from "../../src/wire
 import { Link } from "../shared/link";
 import { LiveMarkdown, Markdown } from "../shared/markdown";
 import type { ChatView, Header, HostToChat, MentionItem } from "../shared/protocol";
+import type { ChatEnding } from "../../src/ending";
 import type { Chip, PastPrompt } from "../../src/assistant/edits";
 import type { LibraryEntry } from "../../src/library/entries";
 import { duration, vscodeApi } from "../shared/vscode";
@@ -55,6 +56,40 @@ interface Model {
   view: ChatView | null;
   header: Header | null;
   warning: string | null;
+}
+
+/**
+ * An ended issue's message on top of the chat, with the one button that closes
+ * the window (decision 104); or an unfinished one's blockers and Finish.
+ */
+function EndBanner({ ending }: { ending: ChatEnding }) {
+  if (ending.kind === "ended") {
+    return (
+      <div class="ending ended" role="status">
+        <span class="ending-text">{ending.message}</span>
+        <button class="primary" onClick={() => post({ t: "closeWindow" })}>
+          Close window
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div class="ending unfinished" role="status">
+      <div class="ending-text">
+        <div>The issue is done, but the work is not finished:</div>
+        <ul>
+          {ending.blockers.map((b, i) => (
+            <li key={i}>
+              <b>{b.repo}</b> — {b.reason}
+            </li>
+          ))}
+        </ul>
+      </div>
+      <button class="primary" onClick={() => post({ t: "finish" })}>
+        Finish
+      </button>
+    </div>
+  );
 }
 
 function HeaderBar({ h, state, view }: { h: Header | null; state: ChatState; view: ChatView }) {
@@ -231,6 +266,9 @@ function App() {
         case "header":
           setModel((x) => ({ ...x, header: m.header }));
           return;
+        case "ending":
+          setModel((x) => (x.view && x.state?.sessionId === m.sid ? { ...x, view: { ...x.view, ending: m.ending } } : x));
+          return;
         case "empty":
           live.current = null;
           setEmpty(true);
@@ -290,6 +328,8 @@ function App() {
   const turnRuns = !!state && (state.busy || state.compacting);
   const sid = state?.sessionId ?? "";
   const acts = !!model.view && !model.view.readOnly;
+  // The issue is Done or Canceled: the input is closed for good (104).
+  const ended = model.view?.ending?.kind === "ended";
   // What a step touched links into embarch-ui, and names the chat's own item from its card (decision 87). A `gh` naming
   // no repo is not the chat's folder's: where the shell was when it ran is not known.
   const ui = model.view?.uiUrl ?? "";
@@ -502,10 +542,11 @@ function App() {
     // A chat of this window's gets Mark as Unread on right-click (package.json, webview/context).
     <div class="chat" data-vscode-context={view.ours ? JSON.stringify({ webviewSection: "embarchChat", sid: state.sessionId }) : undefined}>
       <HeaderBar h={model.header} state={state} view={view} />
+      {view.ending && <EndBanner ending={view.ending} />}
       {/* Inert while Promptu's run holds the chat (96; review F4): its dialog's, or Quick mode's with none. */}
       <div class="body" inert={!!pv && !view.readOnly}>
         {/* A toolbar of its own, named, ↑/↓ between its entries (94; review F9). */}
-        {!view.readOnly && <div class="rail" ref={setRail} role="toolbar" aria-label="Chat tools" aria-orientation="vertical" />}
+        {!view.readOnly && !ended && <div class="rail" ref={setRail} role="toolbar" aria-label="Chat tools" aria-orientation="vertical" />}
         <div class="main">
           {/* What gives way in a short panel, so the input and Send never leave it (style.css; review r5 N1). */}
           <div class="middle">
@@ -555,7 +596,11 @@ function App() {
             <SideQuestions items={state.side ?? []} ctx={ctx} />
             <Queued state={state} readOnly={view.readOnly} />
           </div>
-          {view.readOnly ? (
+          {ended ? (
+            <div class="readonly" role="status">
+              This chat takes no more input.
+            </div>
+          ) : view.readOnly ? (
             <div class="readonly">
               <span style="flex:1">{view.where ? `Runs in ${view.where}` : "Not run by this window"} — read-only here.</span>
               <button class="primary" onClick={() => post({ t: "jump" })}>

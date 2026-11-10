@@ -93,6 +93,8 @@ export class ChatManager extends EventEmitter {
    * opens and rebuilt from the transcript when it opens again.
    */
   private kept = new Map<string, WireMessage[]>();
+  /** Whether a chat has ended with its issue (104): it is never adopted, so never resumed. Set by the window's endings. */
+  isEnded: (rec: ChatRecord) => boolean = () => false;
 
   constructor(private settings: () => ChatSettings) {
     super();
@@ -247,7 +249,7 @@ export class ChatManager extends EventEmitter {
     const rec = this.records.get(sessionId);
     if (!rec) return null;
     if (rec.ours) return rec;
-    if (!rec.resumable) return null;
+    if (!rec.resumable || rec.chat.hasEnded || this.isEnded(rec)) return null;
     rec.ours = true;
     rec.viewer = false;
     this.emit("changed");

@@ -13,6 +13,7 @@ import { PromptHistory } from "./assistant/history";
 import { LibraryEntry } from "./library/entries";
 import { readLibrary } from "./library/files";
 import { ChatManager, ChatRecord, DeskDue } from "./chats";
+import { chatStatus } from "./wire/reducer";
 import { AssignBody, DeskClient, DeskError, MailboxEntry, expandHome } from "./desk/client";
 import { DeskService } from "./deskService";
 import { CONTENT_SCHEME, ContentDocs } from "./content";
@@ -22,8 +23,9 @@ import { hostHooks } from "./hostHooks";
 import { EditorContext } from "./editorContext";
 import { agentPid, jump } from "./jump";
 import { activateLauncher, serverUrl } from "./launcher/launcher";
+import { ChatEnding, Endings, isEndingEntry } from "./ending";
 import { ReloadMemory, restoreAfterReload } from "./reload";
-import { HostCtx, assistInput, beginPromptu } from "./views/chatHost";
+import { HostCtx, assistInput, beginPromptu, headerFor } from "./views/chatHost";
 import { PromptuCli, findBinary } from "./promptu/cli";
 import { PromptuRuns } from "./promptu/runs";
 import { PromptuService, embarchApiPresent } from "./promptu/service";
@@ -228,7 +230,17 @@ export function activate(context: vscode.ExtensionContext): void {
     ...(embarchApiPresent(rec.chat.state.mcp, () => !!findBinary("embarch-api")) ? ["embarch-api"] : []),
   ];
 
+  // An issue that is Done or Canceled ends its chat (104): what each issue's chat shows, kept across a reload.
+  const itemIdOf = (rec: ChatRecord) => headerFor(ctx, rec).itemId;
+  const endings = new Endings(context.workspaceState, (itemId) =>
+    ![...manager.records.values()].some((r) => itemIdOf(r) === itemId && (chatStatus(r.chat.state) === "busy" || chatStatus(r.chat.state) === "waiting")),
+  );
+  manager.isEnded = (rec) => endings.ended(itemIdOf(rec));
+
   const ctx: HostCtx = {
+    endings,
+    closeWindow: () => closeWindow(),
+    finish: (itemId) => void finishItem(itemId),
     chats: manager,
     desk,
     diff,
@@ -832,11 +844,69 @@ export function activate(context: vscode.ExtensionContext): void {
     void desk.refresh();
   }
 
+  // ------------------------------------------------------------ an ended issue (104)
+
+  /** Ended chats take no process and no message; a turn that ended lets a waiting `end` show. */
+  const applyEndings = () => {
+    endings.settle();
+    for (const rec of manager.records.values()) if (!rec.chat.hasEnded && endings.ended(itemIdOf(rec))) rec.chat.end();
+  };
+  manager.on("changed", applyEndings);
+  desk.on("changed", applyEndings);
+  applyEndings();
+
+  /** Close window, from the notice shown when no chat of the issue can show it. */
+  const closeWindow = () => void vscode.commands.executeCommand("workbench.action.closeWindow");
+
+  /** The issue's chat the owner is most likely to look at: one of this window's, else its newest thread on the desk. */
+  function chatOfItem(itemId: string): string | null {
+    const mine = [...manager.records.values()].filter((r) => itemIdOf(r) === itemId).sort((a, b) => b.lastMs - a.lastMs)[0];
+    if (mine) return mine.chat.sessionId;
+    const g = desk.groups.find((x) => x.item?.id === itemId);
+    return g?.threads.slice().sort((a, b) => b.lastMs - a.lastMs)[0]?.sessionId ?? null;
+  }
+
+  /**
+   * The owner sees the message without hunting for it: the issue's chat
+   * opens; with no chat to open — none here, none on the desk — the same
+   * text and button come as a notification.
+   */
+  async function showEnding(itemId: string, e: ChatEnding): Promise<void> {
+    const sid = chatOfItem(itemId);
+    if (sid) {
+      await open(sid);
+      return;
+    }
+    if (e.kind === "ended") void vscode.window.showInformationMessage(e.message, "Close window").then((p) => p && closeWindow());
+    else {
+      const why = e.blockers.map((b) => `${b.repo}: ${b.reason}`).join("; ");
+      void vscode.window.showWarningMessage(`The issue is done but not finished${why ? ` (${why})` : ""}.`, "Finish").then((p) => p && void finishItem(itemId));
+    }
+  }
+  endings.on("changed", (itemId: string) => {
+    applyEndings();
+    const e = endings.get(itemId);
+    if (e) void showEnding(itemId, e).catch((err) => log(`ending ${itemId}: ${(err as Error).message}`));
+  });
+
+  /** Finish: the desk checks again and posts what the window shows; the answer itself is never acted on. */
+  async function finishItem(itemId: string): Promise<void> {
+    try {
+      if ((await desk.client.finish(itemId)) === null) void vscode.window.showErrorMessage("Not finished: this desk has no Finish yet. Update embarch-desk.");
+    } catch (e) {
+      void vscode.window.showErrorMessage(`Not finished: ${(e as Error).message}`);
+    }
+  }
+
   // ------------------------------------------------------------ the mailbox
 
   /** Start work, Open chat and an untracked open from the Desk land here (desk decisions 11, 32, 33, 70). */
   desk.on("mail", async (m: MailboxEntry) => {
     try {
+      if (isEndingEntry(m)) {
+        endings.receive(m);
+        return;
+      }
       if (m.kind === "start" && m.item_id) {
         const cwd = windowCwd(m.folder) ?? m.folder;
         const card = desk.card(m.item_id);

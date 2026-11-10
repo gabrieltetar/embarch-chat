@@ -11,6 +11,7 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import * as fs from "node:fs";
+import * as http from "node:http";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -47,6 +48,55 @@ const waitFor = async (pred, ms = 10000, what = "condition") => {
 
 let threadsView, chatView;
 
+/**
+ * A stand-in for the desk's side of an issue's end (embarch-desk 025, 026),
+ * in front of the scratch desk: it adds `end` and `unfinished` entries to a
+ * folder's mailbox, takes them once, and answers `POST /items/{id}/finish`
+ * (404 until `finish` is set). Everything else goes through to the desk, so
+ * no real folder is removed and no real desk is asked to.
+ */
+function endingDesk(target) {
+  const entries = [];
+  const out = { entries, finishCalls: [], finish: null, url: "", server: null };
+  const body = (req) => new Promise((r) => { const c = []; req.on("data", (d) => c.push(d)); req.on("end", () => r(Buffer.concat(c))); });
+  out.server = http.createServer(async (req, res) => {
+    const u = new URL(req.url, "http://x");
+    const json = (code, v) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(v)); };
+    const take = /^\/mailbox\/([^/]+)\/take$/.exec(u.pathname);
+    const mine = take && entries.find((e) => e.id === decodeURIComponent(take[1]));
+    if (req.method === "POST" && mine) {
+      if (mine.taken_ms) return json(409, { error: "taken" });
+      mine.taken_ms = Date.now();
+      return json(200, mine);
+    }
+    const fin = /^\/items\/([^/]+)\/finish$/.exec(u.pathname);
+    if (req.method === "POST" && fin) {
+      out.finishCalls.push(decodeURIComponent(fin[1]));
+      return out.finish ? json(200, out.finish) : json(404, { error: "no such route" });
+    }
+    const buf = await body(req);
+    let up, text;
+    try {
+      up = await fetch(target + req.url, { method: req.method, headers: { authorization: req.headers.authorization ?? "", "content-type": req.headers["content-type"] ?? "application/json" }, body: req.method === "GET" || req.method === "HEAD" ? undefined : buf });
+      text = await up.text();
+    } catch {
+      // The scratch desk is stopped while a test seeds it: the connection is refused, as it would be to the window.
+      return req.socket.destroy();
+    }
+    if (req.method === "GET" && u.pathname === "/mailbox") {
+      const j = JSON.parse(text);
+      j.entries = [...(j.entries ?? []), ...entries.filter((e) => e.folder === u.searchParams.get("folder") && !e.taken_ms)];
+      text = JSON.stringify(j);
+    }
+    res.writeHead(up.status, { "content-type": up.headers.get("content-type") ?? "application/json" });
+    res.end(text);
+  });
+  return new Promise((r) => out.server.listen(PORT + 1, "127.0.0.1", () => { out.url = `http://127.0.0.1:${PORT + 1}`; r(out); }));
+}
+/** An `end` or `unfinished` entry as the desk would leave one. */
+const mail = (kind, fields) => ({ id: `m-${kind}-${Math.random().toString(36).slice(2)}`, kind, created_ms: Date.now(), expires_ms: Date.now() + 86_400_000, taken_ms: null, ...fields });
+let endDesk;
+
 before(async () => {
   if (skip) return;
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "embarch-chat-host-"));
@@ -60,12 +110,13 @@ before(async () => {
   process.env.FAKE_CLAUDE_ARGS_LOG = path.join(dir, "args.jsonl");
   desk = await new ScratchDesk(path.join(dir, "desk"), PORT, path.join(dir, "claude")).start();
   client = desk.client;
+  endDesk = await endingDesk(desk.url);
 
   fs.chmodSync(FAKE, 0o755);
   process.env.FAKE_CLAUDE_FIXTURE = path.join(here, "fixtures", "wire", "basic.jsonl");
   Object.assign(mock.state.config, {
     "embarchChat.claudePath": FAKE,
-    "embarchChat.deskUrl": desk.url,
+    "embarchChat.deskUrl": endDesk.url,
     "embarchChat.deskTokenPath": desk.tokenPath,
     "embarchUi.port": 1,
     // These tests drive the sidebar's chat; chats in tabs, the default, have their own (decision 92).
@@ -92,6 +143,7 @@ after(async () => {
   if (ext) ext.deactivate();
   for (const d of context?.subscriptions ?? []) d.dispose?.();
   await desk?.stop();
+  endDesk?.server.close();
   if (dir) fs.rmSync(dir, { recursive: true, force: true });
   delete process.env.CLAUDE_CONFIG_DIR;
   delete process.env.FAKE_CLAUDE_ARGS_LOG;
@@ -1724,6 +1776,72 @@ test("chats open in editor tabs by default: a new chat is a tab, what it opens g
     mock.state.config["embarchChat.chatLocation"] = "sidebar";
     mock.state.quickPick = async () => undefined;
   }
+});
+
+// ------------------------------------------------------------ an ended issue (104)
+
+test("an unfinished issue shows its blockers over a live chat; Finish asks the desk, and a desk without the route gets a plain error (104)", { skip }, async () => {
+  const { id: item } = await client.call("POST", "/items", { title: "ABC-125 unfinished", desk: "none" });
+  await mock.state.commands.get("embarchChat.refresh")();
+  const before = chatView.webview.posted.length;
+  await desk.withStart({ item_id: item, folder, prompt: "go" });
+  const snap = await waitFor(() => chatView.webview.posted.slice(before).find((m) => m.t === "snapshot" && m.header?.itemId === item), 10000, "the chat on the item");
+  const blockers = [{ repo: "embarch-chat", reason: "2 commits not pushed" }, { repo: "embarch-doc", reason: "branch not merged" }];
+  const k = chatView.webview.posted.length;
+  endDesk.entries.push(mail("unfinished", { item_id: item, folder, issue_key: "ABC-125", outcome: "done", blockers }));
+  const e = await waitFor(() => chatView.webview.posted.slice(k).find((m) => m.t === "ending" && m.ending?.kind === "unfinished"), 10000, "the unfinished notice");
+  assert.equal(e.sid, snap.state.sessionId);
+  assert.deepEqual(e.ending.blockers, blockers);
+  // Live: a message goes to the chat.
+  const k2 = chatView.webview.posted.length;
+  chatView.webview.fromPage({ t: "send", text: "still here" });
+  await waitFor(() => chatView.webview.posted.slice(k2).some((m) => m.t === "event" && m.e.type === "_sent"), 5000, "the message sent");
+  await waitFor(() => chatView.webview.posted.slice(k2).some((m) => m.t === "event" && m.e.type === "result"), 5000, "the turn's end");
+  // Finish goes to the desk; this desk has no such route yet.
+  chatView.webview.fromPage({ t: "finish" });
+  await waitFor(() => mock.state.messages.some(([kind, m]) => kind === "error" && /no Finish yet/.test(m)), 5000, "the plain error");
+  assert.deepEqual(endDesk.finishCalls, [item]);
+  // A desk with it: the chat acts on the mailbox entry the desk leaves, not on the answer.
+  endDesk.finish = { ended: true };
+  const k3 = chatView.webview.posted.length;
+  chatView.webview.fromPage({ t: "finish" });
+  await waitFor(() => endDesk.finishCalls.length === 2, 5000, "the second Finish");
+  await new Promise((r) => setTimeout(r, 300));
+  assert.ok(!chatView.webview.posted.slice(k3).some((m) => m.t === "ending" && m.ending?.kind === "ended"), "the answer alone ends nothing");
+  endDesk.entries.push(mail("end", { item_id: item, folder, issue_key: "ABC-125", outcome: "done" }));
+  const done = await waitFor(() => chatView.webview.posted.slice(k3).find((m) => m.t === "ending" && m.ending?.kind === "ended"), 10000, "the end the desk left");
+  assert.equal(done.ending.message, "Chat has ended because the issue is done");
+  endDesk.finish = null;
+});
+
+test("an end closes the chat's input behind a message and one Close window button; it is kept for a reload (104)", { skip }, async () => {
+  const { id: item } = await client.call("POST", "/items", { title: "ABC-126 ends", desk: "none" });
+  await mock.state.commands.get("embarchChat.refresh")();
+  const before = chatView.webview.posted.length;
+  await desk.withStart({ item_id: item, folder, prompt: "go" });
+  const snap = await waitFor(() => chatView.webview.posted.slice(before).find((m) => m.t === "snapshot" && m.header?.itemId === item), 10000, "the chat on the item");
+  const sid = snap.state.sessionId;
+  const k = chatView.webview.posted.length;
+  endDesk.entries.push(mail("end", { item_id: item, folder, issue_key: "ABC-126", outcome: "canceled" }));
+  const e = await waitFor(() => chatView.webview.posted.slice(k).find((m) => m.t === "ending" && m.ending?.kind === "ended"), 10000, "the end");
+  assert.equal(e.ending.message, "Chat has ended because the issue is canceled");
+  // Its input is closed: a stale page's message goes nowhere.
+  const k2 = chatView.webview.posted.length;
+  chatView.webview.fromPage({ t: "send", text: "one more" });
+  await new Promise((r) => setTimeout(r, 300));
+  assert.ok(!chatView.webview.posted.slice(k2).some((m) => m.t === "event" && m.e.type === "_sent"), "nothing sent");
+  // The page loads again: the snapshot carries it.
+  chatView.webview.fromPage({ t: "ready" });
+  const again = await waitFor(() => chatView.webview.posted.slice(k2).find((m) => m.t === "snapshot" && m.state.sessionId === sid), 5000, "the snapshot");
+  assert.equal(again.view.ending.kind, "ended");
+  // Close window closes the window and calls no route on the desk.
+  const x = mock.state.executed.length;
+  const calls = endDesk.finishCalls.length;
+  chatView.webview.fromPage({ t: "closeWindow" });
+  await waitFor(() => mock.state.executed.slice(x).includes("workbench.action.closeWindow"), 3000, "the window to close");
+  assert.equal(endDesk.finishCalls.length, calls);
+  // Kept in the workspace's state, which a reload keeps: the ended chat is not resumed after it.
+  assert.equal(context.workspaceState.get("embarchChat.endings")[item].outcome, "canceled");
 });
 
 // ------------------------------------------------------------ Promptu (decisions 94–98)

@@ -145,6 +145,7 @@ export class Chat extends EventEmitter implements HandoffPort {
   /** A compaction ran since the last result: the /compact's own result then lets the held messages go. */
   private compactRan = false;
   private disposed = false;
+  private ended = false;
   /** Turns ended in this window, compactions aside: naming runs after the first (decision 12). */
   turns = 0;
   /** Named with rename_session here: Claude's own ai-title no longer applies. */
@@ -428,6 +429,10 @@ export class Chat extends EventEmitter implements HandoffPort {
    * wrote, are stripped here, the one way every message goes.
    */
   send(text: string, images: Attachment[] = [], extra: SendExtra = {}): void {
+    if (this.ended) {
+      this.note("This chat has ended: it takes no more input.", "error");
+      return;
+    }
     text = stripInvisible(text).text;
     const context = extra.context ?? [];
     // Its own uuid: the CLI's queue knows it by it, to take it back or send it now (port item 72).
@@ -444,6 +449,7 @@ export class Chat extends EventEmitter implements HandoffPort {
 
   /** To the running process; while one is closing, to the next, once it has gone (decision 41). What a reload gave back goes first. */
   private deliver(out: Outgoing, uuid?: string): void {
+    if (this.ended) return;
     const lines = [...this.takeRestored(), { content: out.content, pastes: out.pastes, uuid }];
     if (this.proc && !this.proc.exited && (this.closing || this.proc.closing)) {
       this.queued.push(...lines);
@@ -595,7 +601,7 @@ export class Chat extends EventEmitter implements HandoffPort {
    * CLI reruns a step the reload cut off, if the transcript ends in one.
    */
   continueInterrupted(): void {
-    if (this.running || this.disposed) return;
+    if (this.running || this.disposed || this.ended) return;
     this.rerun = true;
     // What a reload gave back goes too: the CLI takes it after the step.
     this.sendLines(this.ensureProcess(), this.takeRestored());
@@ -1169,6 +1175,21 @@ export class Chat extends EventEmitter implements HandoffPort {
       this.idleTimer.unref?.();
       return;
     }
+    this.closeProcess();
+  }
+
+  /** Whether the chat has ended with its issue (decision 104): it starts no process and takes no message. */
+  get hasEnded(): boolean {
+    return this.ended;
+  }
+
+  /** Ends the chat for good (decision 104): its process closes, and nothing starts one again — a resume would run in a folder about to go. */
+  end(): void {
+    if (this.ended) return;
+    this.ended = true;
+    this.queued = [];
+    this.restored = [];
+    this.rerun = false;
     this.closeProcess();
   }
 

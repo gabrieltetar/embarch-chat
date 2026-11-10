@@ -821,6 +821,49 @@ await check("a thread run elsewhere is read-only, with Jump", async () => {
   assert.ok((await posts()).some((p) => p.t === "jump"));
 });
 
+await check("an ended issue: its message on top with one Close window button, and no input (decision 104)", async () => {
+  for (const [outcome, message] of [["done", "Chat has ended because the issue is done"], ["canceled", "Chat has ended because the issue is canceled"]]) {
+    await send([snapshot({ process: "none" }, { ...OURS, ending: { kind: "ended", outcome, message } }), ...events(outLines("basic"))]);
+    assert.equal((await text(".ending .ending-text"))[0], message);
+    assert.deepEqual(await text(".ending button"), ["Close window"], "one button");
+    assert.equal((await text(".composer")).length, 0, "the input is closed");
+    assert.equal((await text(".rail")).length, 0);
+    assert.ok((await text(".readonly"))[0].includes("no more input"));
+    // On top of the chat: before the timeline.
+    assert.ok(await exec("const b = document.querySelector('.ending'), t = document.querySelector('.timeline'); return !!(b.compareDocumentPosition(t) & Node.DOCUMENT_POSITION_FOLLOWING)"));
+  }
+  await clearPosts();
+  await click(".ending button", "Close window");
+  assert.deepEqual((await posts()).filter((p) => p.t !== "ready").map((p) => p.t), ["closeWindow"]);
+  // The host's `ending` message puts it on a chat that is live, and takes it off.
+  await send([snapshot({ process: "none" })]);
+  assert.equal((await text(".ending")).length, 0);
+  assert.equal((await text(".composer")).length, 1);
+  await send([{ t: "ending", sid: SID, ending: { kind: "ended", outcome: "done", message: "Chat has ended because the issue is done" } }]);
+  assert.equal((await text(".composer")).length, 0);
+  assert.equal((await text(".ending")).length, 1);
+});
+
+await check("an unfinished issue: each blocker's repo and reason, a Finish button, and the input stays (decision 104)", async () => {
+  const ending = { kind: "unfinished", blockers: [{ repo: "embarch-chat", reason: "2 commits not pushed" }, { repo: "embarch-doc", reason: "branch not merged" }] };
+  await send([snapshot({}, { ...OURS, ending })]);
+  const items = await text(".ending li");
+  assert.equal(items.length, 2);
+  assert.ok(items[0].includes("embarch-chat") && items[0].includes("2 commits not pushed"), items[0]);
+  assert.ok(items[1].includes("embarch-doc") && items[1].includes("branch not merged"), items[1]);
+  assert.deepEqual(await text(".ending button"), ["Finish"]);
+  assert.equal((await text(".composer")).length, 1, "the chat takes input");
+  await clearPosts();
+  await click(".ending button", "Finish");
+  assert.deepEqual((await posts()).filter((p) => p.t !== "ready").map((p) => p.t), ["finish"]);
+  // A later one replaces it.
+  await send([{ t: "ending", sid: SID, ending: { kind: "unfinished", blockers: [{ repo: "embarch-desk", reason: "dirty" }] } }]);
+  assert.equal((await text(".ending li")).length, 1);
+  assert.ok((await text(".ending li"))[0].includes("embarch-desk"));
+  await send([{ t: "ending", sid: SID, ending: null }]);
+  assert.equal((await text(".ending")).length, 0);
+});
+
 await check("markdown: lists, code, tables, links, file paths, no HTML", async () => {
   const md = [
     "## Heading",
