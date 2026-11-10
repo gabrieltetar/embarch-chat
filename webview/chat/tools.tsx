@@ -348,7 +348,7 @@ function ToolViewInner({ t, entries, ctx, render }: ToolProps) {
   // Claude's question stays as a Questions row, opening to the picks once answered (decision 79).
   const asked = t.name === "AskUserQuestion";
   const answered = asked && t.status === "done";
-  const [open, setOpen] = useState<boolean>(editLike || sub || t.name === "TodoWrite" || !!custom || answered || wanted.has(t.id));
+  const [open, setOpen] = useState<boolean>(sub || t.name === "TodoWrite" || !!custom || answered || wanted.has(t.id));
   useEffect(() => {
     if (answered) setOpen(true);
   }, [answered]);

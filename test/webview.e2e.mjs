@@ -466,9 +466,14 @@ await check("Edit and Write show diffs that open VS Code's diff editor", async (
   await send([snapshot(), sent("e"), ...events(outLines("edit"))]);
   const names = await text(".tool .name");
   assert.deepEqual(names, ["Write", "Edit"]);
-  const diffs = await text(".diff");
-  assert.ok(diffs[1].includes("- two") && diffs[1].includes("+ three"), diffs[1]);
+  assert.deepEqual(await text(".tool .diff"), [], "a timeline diff is one line until opened (decision 8)");
   assert.ok((await text(".diffstat"))[1].includes("+1"));
+  await exec("document.querySelectorAll('.tool')[1].querySelector('.line').click()");
+  const diffs = await text(".diff");
+  assert.ok(diffs.length === 1 && diffs[0].includes("- two") && diffs[0].includes("+ three"), diffs[0]);
+  await exec("document.querySelectorAll('.tool')[1].querySelector('.line').click()");
+  assert.deepEqual(await text(".tool .diff"), [], "a second click collapses it");
+  await exec("document.querySelectorAll('.tool')[1].querySelector('.line').click()");
   await clearPosts();
   await exec("document.querySelectorAll('.tool')[1].querySelector('button').click()");
   const p = (await posts()).find((x) => x.t === "openDiff");
