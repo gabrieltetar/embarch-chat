@@ -104,26 +104,6 @@ const teardown = async () => {
 };
 process.on("uncaughtException", async (e) => {
   console.log(`FAIL (crashed): ${e.stack ?? e}`);
-  await check("nothing in the chat scrolls sideways: a 400-character unbroken line wraps in a code block, a diff, a table cell, a message; a tool's name truncates", async () => {
-  const long = "x".repeat(400);
-  await fresh({}, false);
-  const md = ["```", long, "```", "", "| a | b |", "|---|---|", `| ${long} | 2 |`, "", long].join("\n");
-  await send([
-    sent("wide"),
-    { t: "event", e: { type: "assistant", message: { id: "m-wide", content: [{ type: "text", text: md }] }, parent_tool_use_id: null } },
-    toolCall("t-wide-edit", "Edit", { file_path: "/work/a.txt", old_string: long, new_string: long + "y" }),
-    toolCall("t-wide-name", "mcp__" + "n".repeat(400), { q: "1" }),
-  ]);
-  await exec("document.querySelectorAll('.tool .line').forEach((l) => l.click())");
-  await settle();
-  assert.ok((await text(".diff")).length >= 1, "the diff is open");
-  const report = await exec(
-    "const bad = []; for (const e of document.querySelectorAll('body *')) { const o = getComputedStyle(e).overflowX; if ((o === 'auto' || o === 'scroll') && e.scrollWidth > e.clientWidth) bad.push(e.className || e.tagName); } const t = document.querySelector('.timeline'); const one = (s) => { const e = document.querySelector(s); return e ? e.scrollWidth <= e.clientWidth : 'missing'; }; return { bad, timeline: t.scrollWidth <= t.clientWidth, doc: document.documentElement.scrollWidth <= document.documentElement.clientWidth, code: one('.codeblock pre'), table: one('.tablewrap'), diff: one('.diff'), msg: one('.md') }",
-  );
-  assert.deepEqual(report, { bad: [], timeline: true, doc: true, code: true, table: true, diff: true, msg: true });
-  await shot("chat-no-sideways-scroll");
-});
-
 await teardown();
   process.exit(1);
 });
@@ -4194,6 +4174,26 @@ await check("the Memory menu: scope, then domain, then kind, stale flags and whe
 });
 
 // ------------------------------------------------------------ the list
+
+await check("nothing in the chat scrolls sideways: a 400-character unbroken line wraps in a code block, a diff, a table cell, a message; a tool's name truncates", async () => {
+  const long = "x".repeat(400);
+  await fresh({}, false);
+  const md = ["```", long, "```", "", "| a | b |", "|---|---|", `| ${long} | 2 |`, "", long].join("\n");
+  await send([
+    sent("wide"),
+    { t: "event", e: { type: "assistant", message: { id: "m-wide", content: [{ type: "text", text: md }] }, parent_tool_use_id: null } },
+    toolCall("t-wide-edit", "Edit", { file_path: "/work/a.txt", old_string: long, new_string: long + "y" }),
+    toolCall("t-wide-name", "mcp__" + "n".repeat(400), { q: "1" }),
+  ]);
+  await exec("document.querySelectorAll('.tool .line').forEach((l) => l.click())");
+  await settle();
+  assert.ok((await text(".diff")).length >= 1, "the diff is open");
+  const report = await exec(
+    "const bad = []; for (const e of document.querySelectorAll('body *')) { const o = getComputedStyle(e).overflowX; if ((o === 'auto' || o === 'scroll') && e.scrollWidth > e.clientWidth) bad.push(e.className || e.tagName); } const t = document.querySelector('.timeline'); const one = (s) => { const e = document.querySelector(s); return e ? e.scrollWidth <= e.clientWidth : 'missing'; }; return { bad, timeline: t.scrollWidth <= t.clientWidth, doc: document.documentElement.scrollWidth <= document.documentElement.clientWidth, code: one('.codeblock pre'), table: one('.tablewrap'), diff: one('.diff'), msg: one('.md') }",
+  );
+  assert.deepEqual(report, { bad: [], timeline: true, doc: true, code: true, table: true, diff: true, msg: true });
+  await shot("chat-no-sideways-scroll");
+});
 
 await go("/list.html");
 
