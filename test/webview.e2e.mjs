@@ -104,7 +104,7 @@ const teardown = async () => {
 };
 process.on("uncaughtException", async (e) => {
   console.log(`FAIL (crashed): ${e.stack ?? e}`);
-await teardown();
+  await teardown();
   process.exit(1);
 });
 async function wd(method, p, body) {
