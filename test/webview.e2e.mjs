@@ -257,7 +257,7 @@ await check("text shows while it streams, with a cursor", async () => {
   assert.equal((await text(".live.cursor")).length, 1);
   assert.ok((await text(".status-line"))[0]?.includes("Working"));
   await clearPosts();
-  await click(".composer button", "Stop");
+  await click('.composer .bar button[aria-label="Stop"]');
   assert.ok((await posts()).some((p) => p.t === "interrupt"));
   await send(events(lines.slice(cut + 1)));
   assert.ok((await text(".note")).includes("Interrupted"));
@@ -619,6 +619,35 @@ await check("/ completes the session's commands", async () => {
   assert.deepEqual(await text(".popup div"), ["/compact", "/context", "/copy", "/remote-control"]);
 });
 
+await check("the input is one row: mode, pills, box, Send icon; nothing under the box; popovers inside the pane (EMB-60)", async () => {
+  await send([snapshot({ model: "opus", effort: "high", mcp: [{ name: "embarch-api", status: "connected" }], remote: { status: "connected", url: "https://claude.ai/code/session_x" } })]);
+  for (const width of ["400px", ""]) {
+    await exec("document.getElementById('app').style.width = arguments[0]", [width]);
+    await settle();
+    const m = await exec(`const r = (e) => { const b = e.getBoundingClientRect(); return { l: b.left, r: b.right, t: b.top, b: b.bottom }; };
+      const bar = document.querySelector('.composer .bar'), q = (s) => bar.querySelector(s);
+      const parts = ['select', '.pill.model', '.pill.mcp', '.pill.remote', '.field', 'button.primary'].map((s) => q(s));
+      const pane = document.querySelector('.composer').getBoundingClientRect();
+      return { missing: parts.map((e, i) => e ? null : i).filter((i) => i !== null), boxes: parts.filter(Boolean).map(r), bar: r(bar), pane: { l: pane.left, r: pane.right, b: pane.bottom }, vh: window.innerHeight,
+        after: [...document.querySelectorAll('.composer > *')].map((e) => e.className).slice(-1)[0], label: q('button.primary').textContent.trim(), title: q('button.primary').title };`);
+    assert.deepEqual(m.missing, [], `${width}: every part is in the one row`);
+    for (let i = 1; i < m.boxes.length; i++) assert.ok(m.boxes[i].l >= m.boxes[i - 1].r - 1, `${width}: in order, left to right: ${JSON.stringify(m.boxes)}`);
+    assert.ok(m.boxes.every((b) => b.t >= m.bar.t - 1 && b.b <= m.bar.b + 1), `${width}: one row: ${JSON.stringify(m)}`);
+    assert.ok(m.boxes[5].r <= m.pane.r + 1 && m.pane.b <= m.vh + 1, `${width}: Send on screen`);
+    assert.equal(m.label, "", "Send is an icon, no text");
+    assert.match(m.title, /Send/);
+    assert.equal(m.after, "bar", "nothing under the box");
+    for (const pill of [".pill.model", ".pill.mcp"]) {
+      await click(".composer " + pill);
+      await settle();
+      const p = await exec("const e = document.querySelector('.composer .pop'), b = e.getBoundingClientRect(), c = document.querySelector('.composer').getBoundingClientRect(); return b.left >= c.left - 1 && b.right <= c.right + 1 && b.top >= 0", []);
+      assert.equal(p, true, `${width}: ${pill}'s popover inside the pane`);
+      await click(".composer " + pill);
+    }
+  }
+  await exec("document.getElementById('app').style.width = ''");
+});
+
 await check("mode and model switch, context meter and Compact", async () => {
   await send([snapshot({ context: { totalTokens: 150000, maxTokens: 200000, percentage: 75, categories: [{ name: "Messages", tokens: 150000 }] } })]);
   assert.ok((await text(".meter"))[0].includes("75%"));
@@ -857,7 +886,7 @@ await check("the column: a wide pane centres timeline, cards and composer in 80 
     exec(`const r = (s) => document.querySelector(s)?.getBoundingClientRect();
       const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
       return { vw: document.documentElement.clientWidth, rem, rail: r('.rail')?.right ?? 0,
-        head: r('.header .row').left, composer: r('.composer').width, field: r('.composer .field').left, fieldRight: r('.composer .field').right,
+        head: r('.header .row').left, composer: r('.composer').width, field: r('.composer .bar').left, fieldRight: r('.composer .bar').right,
         p: r('.timeline .reply .md > p'), code: r('.timeline .reply .md > .codeblock'), tool: r('.timeline > div > .tool').left,
         think: r('.timeline > div > details.thinking').left, user: r('.timeline .user').right, turn: r('.timeline > .turn').width };`);
   const near = (a, b, what) => assert.ok(Math.abs(a - b) <= 1, `${what}: ${a} vs ${b}`);
@@ -883,7 +912,7 @@ await check("the column: a wide pane centres timeline, cards and composer in 80 
     const col = Math.max(56 * m.rem, 0.8 * mw);
     const left = m.rail + Math.max(gutter, (mw - col) / 2);
     near(m.p.left, left, `${name}: prose starts at the column's edge`);
-    near(m.field, left, `${name}: the composer's field shares it`);
+    near(m.field, left, `${name}: the composer's row shares it`);
     near(m.think, left + gutter, `${name}: thinking indents by the gutter`);
     near(m.tool, left + gutter, `${name}: a step indents by the gutter`);
     near(m.head, gutter, `${name}: the header keeps the gutter, full width`);
@@ -894,7 +923,7 @@ await check("the column: a wide pane centres timeline, cards and composer in 80 
       near(m.code.width, col, `${name}: code takes the whole column`);
       near(m.turn, col, `${name}: the turn's rule stops at the column`);
       const right = m.vw - (left - m.rail);
-      near(m.fieldRight, right, `${name}: the composer's field ends at the column's edge`);
+      near(m.fieldRight, right, `${name}: the composer's row ends at the column's edge`);
       assert.ok(m.user <= right + 1 && m.user >= right - 20, `${name}: the bubble ends at the column's edge: ${m.user}`);
     }
   }
@@ -3025,7 +3054,7 @@ await check("the 💬 beside the 📚 puts the input in side-question mode while
   await send([sent("Run the bash command"), ...events(upTo(lines, (o) => o.type === "assistant" && o.message.content.some((b) => b.type === "tool_use")))]);
   const btn = ".rail .rail-entry.btw";
   assert.deepEqual(await exec(`const b=document.querySelector('${btn}'); return [b.textContent.trim(), b.disabled, b.title]`), ["Side question", false, "Side question (/btw) — answered beside the chat, not added to it"]);
-  const mode = () => exec("return [!!document.querySelector('.composer .aside-tag'), document.querySelector('.composer textarea').classList.contains('aside'), document.querySelector('.composer .bar button.primary').textContent, document.activeElement === document.querySelector('.composer textarea')]");
+  const mode = () => exec("return [!!document.querySelector('.composer .aside-tag'), document.querySelector('.composer textarea').classList.contains('aside'), document.querySelector('.composer .bar button.primary').getAttribute('aria-label'), document.activeElement === document.querySelector('.composer textarea')]");
   await click(btn);
   await settle();
   assert.deepEqual(await mode(), [true, true, "Ask", true], "tagged, Ask, the input focused");
@@ -3284,7 +3313,7 @@ await check("above the input at once — a held card, side questions, a queued m
   // Typing when the card comes: it waits as one quiet line (55).
   await type("and the baud");
   await send(events([askLines[askAt]]));
-  const box = await exec(`return ['.card.held', '.side', '.queue', '.composer .aside-tag', '.composer textarea', '.composer .attachments', '.composer .bar']
+  const box = await exec(`return ['.card.held', '.side', '.queue', '.composer .aside-tag', '.composer .attachments', '.composer textarea']
     .map((s) => { const e = document.querySelector(s); if (!e) return [s, null]; const r = e.getBoundingClientRect(); return [s, Math.round(r.top), Math.round(r.bottom)]; });`);
   await shot("above-input-all");
   for (const [sel, top] of box) assert.notEqual(top, null, `${sel} on screen`);
@@ -3324,7 +3353,7 @@ await check("a 300 px sidebar with everything above the input: the side answers,
     assert.ok(m.allow.top >= m.cards.top && m.allow.bottom <= m.cards.bottom, `the card's Allow on screen: ${JSON.stringify([m.allow, m.cards])}`);
     for (const k of ["side", "bg", "queue"]) assert.ok(m[k].h >= 24, `${k} keeps a line: ${JSON.stringify(m[k])}`);
     assert.ok(m.composer.bottom <= m.vh + 1, "the input on screen");
-    assert.ok(m.bar.right - m.primary.right <= 1, `Queue at the bar's right: ${JSON.stringify([m.primary, m.bar])}`);
+    assert.ok(m.bar.right - m.primary.right <= 1, `Send at the bar's right: ${JSON.stringify([m.primary, m.bar])}`);
   } finally {
     await exec("document.getElementById('app').style.width = ''");
   }
@@ -3365,7 +3394,7 @@ for (const h of [520, 420, 340, 324]) {
       await settle();
       const m = await exec(`const r = (s) => { const e = document.querySelector(s); if (!e) return null; const b = e.getBoundingClientRect(); return { top: Math.round(b.top), bottom: Math.round(b.bottom), h: Math.round(b.height) }; };
         const at = (re) => { const b = [...document.querySelectorAll('.card .actions button')].find((x) => re.test(x.textContent)); if (!b) return null; const q = b.getBoundingClientRect(); return { top: Math.round(q.top), bottom: Math.round(q.bottom) }; };
-        const send = [...document.querySelectorAll('.composer .bar button')].find((b) => /Send|Queue/.test(b.textContent)).getBoundingClientRect();
+        const send = [...document.querySelectorAll('.composer .bar button')].find((b) => /Send|Queue/.test(b.getAttribute('aria-label'))).getBoundingClientRect();
         // What the owner reads of the card: not under its sticky buttons, nor out of the cards' box or the box that clips it.
         const box = document.querySelector('.cards').getBoundingClientRect(), bar = document.querySelector('.card .actions').getBoundingClientRect(), mid = document.querySelector('.middle').getBoundingClientRect();
         const seen = (s) => { const e = document.querySelector(s); if (!e) return false; const q = e.getBoundingClientRect(); return q.top >= box.top - 1 && q.bottom <= Math.min(box.bottom, bar.top, mid.bottom) + 1; };

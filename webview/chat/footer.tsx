@@ -1,6 +1,6 @@
-// The pills at the input's foot, where Claude Code's panel keeps its own
-// (its model, MCP and Remote Control pills): each a small button that opens
-// a panel over the input, in the place the 💡's and 📚's menus open (38).
+// The pills in the input's row, left of the box and after the mode select
+// (Claude Code's panel keeps its own at the foot: its model, MCP and Remote
+// Control pills): each a small button that opens a panel over the input, in the place the 💡's and 📚's menus open (38).
 //
 // The model pill is Claude Code's (its changelog L2008, L1858, L416): the
 // model and the effort it runs at, "· Ultracode" when that is on; it opens

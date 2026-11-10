@@ -103,7 +103,7 @@ interface Props {
   memoryPass: MemoryPass | null;
   /** This chat's Promptu run while one is under way (its dialog shows, or in Quick mode only the icon turns). */
   promptuView: PromptuView | null;
-  /** The pills beside the mode select (footer.tsx): the model pill, MCP. */
+  /** The pills after the mode select, left of the box (footer.tsx): the model pill, MCP, Remote. */
   footer?: preact.ComponentChildren;
   /** The page's own commands — /copy, /export, /rewind (history.tsx), /mcp, /remote-control (footer.tsx) — answered here: true when taken. */
   onCommand: (text: string) => boolean;
@@ -1155,6 +1155,50 @@ export function Composer(p: Props) {
           💬 Side question <span class="muted">· answered beside the chat · Esc leaves</span>
         </div>
       )}
+      {notice && <div class="paste-notice muted">{notice}</div>}
+      {(images.length > 0 || edChip || terminals.length > 0) && (
+        <div class="attachments">
+          {terminals.map((term) => (
+            <span key={`t:${termKey(term)}`} class="ctx-chip" title={terminalTip(term)}>
+              <span class="ctx-kind">Terminal</span>
+              <span class="ctx-label">{term.name}</span>
+              <button class="icon remove" title="Don't send it" onClick={() => setTerminals((cur) => cur.filter((x) => termKey(x) !== termKey(term)))}>
+                ×
+              </button>
+            </span>
+          ))}
+          {edChip && (
+            <span
+              class={`ctx-chip ${edSent ? "sent" : ""}`}
+              title={edSent ? `${edChip.path}\nSent with an earlier message: not sent again until it changes` : `${edChip.path}\nGoes with the message — × keeps it out (embarchChat.attachOpenFile, attachSelection)`}
+            >
+              <span class="ctx-kind">{edChip.kind === "selection" ? "Selection" : "File"}</span>
+              <span class="ctx-label">{edChip.label}</span>
+              <button class="icon remove" title="Don't send it" onClick={() => setDismissed(edKey)}>
+                ×
+              </button>
+            </span>
+          )}
+          {images.map((im) => (
+            <span key={im.id} class="thumb" title={`${im.mediaType} — goes with the message`}>
+              <img src={`data:${im.mediaType};base64,${im.data}`} alt="pasted image" />
+              <button class="icon remove" title="Remove" onClick={() => setImages((cur) => cur.filter((x) => x.id !== im.id))}>
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div class="bar">
+        <select title="Permission mode" value={mode} onChange={(e) => post({ t: "mode", mode: (e.target as HTMLSelectElement).value })}>
+          {MODES.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.label}
+            </option>
+          ))}
+          {!MODES.some((m) => m.id === mode) && <option value={mode}>{mode}</option>}
+        </select>
+        {p.footer}
       <div class="field" ref={field}>
         <div class="overlay" ref={overlay} aria-hidden="true">
           {after !== null ? (
@@ -1209,64 +1253,25 @@ export function Composer(p: Props) {
         />
         <div class="overlay measure" ref={measure} aria-hidden="true" />
       </div>
-      {notice && <div class="paste-notice muted">{notice}</div>}
-      {(images.length > 0 || edChip || terminals.length > 0) && (
-        <div class="attachments">
-          {terminals.map((term) => (
-            <span key={`t:${termKey(term)}`} class="ctx-chip" title={terminalTip(term)}>
-              <span class="ctx-kind">Terminal</span>
-              <span class="ctx-label">{term.name}</span>
-              <button class="icon remove" title="Don't send it" onClick={() => setTerminals((cur) => cur.filter((x) => termKey(x) !== termKey(term)))}>
-                ×
-              </button>
-            </span>
-          ))}
-          {edChip && (
-            <span
-              class={`ctx-chip ${edSent ? "sent" : ""}`}
-              title={edSent ? `${edChip.path}\nSent with an earlier message: not sent again until it changes` : `${edChip.path}\nGoes with the message — × keeps it out (embarchChat.attachOpenFile, attachSelection)`}
-            >
-              <span class="ctx-kind">{edChip.kind === "selection" ? "Selection" : "File"}</span>
-              <span class="ctx-label">{edChip.label}</span>
-              <button class="icon remove" title="Don't send it" onClick={() => setDismissed(edKey)}>
-                ×
-              </button>
-            </span>
-          )}
-          {images.map((im) => (
-            <span key={im.id} class="thumb" title={`${im.mediaType} — goes with the message`}>
-              <img src={`data:${im.mediaType};base64,${im.data}`} alt="pasted image" />
-              <button class="icon remove" title="Remove" onClick={() => setImages((cur) => cur.filter((x) => x.id !== im.id))}>
-                ×
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
-      <div class="bar">
-        <select title="Permission mode" value={mode} onChange={(e) => post({ t: "mode", mode: (e.target as HTMLSelectElement).value })}>
-          {MODES.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.label}
-            </option>
-          ))}
-          {!MODES.some((m) => m.id === mode) && <option value={mode}>{mode}</option>}
-        </select>
-        {p.footer}
-        {/* Stop and Send together at the right, where a narrow sidebar wraps them too. */}
+        {/* Stop and Send are icons on the box's right, in the same place. */}
         <span class="send">
           {busy && (
-            <button title="Stop this turn (Esc); background tasks go on" onClick={() => post({ t: "interrupt" })}>
-              Stop
+            <button class="icon-btn stop" title="Stop this turn (Esc); background tasks go on" aria-label="Stop" onClick={() => post({ t: "interrupt" })}>
+              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+                <rect x="3" y="3" width="10" height="10" rx="1.5" fill="currentColor" />
+              </svg>
             </button>
           )}
           <button
-            class="primary"
+            class="primary icon-btn"
             disabled={!text.trim() && (aside || (!images.length && !terminals.length))}
             onClick={send}
+            aria-label={aside ? "Ask" : busy ? "Queue" : "Send"}
             title={aside ? "Ask aside (Enter): not added to the conversation" : p.waiting ? "Queued: Claude takes it after your answer to the card above" : busy ? "Queued: it waits above the input until Claude reads it, at its next step" : "Send (Enter)"}
           >
-            {aside ? "Ask" : busy ? "Queue" : "Send"}
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+              <path d="M8 13V3M3.5 7.5L8 3l4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
           </button>
         </span>
       </div>
