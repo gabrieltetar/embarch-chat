@@ -373,7 +373,14 @@ export class Chat extends EventEmitter implements HandoffPort {
     });
     proc.on("error", (err: Error) => {
       if (this.proc !== proc) return;
-      const msg = (err as NodeJS.ErrnoException).code === "ENOENT" ? `claude not found: ${this.opts.claudePath}` : err.message;
+      // Node gives a missing cwd the same ENOENT as a missing executable.
+      const cwdGone = this.opts.cwd !== "" && !fs.existsSync(this.opts.cwd);
+      const msg =
+        (err as NodeJS.ErrnoException).code !== "ENOENT"
+          ? err.message
+          : cwdGone
+            ? `the chat's folder no longer exists: ${this.opts.cwd}`
+            : `claude not found: ${this.opts.claudePath}`;
       this.log(`spawn failed: ${msg}`);
       // It took nothing: what was sent to it goes back to the owner, as after a crash.
       this.releaseUntaken();

@@ -345,6 +345,19 @@ test("a missing claude is an error on the chat, not a crash", async () => {
   chat.dispose();
 });
 
+test("a chat whose folder was deleted names the folder, not a missing claude", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "embarch-chat-gone-"));
+  fs.rmSync(dir, { recursive: true });
+  const chat = new core.Chat({ sessionId: "11111111-2222-4333-8444-555555555555", cwd: dir, claudePath: process.execPath, existing: true, idleMs: 1000 });
+  chat.send("hi");
+  await once(chat, "closed");
+  assert.equal(chat.state.process, "error");
+  assert.match(chat.state.processError, /folder no longer exists/);
+  assert.ok(chat.state.processError.includes(dir));
+  assert.doesNotMatch(chat.state.processError, /claude not found/);
+  chat.dispose();
+});
+
 test("a claude that cannot start gives the message back to the draft, marked not sent", async () => {
   const chat = new core.Chat({ sessionId: "11111111-2222-4333-8444-555555555555", cwd: os.tmpdir(), claudePath: "/nonexistent/claude", existing: false, idleMs: 1000 });
   const unsent = [];
