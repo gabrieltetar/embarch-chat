@@ -16,6 +16,7 @@ import type { MemoryOut } from "../../src/promptu/cli";
 import type { PromptuResult, PromptuView } from "../../src/promptu/runs";
 import type { PromptuState } from "../../src/promptu/service";
 import type { Usage } from "../../src/usage";
+import type { MemoryPass } from "../../src/memoryPass";
 
 /** The chat's card in two lines (decision 18). */
 export interface Header {
@@ -109,7 +110,9 @@ export type HostToChat =
   /** The Memory menu's data (98): `promptu memory --json` for the chat's folder, or why there is none. */
   | { t: "promptuMemory"; data?: MemoryOut; error?: string }
   /** The Claude plan's usage, the newest any of the window's chats heard (99); null: no reading yet. */
-  | { t: "usage"; usage: Usage | null };
+  | { t: "usage"; usage: Usage | null }
+  /** The periodic memory pass (98): when it last ran and whether it is due; null: not set up, so nothing shows. */
+  | { t: "memoryPass"; pass: MemoryPass | null };
 
 /** What a kept reply is on the work item: the desk's note kinds a reply can be. */
 export type KeepKind = "finding" | "decision";
@@ -226,6 +229,8 @@ export type ChatToHost =
   | { t: "promptuSettings"; enabled?: boolean; quick?: boolean }
   /** The Memory menu opened (98): its data, for the chat's folder. */
   | { t: "promptuMemory" }
+  /** The Memory menu's pass line clicked (98): a new chat in the folder with the configured command; the page names nothing. */
+  | { t: "memoryPassStart" }
   /** A memory entry clicked: its file beside the chat (92, 98) — only one the menu was given. */
   | { t: "promptuOpen"; file: string; line?: number };
 

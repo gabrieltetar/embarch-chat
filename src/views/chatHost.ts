@@ -40,6 +40,10 @@ import type { PromptuService } from "../promptu/service";
 import type { BeginOpts, DeskItem, PromptuRuns, PromptuView } from "../promptu/runs";
 import { cleanInput } from "../promptu/runs";
 import type { UsageStore } from "../usageStore";
+import * as fs from "fs";
+import { expandHome } from "../desk/client";
+import type { MemoryPassConfig } from "../memoryPass";
+import { memoryPassState } from "../memoryPass";
 
 export interface HostCtx {
   chats: ChatManager;
@@ -87,6 +91,10 @@ export interface HostCtx {
   promptuHave: (rec: ChatRecord) => string[];
   /** The Claude plan's usage, the newest any chat of the window heard (99). */
   usage: UsageStore;
+  /** The memory pass's three settings (98); null unless all are set. */
+  memoryPass: () => MemoryPassConfig | null;
+  /** A new chat in this folder whose first message is the pass's command (98). */
+  startMemoryPass: (cwd: string, command: string) => void;
 }
 
 /** Where an "always allow" was last saved, in the extension's global state (78). */
@@ -395,6 +403,7 @@ export class ChatHost implements vscode.Disposable {
       // Before the snapshot, so its rows are drawn with the index's titles and links.
       this.pushRefs();
       this.post({ t: "usage", usage: this.ctx.usage.current });
+      this.pushMemoryPass();
       this.snapshot();
       for (const k of this.keyed.splice(0)) this.post(k);
       return;
@@ -447,7 +456,14 @@ export class ChatHost implements vscode.Disposable {
       case "promptuSettings":
         return this.ctx.promptu.set({ enabled: m.enabled, quick: m.quick });
       case "promptuMemory":
+        this.pushMemoryPass();
         return this.memory(rec);
+      case "memoryPassStart": {
+        // The command is the setting's, read here: the page names nothing (98).
+        const c = this.ctx.memoryPass();
+        if (c) this.ctx.startMemoryPass(rec.chat.opts.cwd || rec.chat.state.cwd || "", c.command);
+        return;
+      }
       case "promptuOpen": {
         // Only a file the menu was given: the page names one, it never supplies a path of its own (98).
         if (typeof m.file !== "string" || !this.memoryFiles.has(m.file)) return;
@@ -689,6 +705,22 @@ export class ChatHost implements vscode.Disposable {
         if (Number.isInteger(m.seq)) this.ctx.runs.cancel(sid, m.seq);
         return;
     }
+  }
+
+  /** The periodic memory pass's state for the Memory line and the icon's marker (98), the stamp file read again. */
+  private pushMemoryPass(): void {
+    const c = this.ctx.memoryPass();
+    let pass = null;
+    if (c) {
+      let stamp: string | null = null;
+      try {
+        stamp = fs.readFileSync(expandHome(c.stampPath), "utf8");
+      } catch {
+        stamp = null;
+      }
+      pass = memoryPassState(stamp, c.intervalDays);
+    }
+    this.post({ t: "memoryPass", pass });
   }
 
   /** The Memory menu's data (98): what loads in the chat's folder, and where each entry was used. */

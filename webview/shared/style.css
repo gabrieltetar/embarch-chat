@@ -2466,6 +2466,36 @@ body.in-editor .rail-col {
 .mem-row:hover {
   background: var(--vscode-list-hoverBackground);
 }
+/* The periodic pass (98): its line at the top of the menu, and a dot on the Memory icon while it is due. */
+.mem-pass {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px 6px;
+  width: 100%;
+  padding: 3px 4px;
+  margin-bottom: 4px;
+  border: 0;
+  border-bottom: 1px solid var(--vscode-widget-border, transparent);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+.mem-pass:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+.mem-pass.due .muted {
+  color: var(--waiting);
+}
+.rail-entry.memory.due .rail-icon::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  right: -1px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--waiting);
+}
 .mem-title {
   flex: 1 1 12em;
   min-width: 0;

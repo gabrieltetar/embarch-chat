@@ -111,3 +111,19 @@ test("a per-model weekly limit is never the Weekly window and never colours the 
   s.take({ status: "allowed", unifiedWindows: { five_hour: W(0.1, T), seven_day: W(0.2, T) } });
   assert.equal(s.current.models.seven_day_opus.used, 0.8);
 });
+
+// The Memory menu's periodic pass (decision 98): three machine settings, a stamp's first line.
+test("the memory pass shows only with all three settings, and is due once the interval has passed", () => {
+  assert.equal(core.memoryPassConfig("", 7, "/x"), null);
+  assert.equal(core.memoryPassConfig("/s", 0, "/x"), null);
+  assert.equal(core.memoryPassConfig("/s", 7, " "), null);
+  assert.deepEqual(core.memoryPassConfig(" /s ", 7, " /x "), { stampPath: "/s", intervalDays: 7, command: "/x" });
+  assert.deepEqual(core.memoryPassState("2026-11-02\nnotes", 7, "2026-11-08"), { last: "2026-11-02", days: 6, due: false });
+  assert.deepEqual(core.memoryPassState("2026-11-02", 7, "2026-11-09"), { last: "2026-11-02", days: 7, due: true });
+  assert.deepEqual(core.memoryPassState("2026-11-09\r\n", 7, "2026-11-09"), { last: "2026-11-09", days: 0, due: false });
+  // Across a month and a leap day.
+  assert.equal(core.memoryPassState("2028-02-27", 7, "2028-03-01").days, 3);
+  // No file, or a first line that is no date: nothing recorded, so due.
+  assert.deepEqual(core.memoryPassState(null, 7, "2026-11-09"), { last: null, days: null, due: true });
+  assert.deepEqual(core.memoryPassState("soon", 7, "2026-11-09"), { last: null, days: null, due: true });
+});

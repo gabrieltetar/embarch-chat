@@ -4079,6 +4079,29 @@ await check("the Usage icon: the plan's session and weekly share with their rese
   await send([{ t: "usage", usage: null }]);
 });
 
+await check("the Memory menu's pass line and the icon's due marker: nothing with the settings unset; the date, and a marker once due; a click asks the host to start the pass, naming nothing itself (98)", async () => {
+  await fresh();
+  await clearPosts();
+  await click(".rail .rail-entry.memory");
+  await settle();
+  assert.equal((await text(".memory-pop .mem-pass")).length, 0, "unset: no line");
+  await click(".rail .rail-entry.memory");
+  await send([{ t: "memoryPass", pass: { last: "2026-11-05", days: 4, due: false } }]);
+  assert.equal(await exec("return document.querySelectorAll('.rail-entry.memory.due').length"), 0);
+  await click(".rail .rail-entry.memory");
+  assert.ok((await text(".memory-pop .mem-pass"))[0].includes("last pass 2026-11-05 (4 d ago)"));
+  await click(".rail .rail-entry.memory");
+  await send([{ t: "memoryPass", pass: { last: "2026-10-20", days: 20, due: true } }]);
+  assert.equal(await exec("return document.querySelectorAll('.rail-entry.memory.due').length"), 1, "due: the icon is marked");
+  await click(".rail .rail-entry.memory");
+  assert.ok((await text(".memory-pop .mem-pass"))[0].includes("due"));
+  await clearPosts();
+  await click(".memory-pop .mem-pass");
+  assert.deepEqual((await posts()).filter((p) => p.t === "memoryPassStart"), [{ t: "memoryPassStart" }]);
+  await send([{ t: "memoryPass", pass: null }]);
+  assert.equal(await exec("return document.querySelectorAll('.rail-entry.memory.due, .mem-pass').length"), 0, "unset again: nothing shows");
+});
+
 await check("the Memory menu: scope, then domain, then kind, stale flags and where each was used; a click opens the entry's file, a dead link its index line (98)", async () => {
   await fresh();
   await clearPosts();

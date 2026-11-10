@@ -43,4 +43,5 @@ export * from "./promptu/runs";
 export * from "./promptu/service";
 export * from "./promptu/text";
 export * from "./usage";
+export * from "./memoryPass";
 export * from "./usageStore";

@@ -26,6 +26,7 @@ import { PromptuDialog } from "./promptu";
 import type { PromptuView } from "../../src/promptu/runs";
 import type { PromptuState } from "../../src/promptu/service";
 import type { Usage } from "../../src/usage";
+import type { MemoryPass } from "../../src/memoryPass";
 import { RunView, ToolCtx, ToolView, quiet, revealTool, toolRenderers } from "./tools";
 import { Fold, foldRuns, liveTool } from "./runs";
 import { benchRenderer } from "./bench";
@@ -190,6 +191,8 @@ function App() {
   const [rail, setRail] = useState<HTMLDivElement | null>(null);
   // The plan's usage for the rail's icon (99): the window's newest reading, whichever chat heard it.
   const [usage, setUsage] = useState<Usage | null>(null);
+  // The periodic memory pass (98); null: not set up.
+  const [memoryPass, setMemoryPass] = useState<MemoryPass | null>(null);
   // The desk's reference index (decision 88), set whole by the host: each one draws the rows that read it again.
   const [refsV, setRefsV] = useState(0);
   const live = useRef<ChatState | null>(null);
@@ -263,6 +266,9 @@ function App() {
           return;
         case "promptuResult":
           promptuLanded(m.result);
+          return;
+        case "memoryPass":
+          setMemoryPass(m.pass);
           return;
         case "usage":
           setUsage(m.usage);
@@ -577,6 +583,7 @@ function App() {
               taskStart={taskStart}
               promptuView={pv}
               usage={usage}
+              memoryPass={memoryPass}
               footer={
                 <>
                   <ModelPill state={state} />

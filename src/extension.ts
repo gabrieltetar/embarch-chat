@@ -29,6 +29,7 @@ import { PromptuRuns } from "./promptu/runs";
 import { PromptuService, embarchApiPresent } from "./promptu/service";
 import { startRough } from "./promptu/text";
 import { UsageStore } from "./usageStore";
+import { memoryPassConfig } from "./memoryPass";
 import { CHAT_VIEW, ChatPanels, ChatViewProvider, THREADS_VIEW, ThreadsViewProvider } from "./views/views";
 import { claudeVersion, versionWarning } from "./wire/version";
 import { chatEnv } from "./wire/process";
@@ -61,6 +62,7 @@ function cfg() {
     logins: c.get<Record<string, LoginConfig>>("logins", { [DEFAULT_LOGIN]: {} }),
     desks: c.get<Record<string, DeskConfig>>("desks", {}),
     folderRules: c.get<FolderRule[]>("folderRules", []),
+    memoryPass: memoryPassConfig(c.get("memoryPass.stampPath"), c.get("memoryPass.intervalDays"), c.get("memoryPass.command")),
   };
 }
 
@@ -253,6 +255,8 @@ export function activate(context: vscode.ExtensionContext): void {
     editor,
     promptu,
     runs,
+    memoryPass: () => cfg().memoryPass,
+    startMemoryPass: (cwd, command) => void startMemoryPass(cwd, command),
     promptuHave,
     usage,
   };
@@ -693,6 +697,14 @@ export function activate(context: vscode.ExtensionContext): void {
     });
   });
   manager.on("suggestion", (sid: string, text: string) => haiku.suggestion(sid, text));
+
+  /** The Memory menu's pass line (98): a new untracked chat in the folder, the configured command its first message. */
+  async function startMemoryPass(cwd: string, command: string): Promise<void> {
+    const dir = windowCwd(cwd) ?? cwd;
+    if (!dir) return;
+    const rec = await startChat({ untracked: true }, dir, null);
+    if (rec) rec.chat.send(command);
+  }
 
   /** "Fresh chat with this handoff" (36): a new chat on the same work item that starts with it; the old one stays readable. */
   async function freshChat(sid: string): Promise<void> {

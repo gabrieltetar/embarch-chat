@@ -9,6 +9,7 @@
 import type { ComponentChildren, Ref } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { MemoryEntry, MemoryOut, MemoryUse, PatternInfo } from "../../src/promptu/cli";
+import type { MemoryPass } from "../../src/memoryPass";
 import type { PromptuState } from "../../src/promptu/service";
 import type { Usage, UsageWindow } from "../../src/usage";
 import { LIMIT_NAMES, MODEL_LIMITS, USAGE_AMBER, USAGE_RED, expired, iconHit, limitHit, nextReset, resetsIn } from "../../src/usage";
@@ -238,7 +239,13 @@ function Row({ e, index }: { e: MemoryEntry; index: string | null }) {
   );
 }
 
-export function MemoryPanel({ mem, onRefresh, focusIn, onClose }: { mem: { loading: boolean; data?: MemoryOut; error?: string }; onRefresh: () => void; focusIn: boolean; onClose: () => void }) {
+/** The pass line's words: when it last ran, and whether it is due (98). */
+export function passText(p: MemoryPass): string {
+  const when = p.last === null ? "no pass recorded" : `last pass ${p.last}${p.days === null ? "" : p.days === 0 ? " (today)" : ` (${p.days} d ago)`}`;
+  return `${when}${p.due ? " — due" : ""}`;
+}
+
+export function MemoryPanel({ mem, pass, onRefresh, focusIn, onClose }: { mem: { loading: boolean; data?: MemoryOut; error?: string }; pass: MemoryPass | null; onRefresh: () => void; focusIn: boolean; onClose: () => void }) {
   const d = mem.data;
   return (
     <RailPop cls="memory-pop" label="Memory" focusIn={focusIn} onClose={onClose}>
@@ -254,6 +261,11 @@ export function MemoryPanel({ mem, onRefresh, focusIn, onClose }: { mem: { loadi
           ↻
         </button>
       </div>
+      {pass && (
+        <button class={`mem-pass ${pass.due ? "due" : ""}`} title="Start the memory pass in a new chat" onClick={() => post({ t: "memoryPassStart" })}>
+          <span>Memory pass</span> <span class="muted">{passText(pass)}</span>
+        </button>
+      )}
       {mem.loading && !d && (
         <div class="muted">
           <span class="spinner" /> Reading…

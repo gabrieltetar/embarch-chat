@@ -423,6 +423,25 @@
             "scope": "machine",
             "description": "embarch-desk services other than the default one. Each key names one, with `url`, `tokenPath` and an optional `env` set on every process of a chat on that desk, `~/` expanded (decision 101). User or Remote settings only — a workspace cannot set it."
           },
+          "embarchChat.memoryPass.stampPath": {
+            "type": "string",
+            "default": "",
+            "scope": "machine",
+            "description": "The file a periodic memory pass writes when it runs: its first line is the YYYY-MM-DD date of the last pass. With this, the interval and the command all set, the Memory menu shows that date and the rail's Memory icon is marked once the interval has passed; `~/` is expanded (decision 98). User or Remote settings only — a workspace cannot set it."
+          },
+          "embarchChat.memoryPass.intervalDays": {
+            "type": "number",
+            "default": 0,
+            "minimum": 0,
+            "scope": "machine",
+            "description": "Days after the last pass when the next is due. 0 leaves the memory pass off (decision 98). User or Remote settings only — a workspace cannot set it."
+          },
+          "embarchChat.memoryPass.command": {
+            "type": "string",
+            "default": "",
+            "scope": "machine",
+            "description": "The first message of the chat the Memory menu's pass line starts, for example a slash command (decision 98). User or Remote settings only — a workspace cannot set it."
+          },
           "embarchChat.folderRules": {
             "type": "array",
             "default": [],

@@ -61,6 +61,7 @@ import type { PromptuState } from "../../src/promptu/service";
 import { hasFooter } from "../../src/promptu/text";
 import { MemoryPanel, PromptuCard, RailEntry, UsageCard, usageSummary, useUsageNow } from "./rail";
 import type { Usage } from "../../src/usage";
+import type { MemoryPass } from "../../src/memoryPass";
 import { usageLevel } from "../../src/usage";
 
 const post = (m: unknown) => vscodeApi.postMessage(m);
@@ -98,6 +99,8 @@ interface Props {
   taskStart: boolean;
   /** The Claude plan's usage, the window's newest reading (99); null: none yet. */
   usage: Usage | null;
+  /** The periodic memory pass: last date and whether it is due (98); null: not set up. */
+  memoryPass: MemoryPass | null;
   /** This chat's Promptu run while one is under way (its dialog shows, or in Quick mode only the icon turns). */
   promptuView: PromptuView | null;
   /** The pills beside the mode select (footer.tsx): the model pill, MCP. */
@@ -1297,8 +1300,9 @@ export function Composer(p: Props) {
               <RailEntry
                 icon="memory"
                 label="Memory"
-                cls="memory"
-                title="Memory: what loads in this folder, by scope, domain and kind, with stale flags"
+                cls={`memory ${p.memoryPass?.due ? "due" : ""}`}
+                title={`Memory: what loads in this folder, by scope, domain and kind, with stale flags${p.memoryPass?.due ? "; a memory pass is due" : ""}`}
+                ariaLabel={p.memoryPass?.due ? "Memory — a memory pass is due" : undefined}
                 expanded={railPop === "memory"}
                 btnRef={memBtn}
                 onClick={(byKey) => (railPop === "memory" ? setRailPop(null) : (setPopByKey(byKey), setRailPop("memory"), loadMemory()))}
@@ -1356,7 +1360,7 @@ export function Composer(p: Props) {
                 onClose={closePop}
               />
             )}
-            {railPop === "memory" && <MemoryPanel mem={memory} onRefresh={loadMemory} focusIn={popByKey} onClose={closePop} />}
+            {railPop === "memory" && <MemoryPanel mem={memory} pass={p.memoryPass} onRefresh={loadMemory} focusIn={popByKey} onClose={closePop} />}
             {railPop === "usage" && <UsageCard usage={p.usage} focusIn={popByKey} onClose={closePop} onEnter={() => clearTimeout(popTimer.current)} onLeave={() => leaveHover("usage")} />}
           </>,
           p.rail,
