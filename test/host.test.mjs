@@ -280,8 +280,9 @@ const haikuAnswer = (name) =>
       .find((e) => e.o.type === "result").o.result,
   );
 
+// `fixture`: a recording's name in fixtures/wire, or an absolute path. The chat's process environment is taken when the chat is created, so the recording is chosen here, not by setting FAKE_CLAUDE_FIXTURE after it.
 async function startUntracked(fixture) {
-  process.env.FAKE_CLAUDE_FIXTURE = path.join(here, "fixtures", "wire", `${fixture}.jsonl`);
+  process.env.FAKE_CLAUDE_FIXTURE = path.isAbsolute(fixture) ? fixture : path.join(here, "fixtures", "wire", `${fixture}.jsonl`);
   const before = lastSnapshot()?.state.sessionId;
   mock.state.quickPick = async (items) => items.find((i) => i.label.includes("Untracked"));
   await mock.state.commands.get("embarchChat.newChat")();
@@ -599,8 +600,7 @@ test("a pending Edit's diff tab rejects a change; Accept sends only the kept one
   const input = path.join(dir, "input-hunks.jsonl");
   process.env.FAKE_CLAUDE_INPUT_LOG = input;
   try {
-    await startUntracked("basic");
-    process.env.FAKE_CLAUDE_FIXTURE = fixture;
+    await startUntracked(fixture);
     const n = chatView.webview.posted.length;
     chatView.webview.fromPage({ t: "send", text: "Read config.txt, then make ONE call to the Edit tool on it that changes alpha=1 to alpha=10 and delta=4 to delta=40 together, its old_string spanning from alpha=1 through delta=4. Then reply with just: done" });
     const ask = await waitFor(() => chatView.webview.posted.slice(n).find((m) => m.t === "event" && m.e.type === "control_request"), 5000, "the Edit's permission prompt");
@@ -640,8 +640,7 @@ test("a plan opens as a Markdown tab whose lines take comments; they reach its c
   process.env.FAKE_CLAUDE_INPUT_LOG = input;
   const sent = () => (fs.existsSync(input) ? fs.readFileSync(input, "utf8").trim().split("\n").map((l) => JSON.parse(l).o) : []);
   try {
-    await startUntracked("basic");
-    process.env.FAKE_CLAUDE_FIXTURE = path.join(here, "fixtures", "wire", "planauto.jsonl");
+    await startUntracked("planauto");
     const n = chatView.webview.posted.length;
     const plans = () => chatView.webview.posted.slice(n).filter((m) => m.t === "event" && m.e.type === "control_request" && m.e.request.tool_name === "ExitPlanMode");
     chatView.webview.fromPage({ t: "send", text: "Plan how to create hello.txt containing hi, then present the plan for approval with ExitPlanMode. Keep the plan to two lines. After approval, create the file." });
@@ -691,8 +690,7 @@ test("Always allow from the card: the suggestions kept go where the owner picked
   const sent = () => (fs.existsSync(input) ? fs.readFileSync(input, "utf8").trim().split("\n").map((l) => JSON.parse(l).o) : []);
   const KEY = "embarchChat.permissionDestination";
   try {
-    await startUntracked("basic");
-    process.env.FAKE_CLAUDE_FIXTURE = path.join(here, "fixtures", "wire", "permdest.jsonl");
+    await startUntracked("permdest");
     const n = chatView.webview.posted.length;
     chatView.webview.fromPage({ t: "send", text: "Run the bash command `node -e 1+1` and then reply with just: done" });
     const ask = await waitFor(() => chatView.webview.posted.slice(n).find((m) => m.t === "event" && m.e.type === "control_request"), 5000, "the prompt");
@@ -978,6 +976,8 @@ test("a message waiting above the input when the window reloads comes back waiti
     // In the CLI's queue only: a reload drops that queue, and the resumed CLI does not take it [measured].
     await waitFor(() => transcriptHas(sid, "kiwi"), 5000, "its queue line");
     const spawnsBefore = calls().length;
+    // The chat's process environment is taken when the reload restores it, so the log is named before.
+    process.env.FAKE_CLAUDE_INPUT_LOG = inputs;
     await reload(() => (process.env.FAKE_CLAUDE_FIXTURE = path.join(here, "fixtures", "wire", "reload.jsonl")));
     const back = await waitFor(() => posted((m) => m.t === "event" && m.e.type === "_sent" && m.e.restored), 15000, "the message back above the input");
     assert.equal(back.e.text, "Also end your reply with the word: kiwi");
@@ -985,7 +985,6 @@ test("a message waiting above the input when the window reloads comes back waiti
     await waitFor(() => posted((m) => m.t === "event" && m.e.type === "_note" && m.e.offer === "rerun"), 3000, "the offer to continue");
     await new Promise((r) => setTimeout(r, 300));
     assert.ok(!calls().slice(spawnsBefore).some((c) => c.argv.includes("--input-format")), "nothing goes by itself");
-    process.env.FAKE_CLAUDE_INPUT_LOG = inputs;
     chatView.webview.fromPage({ t: "continueStep" });
     await waitFor(() => fs.existsSync(inputs) && fs.readFileSync(inputs, "utf8").includes("kiwi"), 5000, "the message to the rerun's process");
     const lines = fs.readFileSync(inputs, "utf8").trim().split("\n").map((l) => JSON.parse(l).o);
@@ -1038,12 +1037,11 @@ test("Continue clicked once the step is past Claude Code's hour: nothing starts,
 });
 
 test("a new chat reloaded before the CLI took its first message comes back with it in the draft, and nothing runs (decision 63)", { skip }, async () => {
-  const sid = await startUntracked("deny");
   // A slow start (MCP servers connecting): the CLI has read the message and written nothing yet.
   const slow = path.join(dir, "slow-start.jsonl");
   const first = fs.readFileSync(path.join(here, "fixtures", "wire", "deny.jsonl"), "utf8").split("\n")[0];
   fs.writeFileSync(slow, `${first}\n${JSON.stringify({ d: "in", o: { type: "control_request", request: { subtype: "never" } } })}\n`);
-  process.env.FAKE_CLAUDE_FIXTURE = slow;
+  const sid = await startUntracked(slow);
   chatView.webview.fromPage({ t: "send", text: "Run the bash command `touch should-not-exist.txt`. If it is refused, reply with just: refused" });
   await waitFor(() => calls().some((c) => c.argv.includes("--session-id") && c.argv.includes(sid)), 5000, "its process");
   await new Promise((r) => setTimeout(r, 300));
