@@ -112,6 +112,10 @@ test("activation registers the chat's and the launcher's commands, and the views
   assert.equal(chatView.webview.posted.at(-1).t, "empty");
 });
 
+test("window start opens no browser tab: activation never calls openExternal", { skip }, () => {
+  assert.deepEqual(mock.state.external, []);
+});
+
 test("the status bar's right end holds EmbArch Chat's own new chat, in the mark", { skip }, () => {
   const entry = mock.state.statusItems.find((s) => s.id === "embarchChat.entry");
   assert.ok(entry?.visible, "always shown");
