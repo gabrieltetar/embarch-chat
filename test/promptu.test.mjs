@@ -85,6 +85,24 @@ test("prep is called with the parts, the forced pattern, Quick mode as --rec and
   assert.deepEqual(b.args, ["--have", "none"]);
 });
 
+test("prep passes the chat's context usage as --context-usage, a whole number from 0 to 100, and nothing when it is unknown (embarch-promptu 41)", async () => {
+  const s = setup();
+  const cwd = scratch();
+  await s.cli.prep("x", { cwd, have: [], contextUsage: 61.6 });
+  await s.cli.prep("x", { cwd, have: [], contextUsage: 140 });
+  await s.cli.prep("x", { cwd, have: [], contextUsage: null });
+  const [a, b, c] = s.calls();
+  assert.deepEqual(a.args, ["--have", "none", "--context-usage", "62"]);
+  assert.deepEqual(b.args, ["--have", "none", "--context-usage", "100"]);
+  assert.deepEqual(c.args, ["--have", "none"]);
+});
+
+test("a run hands its options' context usage to prep", async () => {
+  const s = setup();
+  await s.runs.begin(SID, { ...BEGIN, cwd: ROOT, contextUsage: 45 });
+  assert.deepEqual(s.calls()[0].args.slice(-2), ["--context-usage", "45"]);
+});
+
 // ------------------------------------------------------------ a run, page by page (96)
 
 test("a run: prep plans a page, the owner answers it, nothing is left, render writes the prompt for the draft", async () => {

@@ -210,13 +210,14 @@ export class PromptuCli {
 
   prep(
     rough: string,
-    o: { cwd: string; have: string[]; desk?: string | null; pattern?: string | null; quick?: boolean; start?: boolean; signal?: AbortSignal },
+    o: { cwd: string; have: string[]; desk?: string | null; pattern?: string | null; quick?: boolean; start?: boolean; contextUsage?: number | null; signal?: AbortSignal },
   ): Promise<CliResult<PrepOut>> {
     const args = ["prep", "--have", o.have.length ? o.have.join(",") : "none"];
     if (o.pattern) args.push("--pattern", o.pattern);
     if (o.quick) args.push("--rec");
     if (o.start) args.push("--start");
     if (o.desk) args.push("--desk", o.desk);
+    if (typeof o.contextUsage === "number" && Number.isFinite(o.contextUsage)) args.push("--context-usage", String(Math.min(100, Math.max(0, Math.round(o.contextUsage)))));
     return this.run<PrepOut>(args, { cwd: o.cwd, stdin: rough, timeoutMs: TIMEOUTS.prep, signal: o.signal });
   }
 

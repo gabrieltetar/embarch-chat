@@ -76,6 +76,8 @@ export interface BeginOpts {
   quick: boolean;
   /** A desk Start work run: `--start` (embarch-promptu decision 32). */
   start?: boolean;
+  /** How full the chat's context window is, 0 to 100: `prep --context-usage` (embarch-promptu decision 41). Absent when the chat has not measured it. */
+  contextUsage?: number | null;
   /** The work item, or how to read it: read after the dialog shows, so the owner sees the pass begin at once. */
   desk?: DeskItem | null | (() => Promise<DeskItem | null>);
   /** Start work's old starter, for when the pass gives no prompt. */
@@ -245,7 +247,7 @@ export class PromptuRuns extends EventEmitter {
       const desk = item ? this.deskFile(item) : null;
       let r: Awaited<ReturnType<PromptuCli["prep"]>>;
       try {
-        r = await this.cli.prep(o.rough, { cwd: o.cwd, have: o.have, desk: desk?.file, pattern: o.pattern, quick: o.quick, start: o.start, signal: a.ac.signal });
+        r = await this.cli.prep(o.rough, { cwd: o.cwd, have: o.have, desk: desk?.file, pattern: o.pattern, quick: o.quick, start: o.start, contextUsage: o.contextUsage, signal: a.ac.signal });
       } finally {
         if (desk) fs.rmSync(desk.dir, { recursive: true, force: true });
       }

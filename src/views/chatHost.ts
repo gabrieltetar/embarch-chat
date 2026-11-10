@@ -136,7 +136,10 @@ export function assistInput(ctx: HostCtx, rec: ChatRecord, draft: string, opts: 
  * Runs Promptu's pass for a chat (decision 96): the rough prompt, with the
  * chat's work item as the `desk` source when it has one — the brief the
  * host reads from the desk, so the token never reaches a page (20). A brief
- * that cannot be read leaves the source out; the pass goes on.
+ * that cannot be read leaves the source out; the pass goes on. The chat's
+ * context usage (the header meter's percentage) goes as `--context-usage`,
+ * for the pass's plan for work that will outgrow one window
+ * (`embarch-promptu` decision 41); a chat that has not measured it passes none.
  */
 export async function beginPromptu(ctx: HostCtx, rec: ChatRecord, o: Pick<BeginOpts, "rough" | "origin" | "pattern" | "start" | "fallback" | "sendFallback">): Promise<void> {
   const h = headerFor(ctx, rec);
@@ -155,6 +158,7 @@ export async function beginPromptu(ctx: HostCtx, rec: ChatRecord, o: Pick<BeginO
     cwd: rec.chat.opts.cwd || rec.chat.state.cwd || "",
     have: ctx.promptuHave(rec),
     quick: ctx.promptu.quick(),
+    contextUsage: rec.chat.state.context?.percentage ?? null,
     desk,
   });
 }
