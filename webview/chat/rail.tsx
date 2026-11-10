@@ -1,5 +1,5 @@
 // The rail on the chat's left edge (decision 94): Usage alone at the top
-// (99, the owner's P16), and Memory, Promptu, Library and Suggestions at the
+// (99, the owner's P16), and Memory, Promptu, Library, Suggestions and the 💬 side question at the
 // bottom, one one-colour SVG icon each (currentColor, like tools.tsx's Glyph), folded like VS Code's activity bar until the
 // pointer is on it, when their names show. The composer draws the entries
 // into it (composer.tsx), since Library's and Suggestions' menus are the draft's;
@@ -19,12 +19,13 @@ import { vscodeApi } from "../shared/vscode";
 const post = (m: unknown) => vscodeApi.postMessage(m);
 
 /** Each rail entry's icon: 16 px strokes in `currentColor`, so the theme's foreground colour is theirs (decision 94). */
-export type RailIcon = "usage" | "memory" | "promptu" | "library" | "bulb";
+export type RailIcon = "usage" | "memory" | "promptu" | "library" | "bulb" | "aside";
 const RAIL_ICONS: Record<RailIcon, string> = {
   usage: "M2.5 13.5h11 M4.5 13V8 M8 13V3.5 M11.5 13V6",
   memory: "M8 3v10 M8 4.5C8 3.4 7 2.5 5.8 2.5 4.5 2.5 3.6 3.5 3.7 4.7 2.7 5.1 2.2 6.2 2.6 7.2 2 7.9 2 9 2.7 9.7 2.5 10.8 3.3 11.8 4.4 11.8 4.7 12.8 5.7 13.4 6.7 13.2 7.5 13 8 12.4 8 11.5 M8 4.5C8 3.4 9 2.5 10.2 2.5 11.5 2.5 12.4 3.5 12.3 4.7 13.3 5.1 13.8 6.2 13.4 7.2 14 7.9 14 9 13.3 9.7 13.5 10.8 12.7 11.8 11.6 11.8 11.3 12.8 10.3 13.4 9.3 13.2 8.5 13 8 12.4",
   promptu: "M8 1.5c.4 3.6 1.9 5.1 5.5 6.5-3.6 1.4-5.1 2.9-5.5 6.5-.4-3.6-1.9-5.1-5.5-6.5C6.1 6.6 7.6 5.1 8 1.5z",
   library: "M3 2.5v11 M6.5 2.5v11 M10 3l3 10.5 M2 2.5h5 M2 13.5h5",
+  aside: "M2.5 3h11v7.5h-6L5 13.5v-3H2.5z",
   bulb: "M6 12.5h4 M6.5 14.5h3 M8 1.5a4.5 4.5 0 0 0-2.5 8.2c.6.5 1 1.1 1 2h3c0-.9.4-1.5 1-2A4.5 4.5 0 0 0 8 1.5z",
 };
 
@@ -45,6 +46,8 @@ export function RailEntry(p: {
   count?: number;
   spin?: boolean;
   disabled?: boolean;
+  /** A mode toggle, not a menu: `aria-pressed` (the 💬, 57). */
+  pressed?: boolean;
   /** What it opens beside the rail shows (a card or a menu): `aria-expanded`, never a pressed toggle (review F8). */
   expanded?: boolean;
   /** The accessible name when it says more than the label: Promptu's lit state (95). */
@@ -62,6 +65,7 @@ export function RailEntry(p: {
       title={p.title}
       aria-label={p.ariaLabel ?? p.label}
       {...(p.expanded !== undefined ? { "aria-haspopup": "dialog", "aria-expanded": p.expanded } : {})}
+      {...(p.pressed !== undefined ? { "aria-pressed": p.pressed } : {})}
       disabled={p.disabled}
       // The draft keeps the focus, so a menu's keys still come through the input (86).
       onMouseDown={(e) => e.preventDefault()}

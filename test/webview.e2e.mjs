@@ -3018,8 +3018,8 @@ await check("the 💬 beside the 📚 puts the input in side-question mode while
   const lines = outLines("btw");
   await fresh({}, false);
   await send([sent("Run the bash command"), ...events(upTo(lines, (o) => o.type === "assistant" && o.message.content.some((b) => b.type === "tool_use")))]);
-  const btn = ".composer .assist-slot button.btw";
-  assert.deepEqual(await exec(`const b=document.querySelector('${btn}'); return [b.textContent, b.disabled, b.title]`), ["💬", false, "Side question (/btw) — answered beside the chat, not added to it"]);
+  const btn = ".rail .rail-entry.btw";
+  assert.deepEqual(await exec(`const b=document.querySelector('${btn}'); return [b.textContent.trim(), b.disabled, b.title]`), ["Side question", false, "Side question (/btw) — answered beside the chat, not added to it"]);
   const mode = () => exec("return [!!document.querySelector('.composer .aside-tag'), document.querySelector('.composer textarea').classList.contains('aside'), document.querySelector('.composer .bar button.primary').textContent, document.activeElement === document.querySelector('.composer textarea')]");
   await click(btn);
   await settle();
@@ -3061,7 +3061,7 @@ await check("a draft held for its cards, then the 💬: the hold is off, the dra
   await type(ENTER);
   const checking = () => exec("return document.querySelector('.bulb').classList.contains('checking')");
   assert.equal(await checking(), true, "held for its cards");
-  await click(".composer .assist-slot button.btw");
+  await click(".rail .rail-entry.btw");
   await settle();
   assert.equal(await checking(), false, "the 💬 ends the hold");
   // Past the hold's 4.5 s: nothing went into the conversation, and the draft waits in side-question mode.
@@ -3077,9 +3077,9 @@ await check("a draft held for its cards, then the 💬: the hold is off, the dra
 
 await check("the 💬 is off where /btw cannot run: no conversation yet, a chat this window does not run", async () => {
   await fresh({ process: "none" }, false);
-  assert.equal(await exec("return document.querySelector('.composer .assist-slot button.btw').disabled"), true, "a new chat before its first message");
+  assert.equal(await exec("return document.querySelector('.rail .rail-entry.btw').disabled"), true, "a new chat before its first message");
   await send([snapshot({ sessionId: "22222222-0000-4000-8000-0000000000fe", timeline: ["x"], entries: { x: { kind: "user", id: "x", text: "hi", images: 0 } } }, { ...OURS, ours: false, resumable: true })]);
-  assert.equal(await exec("return document.querySelector('.composer .assist-slot button.btw').disabled"), true, "a chat another window or terminal ran");
+  assert.equal(await exec("return document.querySelector('.rail .rail-entry.btw').disabled"), true, "a chat another window or terminal ran");
 });
 
 await check("/btw on a chat this window does not run says it needs the chat here", async () => {
@@ -3243,7 +3243,7 @@ await check("what went with a message shows as rows under it: a selection and a 
 
 await check("Esc in side-question mode leaves the mode, and never counts toward Esc twice's rewind (57, 73)", async () => {
   await basicChat();
-  await click(".composer .assist-slot button.btw");
+  await click(".rail .rail-entry.btw");
   await settle();
   await type(ESC + ESC);
   assert.equal(await exec("return !!document.querySelector('.composer .aside-tag')"), false, "the first Esc left the mode");
@@ -3275,7 +3275,7 @@ await check("above the input at once — a held card, side questions, a queued m
   await type("@term");
   await send([{ t: "mentions", q: "term", items: [{ insert: "west build", label: "west build", detail: "terminal output", terminal: { name: "west build", index: 0, pid: 4101 } }] }]);
   await type(ENTER);
-  await click(".composer .assist-slot button.btw");
+  await click(".rail .rail-entry.btw");
   // Typing when the card comes: it waits as one quiet line (55).
   await type("and the baud");
   await send(events([askLines[askAt]]));
@@ -3563,13 +3563,13 @@ const shiftTab = async () => {
 };
 const promptuPosts = async (op) => (await posts()).filter((p) => p.t === "promptu" && (!op || p.op === op));
 
-await check("the rail: Memory, Promptu, the 📚 and the 💡 down the chat's left edge, folded to their icons until the pointer is on it, which shows their names over the timeline without moving it; the 💡 and 📚 left the input's bar (94)", async () => {
+await check("the rail: Memory, Promptu, the 📚, the 💡 and the 💬 down the chat's left edge, folded to their icons until the pointer is on it, which shows their names over the timeline without moving it; the 💡 and 📚 left the input's bar (94)", async () => {
   await fresh();
-  assert.deepEqual(await text(".rail .rail-entry .rail-label"), ["Usage", "Memory", "Promptu", "Library", "Suggestions"]);
+  assert.deepEqual(await text(".rail .rail-entry .rail-label"), ["Usage", "Memory", "Promptu", "Library", "Suggestions", "Side question"]);
   // Usage alone at the top, the rest at the bottom by the input (the owner's P16).
-  const [col, use, mem, bulb] = await Promise.all([".rail-col", ".rail .rail-entry.usage", ".rail .rail-entry.memory", ".rail .rail-entry.bulb"].map((sel) => exec("const r=document.querySelector(arguments[0]).getBoundingClientRect(); return [Math.round(r.top), Math.round(r.bottom)]", [sel])));
+  const [col, use, mem, bulb] = await Promise.all([".rail-col", ".rail .rail-entry.usage", ".rail .rail-entry.memory", ".rail .rail-entry.btw"].map((sel) => exec("const r=document.querySelector(arguments[0]).getBoundingClientRect(); return [Math.round(r.top), Math.round(r.bottom)]", [sel])));
   assert.ok(use[0] - col[0] < 12, `Usage at the top: ${use} in ${col}`);
-  assert.ok(col[1] - bulb[1] < 12, `the 💡 at the bottom: ${bulb} in ${col}`);
+  assert.ok(col[1] - bulb[1] < 12, `the 💬 at the bottom: ${bulb} in ${col}`);
   assert.ok(mem[0] - use[1] > 100, `a gap between them: ${use} ${mem}`);
   assert.deepEqual(await exec("const r=document.querySelector('.rail'); return [r.getAttribute('role'), r.getAttribute('aria-label'), r.getAttribute('aria-orientation')]"), ["toolbar", "Chat tools", "vertical"], "named, a toolbar (review F9)");
   await exec("document.querySelector('.rail .rail-entry.memory').focus()");
@@ -3579,10 +3579,10 @@ await check("the rail: Memory, Promptu, the 📚 and the 💡 down the chat's le
   // One-colour SVGs in currentColor, no emoji and no filter (EMB-56).
   assert.deepEqual(
     await exec("return [...document.querySelectorAll('.rail .rail-entry .rail-icon')].map((i) => [i.querySelectorAll('svg path').length, i.textContent.trim(), getComputedStyle(i).filter, getComputedStyle(i.querySelector('svg')).stroke === getComputedStyle(i).color])"),
-    [1, 2, 3, 4, 5].map(() => [1, "", "none", true]),
+    [1, 2, 3, 4, 5, 6].map(() => [1, "", "none", true]),
     "each rail icon is one SVG path in currentColor, no text, no filter",
   );
-  assert.deepEqual(await text(".composer .bar .btw"), ["💬"], "the side question stays by the input");
+  assert.deepEqual(await text(".composer .bar .btw"), [], "the side question left the bar for the rail");
   const width = () => exec("return Math.round(document.querySelector('.rail-col').getBoundingClientRect().width)");
   const shown = () => exec("return getComputedStyle(document.querySelector('.rail .rail-label')).opacity");
   assert.equal(await width(), 30);

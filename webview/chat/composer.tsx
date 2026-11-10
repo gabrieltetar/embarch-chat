@@ -17,7 +17,7 @@
 // Enter meant to send (86).
 // After each turn, reply chips above the input (25). The 📚 beside the 💡
 // holds the library, one submenu per category (38). Both sit in the rail on
-// the chat's left edge with Memory and Promptu (94), drawn there from here:
+// the chat's left edge with Memory, Promptu and the 💬 (94), drawn there from here:
 // their menus still open over the input, and the 💡's swaps still preview in
 // the draft (37).
 //
@@ -91,7 +91,7 @@ interface Props {
   /** The editor's open file or selection (60). */
   editor: EditorChip | null;
   chips: Chip[];
-  /** The rail on the chat's left edge, which the 📚, 💡, Memory and Promptu go into (94); null while it is not there. */
+  /** The rail on the chat's left edge, which the 📚, 💡, 💬, Memory and Promptu go into (94); null while it is not there. */
   rail: HTMLElement | null;
   /** Promptu's card: found or not, its switches, the patterns (95); null before the host says. */
   promptu: PromptuState | null;
@@ -1253,17 +1253,6 @@ export function Composer(p: Props) {
           {!MODES.some((m) => m.id === mode) && <option value={mode}>{mode}</option>}
         </select>
         {p.footer}
-        <span class="assist-slot">
-          <button
-            class={`icon btw ${aside ? "on" : ""}`}
-            title={p.canAsk ? (aside ? "Side question mode: Enter asks aside — click or Esc to leave" : "Side question (/btw) — answered beside the chat, not added to it") : "Side questions need a conversation this window runs: send it a message first"}
-            aria-pressed={aside}
-            disabled={!p.canAsk}
-            onClick={toggleAside}
-          >
-            💬
-          </button>
-        </span>
         {/* Stop and Send together at the right, where a narrow sidebar wraps them too. */}
         <span class="send">
           {busy && (
@@ -1342,6 +1331,15 @@ export function Composer(p: Props) {
                 disabled={!live.length}
                 title={holding ? "Checking the draft before it goes — Enter sends now" : live.length ? `${live.length} suggestion${live.length > 1 ? "s" : ""} for this draft` : p.assistant ? "Suggestions for the draft show here after a pause" : "The assistant is off (embarchChat.assistant)"}
                 onClick={() => (setMenu(menu === "bulb" ? null : "bulb"), ta.current?.focus())}
+              />
+              <RailEntry
+                icon="aside"
+                label="Side question"
+                cls={`btw ${aside ? "on" : ""}`}
+                pressed={aside}
+                disabled={!p.canAsk}
+                title={p.canAsk ? (aside ? "Side question mode: Enter asks aside — click or Esc to leave" : "Side question (/btw) — answered beside the chat, not added to it") : "Side questions need a conversation this window runs: send it a message first"}
+                onClick={toggleAside}
               />
             </div>
             {railPop === "promptu" && p.promptu && (
