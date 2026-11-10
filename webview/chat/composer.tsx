@@ -30,7 +30,7 @@
 // handoff card opens the handoff pattern's dialog (97).
 //
 // What goes in with the words, as Claude Code's own panel does it (56): a
-// pasted screenshot is a thumbnail under the input until sent — an image
+// pasted screenshot is a thumbnail above the input until sent — an image
 // alone sends; a long paste is remembered so the CLI can mark it; what shows
 // nothing is stripped from a paste, and from the draft before it goes.
 // `/btw <question>` asks aside (57): it goes to the side questions above
