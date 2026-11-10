@@ -382,9 +382,9 @@ test("the page asks for ghost text and cards; the host streams Haiku's answers b
   assert.equal(done.text, haikuAnswer("ghost").completion);
   chatView.webview.fromPage({ t: "assist", kind: "cards", text: "fix the flash thing", seq: 702 });
   const c = await waitFor(() => posted((m) => m.t === "cards" && m.seq === 702), 5000, "the cards");
-  // The recorded answer is all missing-context and improvement cards: Promptu's job now, so none comes (97).
+  // No cards come (97): this window's desk sends no references here, so the call is not made at all; the recorded answer is Promptu's job now.
   assert.deepEqual(c.cards, []);
-  assert.ok(calls().some((x) => x.task === "cards"), "the cards call ran");
+  assert.ok(!calls().some((x) => x.task === "cards"), "no cards call without the desk's references");
   const ghostCall = calls().filter((x) => x.task === "ghost").at(-1);
   for (const s of ["<draft>now flash it on the</draft>", "<claude_last_reply>", "<library_commands>"]) assert.ok(ghostCall.prompt.includes(s), s);
 });
