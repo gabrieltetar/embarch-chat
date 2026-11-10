@@ -105,7 +105,7 @@ function Working({ view }: { view: PromptuView }) {
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => box.current?.focus(), []);
   const reading = view.doing === "prep";
-  const label = reading ? (view.origin === "start" ? "Promptu is reading the issue…" : view.origin === "handoff" ? "Promptu is setting up the handoff…" : "Promptu is reading your prompt…") : view.doing === "render" ? "Writing the prompt…" : "…";
+  const label = reading ? (view.origin === "start" ? "Promptu is reading the issue…" : "Promptu is reading your prompt…") : view.doing === "render" ? "Writing the prompt…" : "…";
   return (
     <Backdrop box={box}>
       <div

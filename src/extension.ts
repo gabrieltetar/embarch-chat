@@ -247,7 +247,6 @@ export function activate(context: vscode.ExtensionContext): void {
     assistantOn: () => cfg().assistant,
     history,
     library,
-    freshChat: (sid) => void freshChat(sid),
     resume: (sid, text) => resume(sid, text),
     fork: (sid, uuid) => forkChat(sid, uuid),
     continueStep: (sid) => reloadMemory?.continueStep(sid),
@@ -706,24 +705,9 @@ export function activate(context: vscode.ExtensionContext): void {
     if (rec) rec.chat.send(command);
   }
 
-  /** "Fresh chat with this handoff" (36): a new chat on the same work item that starts with it; the old one stays readable. */
-  async function freshChat(sid: string): Promise<void> {
-    const text = haiku.handoffFor(sid);
-    const rec = manager.get(sid);
-    if (!text || !rec) return;
-    const cwd = windowCwd(rec.chat.opts.cwd) ?? rec.chat.opts.cwd;
-    // The same item as the desk has it; untracked only when the owner chose that.
-    const item = desk.itemFor(sid)?.id ?? rec.itemId;
-    const fresh = await startChat(item ? { item_id: item } : rec.untracked ? { untracked: true } : null, cwd, rec.itemTitle);
-    if (!fresh) return;
-    haiku.handoffTaken(sid);
-    haiku.sent(fresh.chat.sessionId);
-    fresh.chat.send(text);
-  }
-
   /**
-   * An agent's handoff (decision 103): `freshChat`'s start — a new session on
-   * the same work item — but in the chat's own panel and timeline: the old
+   * An agent's handoff (decision 103): a new session on
+   * the same work item, in the chat's own panel and timeline: the old
    * history stays above a divider, and the fresh session takes the chat's
    * mode (never a looser one), model, effort and Ultracode. The old session
    * stays on the list, readable, on the same item. The caller ends its process.

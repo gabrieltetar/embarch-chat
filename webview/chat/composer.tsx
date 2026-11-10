@@ -26,8 +26,7 @@
 // host plans the questions, a dialog asks them (promptu.tsx), and the prompt
 // it writes comes back into the draft, not sent; the next Enter sends it.
 // A pattern forced on the card lights it for the next prompt whatever the
-// chat. A failure is one line and the draft stays as typed. The 💡's
-// handoff card opens the handoff pattern's dialog (97).
+// chat. A failure is one line and the draft stays as typed.
 //
 // What goes in with the words, as Claude Code's own panel does it (56): a
 // pasted screenshot is a thumbnail above the input until sent — an image
@@ -112,7 +111,6 @@ interface Props {
 }
 
 export interface SendOpts {
-  handoff?: boolean;
   images?: Attachment[];
   /** The long pastes the text still holds, for the CLI to mark (56). */
   pastes?: string[];
@@ -141,7 +139,7 @@ const readImage = (f: File) =>
   });
 let imageIds = 0;
 type Ghost = { base: string; completion: string; src: "local" | "haiku" };
-type Undo = { before: string; after: string; cardId?: string; handoff?: boolean };
+type Undo = { before: string; after: string; cardId?: string };
 
 type Saved = { drafts?: Record<string, string> };
 
@@ -302,12 +300,9 @@ export function Composer(p: Props) {
     cardsTimer: 0,
     holdTimer: 0,
     hold: null as null | string,
-    handoff: false,
     undo: [] as Undo[],
     /** Long pastes of this draft, newest last (56). */
     pastes: [] as string[],
-    /** The handoff card whose Promptu pass is out: used once its prompt lands (97). */
-    handoffCard: null as string | null,
   });
 
   const setText = (v: string) => {
@@ -393,14 +388,9 @@ export function Composer(p: Props) {
       if (!r) return;
       delete landed[sid];
       setAsking(false);
-      if (r.origin !== "handoff") passed[sid] = true;
-      const card = r.origin === "handoff" ? a.current.handoffCard : null;
-      if (r.origin === "handoff") a.current.handoffCard = null;
-      if (r.prompt && card) setUsed((u) => [...u, card]);
+      passed[sid] = true;
       if (r.prompt) {
-        edit(r.prompt, { handoff: r.origin === "handoff" });
-        // The handoff card's prompt still asks this chat for a handoff, so its turn offers the fresh chat (36).
-        if (r.origin === "handoff") a.current.handoff = true;
+        edit(r.prompt);
         setNotice(`Promptu wrote this prompt${r.pattern ? ` (${r.pattern})` : ""}: read it, then Enter sends it — Ctrl+Z puts yours back.`);
         // The linker reads it as any draft (88): the cards after their pause.
         if (props.current.assistant) a.current.cardsTimer = window.setTimeout(() => askCards(r.prompt!), CARDS_MS);
@@ -638,22 +628,13 @@ export function Composer(p: Props) {
   };
 
   const applyCard = (c: Card) => {
-    // The handoff card opens the handoff pattern's questions (97): one implementation writes handoffs.
-    // It counts as used only once a prompt lands, so a pass cancelled or failed can be tried again (review F7).
-    if (c.kind === "handoff" && promptuOn && textRef.current.trim()) {
-      a.current.handoffCard = c.id;
-      setMenu(null);
-      startPass(textRef.current.trim(), "handoff", "handoff");
-      return;
-    }
     const after = applyEdit(textRef.current, c.edit);
     if (after === null) return;
-    if (c.kind === "handoff") a.current.handoff = true;
     setUsed((u) => [...u, c.id]);
     // The owner has seen the cards: sending this does not wait for them again.
     setCards((x) => ({ ...x, judged: after }));
     setMenu(null);
-    edit(after, { cardId: c.id, handoff: c.kind === "handoff" });
+    edit(after, { cardId: c.id });
   };
 
   const acceptGhost = (rest: string) => {
@@ -682,7 +663,6 @@ export function Composer(p: Props) {
     if (!top || textRef.current !== top.after) return false;
     e.preventDefault();
     s.undo.pop();
-    if (top.handoff) s.handoff = false;
     if (top.cardId) setUsed((u) => u.filter((x) => x !== top.cardId));
     setText(top.before);
     typed(top.before);
@@ -701,7 +681,7 @@ export function Composer(p: Props) {
     cancelStale();
     s.hold = null;
     setHolding(false);
-    const opts: SendOpts = s.handoff ? { handoff: true } : {};
+    const opts: SendOpts = {};
     if (imagesNow.current.length) opts.images = imagesNow.current.map(({ mediaType, data }) => ({ mediaType, data }));
     const marked = pastesIn(t, s.pastes);
     if (marked.length) opts.pastes = marked;
@@ -722,7 +702,6 @@ export function Composer(p: Props) {
       }
     }
     props.current.onSend(t, opts);
-    s.handoff = false;
     s.undo = [];
     s.pastes = [];
     setImages([]);
@@ -769,7 +748,7 @@ export function Composer(p: Props) {
    * the draft stays as it is until the prompt comes back. A pattern forced
    * on the card goes with it, once.
    */
-  const startPass = (t: string, origin: "enter" | "handoff", pattern: string | null) => {
+  const startPass = (t: string, pattern: string | null) => {
     const s = a.current;
     clearTimeout(s.ghostTimer);
     clearTimeout(s.cardsTimer);
@@ -781,12 +760,10 @@ export function Composer(p: Props) {
     setRailPop(null);
     setNotice(null);
     doneTyping();
-    if (origin === "enter") {
-      delete forcedPattern[sid];
-      setForced(null);
-    }
+    delete forcedPattern[sid];
+    setForced(null);
     setAsking(true);
-    post({ t: "promptu", op: "prep", text: t, pattern, origin });
+    post({ t: "promptu", op: "prep", text: t, pattern });
   };
 
   const send = () => {
@@ -809,7 +786,7 @@ export function Composer(p: Props) {
     // message — a screenshot, a paste, the chips — stays for the next (56).
     if (t.startsWith("/") && props.current.onCommand(t)) return taken();
     // A task start with Promptu on: the pass, not a send (96).
-    if (lit) return startPass(t, "enter", forced);
+    if (lit) return startPass(t, forced);
     // A pass already asked for: its dialog is on the way, and this Enter is not a send.
     if (asking || promptuBusy) return;
     const s = a.current;
@@ -965,8 +942,6 @@ export function Composer(p: Props) {
   const draftT = text.trim();
   const lit =
     promptuOn && !aside && !promptuBusy && !asking && !!draftT && !draftT.startsWith("/") && !hasFooter(text) && (forced !== null || (p.taskStart && !passed[sid]));
-  /** What the 💡 previews for a card: the handoff card opens a dialog instead while Promptu is on (97). */
-  const previewOf = (c: Card | null) => (c && c.kind === "handoff" && promptuOn ? null : c);
 
   /** The ghost text the draft shows, or would but for a card's preview. */
   const ghostNow = ghost && atEnd && !pop ? ghostRest(text, ghost.base, ghost.completion) : null;
@@ -981,7 +956,7 @@ export function Composer(p: Props) {
     label: c.label,
     items: live
       .filter((x) => x.category === c.id)
-      .map((x) => ({ key: x.id, label: x.title, detail: x.kind === "handoff" && promptuOn ? `Opens Promptu's handoff questions. ${x.why ?? ""}`.trim() : x.why, value: x })),
+      .map((x) => ({ key: x.id, label: x.title, detail: x.why, value: x })),
   })).filter((g) => g.items.length);
 
   const libGroups: Array<MenuGroup<LibraryEntry>> = byCategory(library).map((g) => ({
@@ -1040,7 +1015,6 @@ export function Composer(p: Props) {
     const run = () => {
       let h = height([{ t: "same", s: text }, ...(ghostNow ? [{ t: "add" as const, s: ghostNow }] : [])]);
       for (const c of live) {
-        if (!previewOf(c)) continue;
         const next = applyEdit(text, c.edit);
         if (next !== null) h = Math.max(h, height(wordDiff(text, next)));
       }
@@ -1130,7 +1104,7 @@ export function Composer(p: Props) {
       {chips.length > 0 && !busy && (
         <div class="chips">
           {chips.map((c) => (
-            <button key={`${c.source}:${c.text}`} class={`chip ${c.source}`} title={c.action === "freshChat" ? "A new chat on this work item that starts with the handoff; this one stays readable" : c.source === "cli" ? "Claude Code's own guess — sends it" : "Sends it"} onClick={() => onChip(c)}>
+            <button key={`${c.source}:${c.text}`} class={`chip ${c.source}`} title={c.source === "cli" ? "Claude Code's own guess — sends it" : "Sends it"} onClick={() => onChip(c)}>
               {c.text}
             </button>
           ))}
@@ -1147,7 +1121,7 @@ export function Composer(p: Props) {
         </div>
       )}
       {menu === "bulb" && bulbGroups.length > 0 && (
-        <CategoryMenu kind="bulb" groups={bulbGroups} anchor={bulbBtn.current} keys={menuKeys} onPick={applyCard} onHover={(c) => setPreview(previewOf(c))} onClose={() => (setMenu(null), setPreview(null))} />
+        <CategoryMenu kind="bulb" groups={bulbGroups} anchor={bulbBtn.current} keys={menuKeys} onPick={applyCard} onHover={(c) => setPreview(c)} onClose={() => (setMenu(null), setPreview(null))} />
       )}
       {menu === "library" && libGroups.length > 0 && <CategoryMenu kind="library" groups={libGroups} anchor={libBtn.current} keys={menuKeys} onPick={pickEntry} onClose={() => setMenu(null)} />}
       {aside && (
@@ -1232,7 +1206,6 @@ export function Composer(p: Props) {
             setAtEnd(end);
             setPreview(null);
             setNotice(null);
-            if (!v.trim()) a.current.handoff = false;
             detect(v, el.selectionStart);
             changed(v, end, ghost);
           }}

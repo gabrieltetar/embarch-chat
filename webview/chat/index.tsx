@@ -598,7 +598,7 @@ function App() {
               }}
               onChip={(c) => {
                 stick.current = true;
-                post(c.action === "freshChat" ? { t: "freshChat" } : { t: "send", text: c.text });
+                post({ t: "send", text: c.text });
               }}
             />
           )}

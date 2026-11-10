@@ -143,7 +143,7 @@ export interface MentionItem {
 export type ChatToHost =
   | { t: "ready" }
   /** A message: pasted images go with it, and the long pastes it holds, for the CLI to mark (56). */
-  | { t: "send"; text: string; handoff?: boolean; images?: Attachment[]; pastes?: string[]; editor?: EditorItem; terminals?: TerminalRef[] }
+  | { t: "send"; text: string; images?: Attachment[]; pastes?: string[]; editor?: EditorItem; terminals?: TerminalRef[] }
   /** `mode`: a plan approved into auto mode, or into ask mode (77); `always`: the suggestions kept (`picks`), saved to `destination` (78). */
   | { t: "allow"; requestId: string; always?: boolean; picks?: number[]; destination?: string; mode?: "auto" | "default" }
   /** Where the owner chose to save an "always allow", remembered (78). */
@@ -180,8 +180,6 @@ export type ChatToHost =
   | { t: "assist"; kind: "ghost" | "cards"; text: string; seq: number }
   /** The next keystroke cancels a stale call (26). */
   | { t: "assistCancel" }
-  /** A chip that acts: a fresh chat with this chat's handoff (36). */
-  | { t: "freshChat" }
   /** The owner's choice on an agent's handoff card (103): Continue in a fresh session with `prompt` as it was left, or Stay. */
   | { t: "handoff"; requestId: string; go: boolean; prompt?: string }
   /** A dry run of rewinding the files to before the owner's message `uuid` (decision 73). */
@@ -216,12 +214,12 @@ export type ChatToHost =
   /** Continue the step a reload interrupted (decision 63): the owner's word, never the reload's. */
   | { t: "continueStep" }
   /**
-   * Promptu (96): `prep` runs the pass on the draft — Enter at a task start,
-   * or the 💡's handoff card with `pattern: "handoff"` (97); `answer` sends a
+   * Promptu (96): `prep` runs the pass on the draft — Enter at a task start;
+   * `answer` sends a
    * page; `finish` ends the dialog, every recommendation taken or (Esc) the
    * rest as assumptions; `cancel` stops a pass still reading the prompt.
    */
-  | { t: "promptu"; op: "prep"; text: string; pattern?: string | null; origin?: "enter" | "handoff" }
+  | { t: "promptu"; op: "prep"; text: string; pattern?: string | null; }
   | { t: "promptu"; op: "answer"; seq: number; input: unknown }
   | { t: "promptu"; op: "finish"; seq: number; input: unknown; rest: "recommended" | "assume" }
   | { t: "promptu"; op: "cancel"; seq: number }

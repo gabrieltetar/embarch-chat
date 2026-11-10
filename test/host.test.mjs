@@ -381,36 +381,6 @@ test("a /compact's rest the CLI took is one of the chat's messages: its dry run 
   }
 });
 
-test("a turn that wrote a handoff offers a fresh chat; the chip starts one on the same item with it", { skip }, async () => {
-  const { id: item } = await client.call("POST", "/items", { title: "ABC-125 hand it over", desk: "none" });
-  await mock.state.commands.get("embarchChat.refresh")();
-  process.env.FAKE_CLAUDE_FIXTURE = path.join(here, "fixtures", "wire", "handoff.jsonl");
-  mock.state.quickPick = async (items) => items.find((i) => i.label.includes("ABC-125 hand it over"));
-  await mock.state.commands.get("embarchChat.newChat")();
-  const sid = await waitFor(() => lastSnapshot()?.header?.itemId === item && lastSnapshot().state.sessionId, 5000, "the chat on the item");
-  chatView.webview.fromPage({ t: "send", text: "Read note.txt and tell me the secret in one word." });
-  await waitFor(() => posted((m) => m.t === "chips" && m.sid === sid && m.chips.length), 8000, "the first turn's chips");
-  chatView.webview.fromPage({ t: "send", text: core.handoffRequest("Next: write the secret into a file named answer.txt."), handoff: true });
-  const chips = await waitFor(() => posted((m) => m.t === "chips" && m.sid === sid && m.chips.some((c) => c.action === "freshChat"))?.chips, 8000, "the handoff chip");
-  assert.equal(chips[0].text, "Fresh chat with this handoff");
-  chatView.webview.fromPage({ t: "freshChat" });
-  const snap = await waitFor(() => {
-    const s = lastSnapshot();
-    return s && s.state.sessionId !== sid && s.header?.itemId === item && s;
-  }, 5000, "the fresh chat");
-  const first = await waitFor(() => posted((m) => m.t === "event" && m.e.type === "_sent"), 3000, "its first message");
-  assert.match(first.e.text, /^# Handoff/);
-  assert.ok(!first.e.text.includes("```"));
-  const v = await client.view();
-  assert.equal(v.sessions.find((x) => x.session_id === snap.state.sessionId)?.item_id, item, "on the same work item");
-  assert.ok(lastGroups().groups.some((g) => g.threads.some((t) => t.sessionId === sid)), "the old one stays in the list");
-  // Back to the old chat: its chips without the spent one.
-  const n = chatView.webview.posted.length;
-  threadsView.webview.fromPage({ t: "open", sid });
-  const back = await waitFor(() => chatView.webview.posted.slice(n).find((m) => m.t === "chips" && m.sid === sid), 3000, "the old chat's chips");
-  assert.ok(!back.chips.some((c) => c.action === "freshChat"), "its chip is spent");
-});
-
 test("a link opens once, in the browser, and only http(s); a URI is never opened as a file", { skip }, async () => {
   assert.ok(lastSnapshot()?.state.sessionId, "a chat on screen");
   fs.mkdirSync(path.join(folder, "src"), { recursive: true });

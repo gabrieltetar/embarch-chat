@@ -1,24 +1,20 @@
 // What the assistant does to the draft, as pure functions the host and the
 // chat webview share (decisions/assistant.md in embarch-doc/embarch-chat): every card is an
-// edit to the draft, previewed in place as a word diff (decision 37); the
-// compact card's first line is sent before the rest (36); the handoff card
-// turns the draft into a request for a handoff (36); the instant wave's
-// prefix match over the owner's own past prompts (26).
+// edit to the draft, previewed in place as a word diff (decision 37); a
+// draft's `/compact` first line is sent before the rest (36); the instant
+// wave's prefix match over the owner's own past prompts (26).
 
-/** An edit a card makes. `handoff` is computed from the draft as it is when applied. */
+/** An edit a card makes. */
 export type DraftEdit =
   | { op: "append"; text: string }
   | { op: "prepend"; text: string }
-  | { op: "replace"; find: string; with: string }
-  | { op: "handoff" };
+  | { op: "replace"; find: string; with: string };
 
 /**
- * The 💡's submenus (38): the desk's references (88) and context handling
- * (36). Decision 28's missing-context and improvement cards are gone:
- * Promptu's questions do that job (decision 97).
+ * The 💡's one submenu (38): the desk's references (88). Missing context,
+ * improvements and context handling are Promptu's (97).
  */
-export type CardCategory = "refs" | "context";
-export type ContextKind = "compact" | "handoff" | "background";
+export type CardCategory = "refs";
 
 export interface Card {
   id: string;
@@ -26,63 +22,26 @@ export interface Card {
   title: string;
   /** One line on why, for the tooltip. */
   why?: string;
-  kind?: ContextKind;
   edit: DraftEdit;
 }
 
 export const CATEGORIES: Array<{ id: CardCategory; label: string }> = [
   { id: "refs", label: "References" },
-  { id: "context", label: "Context handling" },
 ];
 
-/** A reply chip (25): Haiku's, the CLI's own guess, or the handoff's fresh chat (36). */
+/** A reply chip (25): Haiku's or the CLI's own guess. */
 export interface Chip {
   text: string;
-  source: "haiku" | "cli" | "handoff";
-  action?: "freshChat";
+  source: "haiku" | "cli";
 }
 
-// ------------------------------------------------------------ context cards
-
-/** The compact card's first line (36): Claude cannot run /compact itself, so the panel sends it first. */
-export function compactLine(focus: string): string {
-  return `/compact focus on: ${focus.replace(/\s+/g, " ").trim()}`;
-}
-
-export const BACKGROUND_INSTRUCTION =
-  "Run this as a background subagent (the Agent tool with run_in_background) so this chat stays free, and report back here when it is done.";
-
-/** The fence the handoff request asks for, so the fresh chat gets the handoff alone. */
-export const HANDOFF_FENCE = "handoff";
-
-/** The handoff card turns the draft into a request that this chat write a handoff (36): its model has the whole context. */
-export function handoffRequest(draft: string): string {
-  const next = draft.trim();
-  return [
-    "Write a handoff for a fresh chat that will take this work over. It starts with none of this conversation, so cover the goal, what is done (files, commits, results), what is left, the decisions made and still open, and anything that went wrong on the way.",
-    `Put the handoff alone in one fenced block that opens with \`\`\`${HANDOFF_FENCE}, so it can be passed on as it is.`,
-    ...(next ? ["", `What the fresh chat should do next: ${next}`] : []),
-  ].join("\n");
-}
-
-/** The handoff a turn wrote: the fenced block when there is one, else the whole reply. */
-export function extractHandoff(reply: string): string {
-  const m = new RegExp("```" + HANDOFF_FENCE + "[^\\n]*\\n([\\s\\S]*?)\\n?```").exec(reply);
-  return (m ? m[1] : reply).trim();
-}
+// ------------------------------------------------------------ compact
 
 /** A draft whose first line is a /compact and that has more after it: sent as two messages (36). */
 export function splitCompact(text: string): { compact: string; rest: string } | null {
   const m = /^(\/compact\b[^\n]*)\n+([\s\S]*)$/.exec(text.trim());
   if (!m || !m[2].trim()) return null;
   return { compact: m[1].trim(), rest: m[2].trim() };
-}
-
-/** The edit a context card makes, from the kind Haiku judged and what the draft is about. */
-export function contextEdit(kind: ContextKind, focus: string): DraftEdit {
-  if (kind === "compact") return { op: "prepend", text: compactLine(focus) + "\n" };
-  if (kind === "handoff") return { op: "handoff" };
-  return { op: "append", text: "\n\n" + BACKGROUND_INSTRUCTION };
 }
 
 // ------------------------------------------------------------ applying
@@ -137,8 +96,6 @@ export function applyEdit(draft: string, e: DraftEdit): string | null {
       // Spliced in as written: a `$&` or `$'` in a title is text, not String.replace's pattern.
       return at < 0 ? null : draft.slice(0, at) + e.with + draft.slice(at + e.find.length);
     }
-    case "handoff":
-      return draft.startsWith(handoffRequest("").split("\n")[0]) ? null : handoffRequest(draft);
   }
 }
 

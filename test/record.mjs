@@ -17,9 +17,7 @@ import * as path from "node:path";
 import { createInterface } from "node:readline";
 import { createRequire } from "node:module";
 
-// The handoff card's own words (src/assistant/edits.ts), so the recording asks as the panel does.
 const core = createRequire(import.meta.url)("../test-out/core.js");
-const HANDOFF_REQUEST = (draft) => core.handoffRequest(draft);
 // The one-tool MCP server whose tool asks with an elicitation (decision 66).
 const ELICIT_MCP = path.join(path.dirname(new URL(import.meta.url).pathname), "mcp-elicit.mjs");
 const mcpConfig = (env = {}) => JSON.stringify({ mcpServers: { bench: { command: process.execPath, args: [ELICIT_MCP], env } } });
@@ -547,15 +545,6 @@ const scenarios = {
     r.user("/cost");
     await r.result();
     r.user("Reply with just: ok");
-    await r.result();
-    await r.close();
-  },
-  // A turn that writes a handoff (decision 36), asked as the handoff card asks.
-  async handoff() {
-    const r = new Rec("handoff", ["--tools", "Read"]);
-    r.user("Read note.txt and tell me the secret in one word.");
-    await r.result();
-    r.user(HANDOFF_REQUEST("Next: write the secret into a file named answer.txt."));
     await r.result();
     await r.close();
   },

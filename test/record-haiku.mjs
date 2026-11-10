@@ -31,8 +31,6 @@ const BASE = {
 export const SCENARIOS = {
   ghost: () => core.ghostPrompt({ ...BASE, draft: "now flash it on the" }),
   cards: () => core.cardsPrompt({ ...BASE, draft: "fix the flash thing" }),
-  "cards-context": () =>
-    core.cardsPrompt({ ...BASE, draft: "now write the release notes for the whole quarter", context: { percentage: 86, totalTokens: 172000, maxTokens: 200000 } }),
   "cards-compact": () =>
     core.cardsPrompt({
       ...BASE,

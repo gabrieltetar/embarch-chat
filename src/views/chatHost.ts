@@ -71,8 +71,6 @@ export interface HostCtx {
   history: PromptHistory;
   /** The 📚's entries (38). */
   library: () => LibraryEntry[];
-  /** A new chat on the same work item that starts with this chat's handoff (36). */
-  freshChat: (sid: string) => void;
   /** Makes a resumable thread this window's (32) for the owner's message; false when it may not be resumed here (the message then stays in the refusal's note). */
   resume: (sid: string, text: string) => Promise<boolean>;
   /** A new chat on the same work item, forked from this one before the owner's message `uuid` (decision 73). */
@@ -470,8 +468,6 @@ export class ChatHost implements vscode.Disposable {
         const line = Number.isInteger(m.line) && (m.line as number) > 0 ? (m.line as number) : undefined;
         return openAt(m.file, { line }, this.column());
       }
-      case "freshChat":
-        return this.ctx.freshChat(chat.sessionId);
       case "rename":
         return this.ctx.rename(chat.sessionId);
       case "rewindCheck":
@@ -686,7 +682,7 @@ export class ChatHost implements vscode.Disposable {
     switch (m.op) {
       case "prep": {
         if (typeof m.text !== "string" || !m.text.trim()) return;
-        const origin = m.origin === "handoff" ? "handoff" : "enter";
+        const origin = "enter" as const;
         const pattern = typeof m.pattern === "string" && /^[a-z0-9-]{1,64}$/.test(m.pattern) ? m.pattern : null;
         if (!this.ctx.promptu.ready()) {
           // Turned off or gone since the page lit its icon: one line, the draft as typed.
@@ -763,10 +759,10 @@ export class ChatHost implements vscode.Disposable {
 
   private deliver(rec: ChatRecord, m: Extract<ChatToHost, { t: "send" }>, terminals: ContextItem[]): void {
     const chat = rec.chat;
-    this.ctx.assistant.sent(chat.sessionId, { handoff: m.handoff });
+    this.ctx.assistant.sent(chat.sessionId);
     const images = (m.images ?? []).filter(isImage);
     const extra = { pastes: (m.pastes ?? []).filter((p) => typeof p === "string"), context: [...editorBack(m.editor), ...terminals] };
-    // The compact card's first line goes first, the rest after its compaction (decision 36).
+    // A draft's `/compact` first line goes first, the rest after its compaction (decision 36).
     const split = splitCompact(m.text);
     if (split && rec.ours) chat.sendAfterCompact(split.compact, split.rest, images, extra);
     else chat.send(m.text, images, extra);

@@ -62,10 +62,6 @@ test("a card's edit applies to the draft, or not at all once its text is gone", 
   assert.equal(core.applyEdit("fix the build", { op: "replace", find: "the build", with: "the UART build" }), "fix the UART build");
   assert.equal(core.applyEdit("fix it", { op: "replace", find: "the build", with: "x" }), null, "stale: its text is gone");
   assert.equal(core.applyEdit("fix the build on the dev board", { op: "append", text: "on the dev board" }), null, "already there");
-  const h = core.applyEdit("now the release notes", { op: "handoff" });
-  assert.match(h, /^Write a handoff for a fresh chat/);
-  assert.match(h, /What the fresh chat should do next: now the release notes$/);
-  assert.equal(core.applyEdit(h, { op: "handoff" }), null, "a handoff request is not wrapped twice");
 });
 
 test("a replace edit puts its text in as written, at the first whole word it names (37, 88)", () => {
@@ -102,44 +98,11 @@ test("the preview is a word diff: added words, removed words, the rest as is", (
   assert.deepEqual(core.wordDiff("same", "same"), [{ t: "same", s: "same" }]);
 });
 
-test("the compact card's draft splits into its /compact line and the rest", () => {
+test("a draft's /compact first line splits from the rest", () => {
   assert.deepEqual(core.splitCompact("/compact focus on: the UART driver\nadd a ring buffer"), { compact: "/compact focus on: the UART driver", rest: "add a ring buffer" });
   assert.equal(core.splitCompact("/compact focus on: x"), null, "a bare /compact is one message");
   assert.equal(core.splitCompact("please /compact\nthen"), null);
-  assert.equal(core.compactLine("  the UART\n driver "), "/compact focus on: the UART driver");
 });
-
-test("a handoff is the fenced block when there is one, else the whole reply", () => {
-  assert.equal(core.extractHandoff("Here it is:\n\n```handoff\n# Goal\nShip it.\n```\n\nDone."), "# Goal\nShip it.");
-  assert.equal(core.extractHandoff("  just text  "), "just text");
-});
-
-// ------------------------------------------------------------ the instant wave (26)
-
-test("the prefix match takes the owner's most-sent prompt that starts with the draft", () => {
-  const prompts = [
-    { text: "continue with the next step", n: 2, lastMs: 10 },
-    { text: "continue", n: 15, lastMs: 5 },
-    { text: "commit it", n: 7, lastMs: 20 },
-    { text: "check the log\nand the build", n: 9, lastMs: 1 },
-  ];
-  assert.equal(core.prefixMatch(prompts, "con"), "tinue");
-  assert.equal(core.prefixMatch(prompts, "Continue "), "with the next step", "case aside");
-  assert.equal(core.prefixMatch(prompts, "co"), "ntinue");
-  assert.equal(core.prefixMatch(prompts, "ch"), "eck the log", "to the end of its line");
-  assert.equal(core.prefixMatch(prompts, "continue"), " with the next step");
-  assert.equal(core.prefixMatch(prompts, "zz"), null);
-  assert.equal(core.prefixMatch(prompts, ""), null);
-});
-
-test("typing through the ghost text keeps the rest of it", () => {
-  assert.equal(core.ghostRest("cont", "con", "tinue"), "inue");
-  assert.equal(core.ghostRest("continue", "con", "tinue"), null, "all taken");
-  assert.equal(core.ghostRest("conx", "con", "tinue"), null, "typed past it");
-  assert.equal(core.ghostRest("co", "con", "tinue"), null, "deleted back");
-});
-
-// ------------------------------------------------------------ reading Haiku's answers
 
 test("the recorded ghost call streams a completion that grows to the final one", () => {
   let text = "";
@@ -164,20 +127,16 @@ test("the recorded cards parse into edits that apply to their draft; decision 28
   const raw = core.parseObject(answer("cards")).cards;
   assert.ok(raw.length >= 1 && raw.every((c) => c.category === "missing" || c.category === "improve"), JSON.stringify(raw));
   assert.deepEqual(core.parseCards(core.parseObject(answer("cards")), "fix the flash thing", "t"), []);
-  const ctx = core.parseCards(core.parseObject(answer("cards-context")), "now write the release notes for the whole quarter", "t");
-  assert.deepEqual(ctx.find((c) => c.category === "context")?.edit, { op: "handoff" });
+  // The context-handling cards went with decision 36's amendment: Promptu carries high-context work (97).
   const draft = "the widget is done. next, move on to the UART driver: add a ring buffer for RX and a test for it";
-  const fromCompact = core.parseCards(core.parseObject(answer("cards-compact")), draft, "t");
-  assert.deepEqual([...new Set(fromCompact.map((c) => c.category))], ["context"], "its missing-context card went");
-  const compact = fromCompact.find((c) => c.kind === "compact");
-  assert.ok(compact);
-  assert.match(core.applyEdit(draft, compact.edit), /^\/compact focus on: .+\nthe widget is done/);
+  assert.deepEqual(core.parseCards(core.parseObject(answer("cards-compact")), draft, "t"), []);
+  assert.deepEqual(core.parseCards({ cards: [{ category: "context", kind: "handoff", title: "Hand off", focus: "x" }] }, draft, "t"), []);
   assert.deepEqual(core.parseCards({ cards: [{ category: "missing", title: "x", edit: { op: "replace", find: "absent", with: "y" } }, { category: "bogus", title: "y" }] }, "draft", "t"), []);
   // A bracketed question about a reference stays the linker's (88), and only when the call had references.
   const ask = { cards: [{ category: "refs", title: "Which PR?", why: "w", edit: { op: "append", text: " [which PR?]" } }] };
   assert.deepEqual(core.parseCards(ask, "do it like the PR did", "t"), []);
   assert.deepEqual(core.parseCards(ask, "do it like the PR did", "t", [{ id: "r1", line: "x", prs: [] }]).map((c) => [c.category, c.title]), [["refs", "Which PR?"]]);
-  assert.deepEqual(core.CATEGORIES.map((c) => c.label), ["References", "Context handling"]);
+  assert.deepEqual(core.CATEGORIES.map((c) => c.label), ["References"]);
 });
 
 test("the recorded turn gives chips and a name", () => {
@@ -194,7 +153,7 @@ test("the prompts carry what the assistant sees (27), and the draft only where i
   for (const s of ["ABC-123 Make the widget blink · In Progress · PR #42 open", "34% of 200K", "/embarch-chat:build-flash-verify", "<draft>now flash it on the</draft>"]) assert.ok(g.includes(s), s);
   assert.ok(g.length < 6000, "the last reply is capped");
   assert.match(core.cardsPrompt(i), /^TASK: cards/);
-  // Only context handling, and the references when there are some: what a prompt lacks is Promptu's (97).
+  // Only the references, when there are some: what a prompt lacks and how high-context work is carried is Promptu's (97).
   assert.ok(!/"category": "(missing|improve)"/.test(core.cardsPrompt(i)) && !core.cardsPrompt(i).includes('"category": "refs"'));
   assert.ok(core.cardsPrompt({ ...i, references: [{ id: "r1", line: "ABC-1 \"x\" Done", prs: [] }] }).includes('"category": "refs"'));
   const t = core.turnPrompt({ ...i, cliSuggestion: "go ahead" }, { chips: true, name: false });
@@ -241,8 +200,9 @@ test("the next keystroke cancels a stale call", async () => {
   a.dispose();
   // A new call for the same chat cancels the one before it.
   const { a: b } = assistant();
-  const first = b.cards("s1", { ...INPUT, draft: "fix the flash thing" });
-  const second = b.cards("s1", { ...INPUT, draft: "fix the flash thing" });
+  const withRefs = { ...INPUT, draft: "fix the flash thing", references: [{ id: "r1", line: "ABC-1 \"x\" Done", prs: [] }] };
+  const first = b.cards("s1", withRefs);
+  const second = b.cards("s1", withRefs);
   assert.equal(await first, null);
   assert.notEqual(await second, null, "the second call answers");
   b.dispose();
@@ -251,7 +211,14 @@ test("the next keystroke cancels a stale call", async () => {
 test("off, the assistant makes no call", async () => {
   const a = new core.HaikuAssistant(() => ({ claudePath: "/nonexistent", enabled: false, log: () => {} }));
   assert.equal(await a.ghost("s", { ...INPUT, draft: "x" }, () => {}), null);
-  assert.equal(await a.cards("s", { ...INPUT, draft: "x" }), null);
+  assert.equal(await a.cards("s", { ...INPUT, draft: "x", references: [{ id: "r1", line: "x", prs: [] }] }), null);
+});
+
+test("without the desk's references the cards make no call: nothing else is judged there (97)", async () => {
+  const { a, calls } = assistant();
+  assert.deepEqual(await a.cards("s1", { ...INPUT, draft: "now write the release notes for the whole quarter" }), []);
+  assert.equal(calls().length, 0);
+  a.dispose();
 });
 
 // ------------------------------------------------------------ chips and names (25, 12, 34)
@@ -386,31 +353,6 @@ test("a compact draft queued while a turn runs waits for its own compaction, not
   const results = chat.state.timeline.map((id) => chat.state.entries[id]).filter((e) => e.kind === "note" && e.tone === "compact");
   assert.equal(results.length, 1);
   chat.dispose();
-});
-
-test("a turn that wrote a handoff offers a fresh chat with it (36)", async () => {
-  const { a } = assistant();
-  const { chat } = makeChat("handoff", scratch());
-  const sid = chat.sessionId;
-  const turn = (onScreen) => a.turnEnded(sid, () => ({ ...INPUT, lastReply: core.lastReply(chat.state) }), { onScreen, firstTurn: false, rename: async () => {} });
-  chat.send("Read note.txt and tell me the secret in one word.");
-  await nextTurn(chat);
-  await turn(true);
-  assert.ok(!a.chipsFor(sid).some((c) => c.action === "freshChat"));
-  a.sent(sid, { handoff: true });
-  chat.send(core.handoffRequest("Next: write the secret into a file named answer.txt."));
-  await nextTurn(chat);
-  await turn(true);
-  const chips = a.chipsFor(sid);
-  assert.deepEqual(chips[0], { text: "Fresh chat with this handoff", source: "handoff", action: "freshChat" });
-  const h = a.handoffFor(sid);
-  assert.match(h, /^# Handoff/);
-  assert.ok(!h.includes("```"), "the block alone");
-  assert.match(h, /MANGO/);
-  a.sent(sid);
-  assert.equal(a.handoffFor(sid), null);
-  chat.dispose();
-  a.dispose();
 });
 
 test("the CLI's own guess arrives after the turn, from --prompt-suggestions (25)", async () => {

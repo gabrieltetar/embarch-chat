@@ -18,8 +18,8 @@ import * as os from "os";
 import * as path from "path";
 import type { AnswerInput, PrepOut, PromptuCli, Rest } from "./cli";
 
-/** What started a run: Enter at a task start, a desk Start work chat, the 💡's handoff card (97). */
-export type Origin = "enter" | "start" | "handoff";
+/** What started a run: Enter at a task start, a desk Start work chat. */
+export type Origin = "enter" | "start";
 
 /** The dialog as the page draws it. */
 export interface PromptuView {
@@ -71,7 +71,7 @@ export interface BeginOpts {
   origin: Origin;
   /** The EmbArch parts present: `desk`, `embarch-api`. */
   have: string[];
-  /** A pattern the owner forced on the card (95), or the handoff card's (97). */
+  /** A pattern the owner forced on the card (95) */
   pattern?: string | null;
   quick: boolean;
   /** A desk Start work run: `--start` (embarch-promptu decision 32). */

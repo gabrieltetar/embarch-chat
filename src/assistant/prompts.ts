@@ -1,14 +1,14 @@
 // What the Haiku assistant is asked and how its answers are read. It sees
 // the draft, Claude's last reply, the work item's card, the library's entry
 // names and the chat's context usage — 1–3K tokens (decision 27) — and
-// answers one JSON object: a completion (24), cards (36, 88), or chips and a
-// name (25, 12). Decision 28's missing-context and improvement cards are
-// gone: Promptu asks what a task's prompt lacks (decision 97). The cards call alone also sees the desk's references the
+// answers one JSON object: a completion (24), cards (88), or chips and a
+// name (25, 12). Missing context, improvements and context handling are
+// Promptu's (decision 97). The cards call alone also sees the desk's references the
 // draft matches (decision 88, references.ts), so a vague "the widget PR"
 // becomes the PR itself — by the line's id: the reference's text is the
 // extension's to write, never Haiku's.
 
-import { Card, CardCategory, ContextKind, DraftEdit, applyEdit, contextEdit } from "./edits";
+import { Card, CardCategory, DraftEdit, applyEdit } from "./edits";
 import { DeskRef, copiesTitle, referenceEdit } from "./references";
 
 export interface AssistInput {
@@ -91,16 +91,15 @@ const REFERENCES_RULE =
   '{"category": "refs", "ref": "r1", "find": "the parser PR", "title": "Name PR owner/repo#7", "why": "The desk knows the parser PR"}.';
 
 /**
- * The third wave: cards on a 2 s pause or just before send (26, 36, 88).
- * Only context handling and, with the desk's references, the references a
- * vague phrase means: what a task's prompt lacks is Promptu's (97).
+ * The third wave: cards on a 2 s pause or just before send (26, 88). Only,
+ * with the desk's references, the references a vague phrase means: what a
+ * task's prompt lacks and how high-context work is carried is Promptu's (97).
  */
 export function cardsPrompt(i: AssistInput): string {
   return [
     "TASK: cards",
     "Judge the draft as a finished message to Claude. Suggest at most 3 cards, only where one clearly helps; most drafts need none. Never suggest rewording the draft or adding detail to it: only the cards below.",
     'Return {"cards": [...]} — an empty list when none applies. Each card is one of:',
-    '- {"category": "context", "kind": "compact" | "handoff" | "background", "title": "<6 words at most>", "why": "<one line>", "focus": "<what the draft is about, 3 to 8 words>"} — compact when the context is filling (above about 60%) and the draft moves to new work; handoff when the context is nearly full (above about 80%) or the draft starts unrelated work; background when the draft asks for a long, self-contained job (a long build or test run, a sweep, research) that Claude can do while the chat stays free.',
     ...(i.references?.length
       ? [
           '- a reference card, as below. An edit is {"op": "append", "text": "..."}, {"op": "prepend", "text": "..."}, or {"op": "replace", "find": "<an exact substring of the draft>", "with": "..."}.',
@@ -184,8 +183,7 @@ export function cleanCompletion(draft: string, completion: string): string {
   return c;
 }
 
-const CATS: CardCategory[] = ["refs", "context"];
-const KINDS: ContextKind[] = ["compact", "handoff", "background"];
+const CATS: CardCategory[] = ["refs"];
 
 function str(v: unknown, max: number): string | null {
   return typeof v === "string" && v.trim() ? v.trim().slice(0, max) : null;
@@ -200,7 +198,7 @@ function editOf(v: unknown): DraftEdit | null {
 }
 
 /** The text an edit would put in the draft. */
-const added = (e: DraftEdit) => (e.op === "replace" ? e.with : e.op === "handoff" ? "" : e.text);
+const added = (e: DraftEdit) => (e.op === "replace" ? e.with : e.text);
 
 /**
  * Cards that apply to the draft they were judged on; malformed ones are
@@ -232,11 +230,6 @@ export function parseCards(o: Record<string, unknown> | null, draft: string, idB
     } else if (category === "refs" && !refs.length) {
       // A bracketed question about a reference only when the call had references (88).
       continue;
-    } else if (category === "context") {
-      const kind = KINDS.find((k) => k === c.kind);
-      const focus = str(c.focus, 120) ?? title;
-      if (!kind || copiesTitle(focus, draft, refs)) continue;
-      card = { id: "", category, kind, title, edit: contextEdit(kind, focus) };
     } else if (category === "refs") {
       const edit = editOf(c.edit);
       if (!edit || copiesTitle(added(edit), draft, refs)) continue;

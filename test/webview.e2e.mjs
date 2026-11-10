@@ -1425,10 +1425,10 @@ await check("the 💡 lights with Haiku's cards; hovering a card previews its ed
   assert.equal(await lastAssist("cards"), undefined, "no cards before the 2 s pause");
   const ask = await waitAssist("cards");
   assert.equal(ask.text, "fix the flash thing", "cards after a 2 s pause");
-  // A reference card and a context card (decision 88's and 36's): decision 28's kinds are Promptu's now (97).
+  // Reference cards (decision 88): context handling and decision 28's kinds are Promptu's now (97).
   const cards = [
     { id: "w-0", category: "refs", title: "Name PR owner/repo#36", why: "The desk knows the flash PR", edit: { op: "replace", find: "the flash thing", with: 'PR owner/repo#36 "Flash driver" (ABC-154)' } },
-    { id: "w-1", category: "context", kind: "background", title: "Run it in the background", why: "A long job", edit: { op: "append", text: "\n\n" + core.BACKGROUND_INSTRUCTION } },
+    { id: "w-1", category: "refs", title: "Name the board", why: "Claude will ask which", edit: { op: "append", text: " on the dev board" } },
   ];
   await send([{ t: "cards", seq: ask.seq, cards }]);
   assert.equal(await exec("return document.querySelector('.bulb').classList.contains('lit')"), true);
@@ -1465,7 +1465,7 @@ await check("the 💡 lights with Haiku's cards; hovering a card previews its ed
 const TALL = "\n\nBoard: the dev bench, its first link port.\nPort: the one it enumerates as after a reset.\nLog: the last flash output, whole.";
 const growCards = () => [
   { id: "g1", category: "refs", title: "Name the board, port and log", why: "Claude will ask which", edit: { op: "append", text: TALL } },
-  { id: "g2", category: "context", title: "Say what done looks like", why: "So it knows when to stop", edit: { op: "append", text: "Done when it boots and logs once." } },
+  { id: "g2", category: "refs", title: "Say what done looks like", why: "So it knows when to stop", edit: { op: "append", text: "Done when it boots and logs once." } },
 ];
 /** The 💡 menu open on cards that grow the draft. */
 const openGrowing = async () => {
@@ -1514,8 +1514,8 @@ await check("hovering a card whose edit adds lines moves nothing under the point
   assert.ok((await rect(".composer .field"))[3] < field[3], "the reserved height goes with the menu");
 });
 
-await check("the 💡 by keyboard, as IntelliSense: ↓ focuses and previews a card, → the next category, Enter applies, Ctrl+Z restores (37, 86)", async () => {
-  const DOWN = "\uE015", UP = "\uE013", LEFT = "\uE012", RIGHT = "\uE014", ESC = "\uE00C";
+await check("the 💡 by keyboard, as IntelliSense: ↓ focuses and previews a card, Enter applies, Ctrl+Z restores (37, 86)", async () => {
+  const DOWN = "\uE015", UP = "\uE013", LEFT = "\uE012", ESC = "\uE00C";
   const draft = await openGrowing();
   const on = () => text(".menu.bulb .menu-item.on .menu-item-label");
   assert.deepEqual(await on(), [], "no row is focused when it opens: Enter would still send");
@@ -1527,13 +1527,11 @@ await check("the 💡 by keyboard, as IntelliSense: ↓ focuses and previews a c
   assert.equal(await previewing(), true, "the focused row previews");
   assert.match(await exec("return [...document.querySelectorAll('.overlay .add')].map(e=>e.textContent).join('')"), /Board: the dev bench/);
   assert.equal(await value(), draft, "nothing applied by a focus");
-  await type(RIGHT);
-  assert.deepEqual(await text(".menu.bulb .menu-cat.on .menu-label"), ["Context handling"]);
-  assert.deepEqual(await on(), ["Say what done looks like"], "→ opens the next category on its first row");
+  await type(DOWN);
+  assert.deepEqual(await on(), ["Say what done looks like"], "↓ moves to the next row");
   assert.match(await exec("return [...document.querySelectorAll('.overlay .add')].map(e=>e.textContent).join('')"), /Done when it boots/);
-  await type(LEFT);
   await type(UP);
-  assert.deepEqual(await on(), ["Name the board, port and log"], "← back, ↑ wraps within the category");
+  assert.deepEqual(await on(), ["Name the board, port and log"], "↑ back");
   await clearPosts();
   await type(ENTER);
   assert.equal(await value(), core.applyEdit(draft, growCards()[0].edit), "Enter applies the focused card");
@@ -1544,10 +1542,9 @@ await check("the 💡 by keyboard, as IntelliSense: ↓ focuses and previews a c
   // The keys start on the open category's first row, wherever the pointer is: here the one it opened; Esc closes.
   await click(".bulb");
   await settle();
-  await hover(".menu.bulb .menu-cat", "Context handling");
   await hover(".menu.bulb .menu-item", "Say what done looks like");
   await type(DOWN);
-  assert.deepEqual(await on(), ["Say what done looks like"], "one row in the category: ↓ stays on it");
+  assert.deepEqual(await on(), ["Name the board, port and log"], "↓ from the hovered last row wraps to the first");
   await type(ESC);
   assert.equal((await text(".menu.bulb")).length, 0);
   assert.equal(await previewing(), false);
@@ -1688,24 +1685,10 @@ await check("a 💡 open while the panel narrows measures its previews again: a 
   await settle();
 });
 
-await check("the compact card adds /compact focus on: …; Enter sends the draft and the rest waits for the compaction", async () => {
-  const draft = "the widget is done. next, move on to the UART driver: add a ring buffer for RX and a test for it";
+await check("a draft whose first line is /compact: Enter sends it and the rest waits for the compaction (36)", async () => {
   const sid = await fresh({ context: { totalTokens: 136000, maxTokens: 200000, percentage: 68, categories: [] } });
-  await exec("const t=document.querySelector('.composer textarea'); t.value=arguments[0]; t.dispatchEvent(new Event('input', {bubbles:true}))", [draft]);
-  const ask = await waitAssist("cards");
-  const cards = core.parseCards(haikuAnswer("cards-compact"), draft, "k");
-  const compact = cards.find((c) => c.kind === "compact");
-  await send([{ t: "cards", seq: ask.seq, cards }]);
-  await click(".bulb");
-  await settle();
-  await hover(".menu.bulb .menu-cat", "Context handling");
-  await hover(".menu.bulb .menu-item", compact.title);
-  assert.match(await exec("return [...document.querySelectorAll('.overlay .add')].map(e=>e.textContent).join('')"), /\/compact focus on:/);
-  await pick(".menu.bulb .menu-item", compact.title);
-  await settle();
-  const v = await value();
-  assert.equal(v, core.applyEdit(draft, compact.edit));
-  assert.match(v.split("\n")[0], /^\/compact focus on: \S/);
+  const v = "/compact focus on: the UART driver\nthe widget is done. next, add a ring buffer for RX and a test for it";
+  await exec("const t=document.querySelector('.composer textarea'); t.value=arguments[0]; t.dispatchEvent(new Event('input', {bubbles:true}))", [v]);
   await clearPosts();
   await type(ENTER);
   const sentP = (await posts()).find((p) => p.t === "send");
@@ -2332,10 +2315,9 @@ await check("a message sent while a card waits shows in the queue as going after
   assert.ok((await text(".timeline .user")).some((t) => t.includes("kiwi")));
 });
 
-await check("reply chips after a turn: a click sends it; the handoff's chip asks for a fresh chat", async () => {
+await check("reply chips after a turn: a click sends it", async () => {
   const sid = await fresh();
   const chips = [
-    { text: "Fresh chat with this handoff", source: "handoff", action: "freshChat" },
     { text: "npm init -y", source: "cli" },
     ...core.parseTurn(haikuAnswer("turn")).chips.map((t) => ({ text: t, source: "haiku" })),
   ].slice(0, 5);
@@ -2345,34 +2327,11 @@ await check("reply chips after a turn: a click sends it; the handoff's chip asks
   assert.deepEqual(await text(".chip"), chips.map((c) => c.text));
   await shot("assist-chips");
   await click(".chip", "npm init -y");
-  await click(".chip", "Fresh chat with this handoff");
   const ps = await posts();
   assert.ok(ps.some((p) => p.t === "send" && p.text === "npm init -y"));
-  assert.ok(ps.some((p) => p.t === "freshChat"));
   assert.equal(await value(), "", "the draft is left alone");
   await send([{ t: "chips", sid, chips: [] }]);
   assert.equal((await text(".chip")).length, 0);
-});
-
-await check("the handoff card turns the draft into a request for a handoff, and its send says so", async () => {
-  await fresh({ context: { totalTokens: 172000, maxTokens: 200000, percentage: 86, categories: [] } });
-  const draft = "now write the release notes for the whole quarter";
-  await exec("const t=document.querySelector('.composer textarea'); t.value=arguments[0]; t.dispatchEvent(new Event('input', {bubbles:true}))", [draft]);
-  const ask = await waitAssist("cards");
-  const cards = core.parseCards(haikuAnswer("cards-context"), draft, "h");
-  const handoff = cards.find((c) => c.kind === "handoff");
-  await send([{ t: "cards", seq: ask.seq, cards }]);
-  await click(".bulb");
-  await settle();
-  await hover(".menu.bulb .menu-cat", "Context handling");
-  await pick(".menu.bulb .menu-item", handoff.title);
-  await settle();
-  assert.equal(await value(), core.handoffRequest(draft));
-  await clearPosts();
-  await type(ENTER);
-  const p = (await posts()).find((x) => x.t === "send");
-  assert.equal(p.handoff, true);
-  assert.equal(p.text, core.handoffRequest(draft));
 });
 
 await check("the 📚: one submenu per category; a click puts /<name> in the draft as the session knows it", async () => {
@@ -3697,7 +3656,7 @@ await check("Promptu's icon lights when the next Enter runs the pass: at a task 
     await clearPosts();
     await type(ENTER);
     const prep = await promptuPosts("prep");
-    assert.deepEqual(prep, [{ t: "promptu", op: "prep", text: "and now the tests", pattern: "debug-failure", origin: "enter" }], "the forced pattern goes with it, once");
+    assert.deepEqual(prep, [{ t: "promptu", op: "prep", text: "and now the tests", pattern: "debug-failure" }], "the forced pattern goes with it, once");
     assert.ok(!(await posts()).some((p) => p.t === "send"), "not sent");
   } finally {
     await send([PROMPTU_OFF]);
@@ -3711,7 +3670,7 @@ await check("Enter at a task start runs Promptu instead of sending; its dialog o
     await type(ROUGH);
     await clearPosts();
     await type(ENTER);
-    assert.deepEqual(await promptuPosts(), [{ t: "promptu", op: "prep", text: ROUGH, pattern: null, origin: "enter" }]);
+    assert.deepEqual(await promptuPosts(), [{ t: "promptu", op: "prep", text: ROUGH, pattern: null }]);
     assert.ok(!(await posts()).some((p) => p.t === "send"), "nothing sent");
     assert.equal(await value(), ROUGH, "the draft stays as typed meanwhile");
     await send([{ t: "promptu", sid, view: { sid, seq: 7, origin: "enter", rough: ROUGH, phase: "working", doing: "prep", quick: false } }]);
@@ -3994,54 +3953,19 @@ await check("a failure is one line and the draft stays as typed, Enter then send
   }
 });
 
-await check("the 💡's handoff card opens the handoff pattern's dialog while Promptu is on, with no preview; off, it edits the draft as before (97)", async () => {
-  const handoff = { id: "h1", category: "context", kind: "handoff", title: "Hand off to a fresh chat", why: "The context is nearly full", edit: { op: "handoff" } };
+await check("the 💡 offers no context-handling card: a background, compact or handoff answer from Haiku is dropped, and no submenu shows (36, 97)", async () => {
+  await fresh({ context: { totalTokens: 172000, maxTokens: 200000, percentage: 86, categories: [] } });
   const draft = "now write the release notes for the whole quarter";
-  try {
-    const hsid = await fresh();
-    await send([PSTATE()]);
-    await send([sent("x"), { t: "event", e: { type: "user", message: { role: "user", content: [{ type: "text", text: "x" }] }, parent_tool_use_id: null } }]);
-    await setDraft(draft);
-    const ask = await waitAssist("cards");
-    await send([{ t: "cards", seq: ask.seq, cards: [handoff] }]);
-    await click(".bulb");
-    await settle();
-    assert.ok((await text(".menu.bulb .menu-item-detail"))[0].startsWith("Opens Promptu's handoff questions"));
-    await hover(".menu.bulb .menu-item", handoff.title);
-    assert.equal(await exec("return document.querySelector('.composer textarea').classList.contains('previewing')"), false, "no preview: it opens a dialog");
-    await clearPosts();
-    await pick(".menu.bulb .menu-item", handoff.title);
-    await settle();
-    assert.deepEqual(await promptuPosts(), [{ t: "promptu", op: "prep", text: draft, pattern: "handoff", origin: "handoff" }]);
-    assert.equal(await value(), draft, "the draft waits for the dialog's prompt");
-    // Cancelled: the card is still there to try again (review F7).
-    await send([{ t: "promptuResult", result: { sid: hsid, seq: 1, origin: "handoff", rough: draft, cancelled: true } }]);
-    assert.equal((await text(".bulb .count"))[0], "1", "the card stays after a cancelled pass");
-    await clearPosts();
-    await click(".rail .bulb");
-    await settle();
-    await pick(".menu.bulb .menu-item", handoff.title);
-    await settle();
-    assert.equal((await promptuPosts("prep")).length, 1, "and runs again");
-    // A prompt lands: now it is used.
-    await send([{ t: "promptuResult", result: { sid: hsid, seq: 2, origin: "handoff", rough: draft, prompt: "## Goal\nnow the notes\n\n— promptu handoff@1 asked=reader:rec", pattern: "handoff" } }]);
-    assert.equal((await text(".bulb .count")).length, 0, "used once its prompt is in the draft");
-    await mouseAway();
-    // Off: the card's edit, as decision 36 has it.
-    await fresh();
-    await send([PROMPTU_OFF, sent("x"), { t: "event", e: { type: "user", message: { role: "user", content: [{ type: "text", text: "x" }] }, parent_tool_use_id: null } }]);
-    await setDraft(draft);
-    const ask2 = await waitAssist("cards");
-    await send([{ t: "cards", seq: ask2.seq, cards: [handoff] }]);
-    await click(".bulb");
-    await settle();
-    await pick(".menu.bulb .menu-item", handoff.title);
-    await settle();
-    assert.match(await value(), /^Write a handoff for a fresh chat/);
-  } finally {
-    await mouseAway();
-    await send([PROMPTU_OFF]);
-  }
+  await setDraft(draft);
+  const ask = await waitAssist("cards");
+  const cards = core.parseCards({ cards: [
+    { category: "context", kind: "handoff", title: "Hand off to a fresh chat", why: "w", focus: "the notes" },
+    { category: "context", kind: "compact", title: "Compact first", why: "w", focus: "the notes" },
+    { category: "context", kind: "background", title: "Run it in the background", why: "w", focus: "the notes" },
+  ] }, draft, "h");
+  assert.deepEqual(cards, []);
+  await send([{ t: "cards", seq: ask.seq, cards }]);
+  assert.equal((await text(".bulb .count")).length, 0, "nothing lit");
 });
 
 await check("the Usage icon: the plan's session and weekly share with their resets, amber from 70 %, red from 90 % or a limit hit; its card on hover (99)", async () => {

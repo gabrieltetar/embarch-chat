@@ -7,13 +7,13 @@
 
 import { EventEmitter } from "events";
 import type { ChatState } from "../wire/reducer";
-import { Card, Chip, extractHandoff } from "./edits";
+import { Card, Chip } from "./edits";
 import { HaikuResult, dropNeutralDir, runHaiku } from "./haiku";
 import { AssistInput, SYSTEM, cardsPrompt, cleanCompletion, ghostPrompt, parseCards, parseObject, parseTurn, partialCompletion, turnPrompt } from "./prompts";
 
 export interface AssistantSettings {
   claudePath: string;
-  /** Off: no Haiku calls at all; the CLI's own guess and the handoff chip still show. */
+  /** Off: no Haiku calls at all; the CLI's own guess still shows. */
   enabled: boolean;
   log: (line: string) => void;
   /** For tests: the env each call runs with. */
@@ -26,9 +26,7 @@ type Kind = "ghost" | "cards" | "turn" | "name";
 interface PerChat {
   cli: string | null;
   haiku: string[];
-  /** The last message asked for a handoff (36); the turn that answers it writes one. */
-  handoffAsked: boolean;
-  handoff: string | null;
+  /** A turn ended while the chat was off screen: its chips wait until it is opened (34). */
   due: boolean;
   named: boolean;
   /** A name was asked for and has not come back yet. */
@@ -62,7 +60,7 @@ export class HaikuAssistant extends EventEmitter {
   private chat(sid: string): PerChat {
     let c = this.chats.get(sid);
     if (!c) {
-      c = { cli: null, haiku: [], handoffAsked: false, handoff: null, due: false, named: false, nameDue: false, epoch: 0 };
+      c = { cli: null, haiku: [], due: false, named: false, nameDue: false, epoch: 0 };
       this.chats.set(sid, c);
     }
     return c;
@@ -110,8 +108,9 @@ export class HaikuAssistant extends EventEmitter {
     return typeof o?.completion === "string" ? cleanCompletion(input.draft, o.completion) : null;
   }
 
-  /** The third wave (26, 28, 36): cards that edit the draft (37), a reference card's edit written from the line it names (88). */
+  /** The third wave (26, 88): reference cards that edit the draft (37), each edit written from the line it names. No line, no call: nothing else is judged here (97). */
   async cards(sid: string, input: AssistInput): Promise<Card[] | null> {
+    if (!input.references?.length) return [];
     const r = await this.call(sid, "cards", cardsPrompt(input));
     if (!r) return null;
     return parseCards(parseObject(r.text), input.draft, `c${this.seq}`, input.references ?? []);
@@ -119,12 +118,11 @@ export class HaikuAssistant extends EventEmitter {
 
   // ------------------------------------------------------------ chips
 
-  /** The chips to show: the handoff's fresh chat first, then the CLI's own guess among Haiku's (25, 36). */
+  /** The chips to show: the CLI's own guess among Haiku's (25). */
   chipsFor(sid: string): Chip[] {
     const c = this.chats.get(sid);
     if (!c) return [];
     const out: Chip[] = [];
-    if (c.handoff) out.push({ text: "Fresh chat with this handoff", source: "handoff", action: "freshChat" });
     const seen = new Set<string>();
     const add = (text: string, source: Chip["source"]) => {
       const k = text.trim().toLowerCase();
@@ -134,35 +132,21 @@ export class HaikuAssistant extends EventEmitter {
     };
     if (c.cli) add(c.cli, "cli");
     for (const h of c.haiku) add(h, "haiku");
-    return out.slice(0, c.handoff ? 5 : 4);
-  }
-
-  handoffFor(sid: string): string | null {
-    return this.chats.get(sid)?.handoff ?? null;
-  }
-
-  /** The fresh chat took the handoff: its chip goes; the other chips stay. */
-  handoffTaken(sid: string): void {
-    const c = this.chats.get(sid);
-    if (!c?.handoff) return;
-    c.handoff = null;
-    this.emitChips(sid);
+    return out.slice(0, 4);
   }
 
   private emitChips(sid: string): void {
     this.emit("chips", sid, this.chipsFor(sid));
   }
 
-  /** The owner sent a message: the chips are spent; a handoff request is remembered for the turn it starts. */
-  sent(sid: string, opts: { handoff?: boolean } = {}): void {
+  /** The owner sent a message: the chips are spent. */
+  sent(sid: string): void {
     const c = this.chat(sid);
     this.cancel(sid, ["ghost", "cards", "turn"]);
     c.cli = null;
     c.haiku = [];
-    c.handoff = null;
     c.due = false;
     c.epoch++;
-    c.handoffAsked = !!opts.handoff;
     this.emitChips(sid);
   }
 
@@ -181,11 +165,6 @@ export class HaikuAssistant extends EventEmitter {
     const c = this.chat(sid);
     // A first-turn name that never came: asked again now.
     if (c.named === false && c.nameDue) opts = { ...opts, firstTurn: true };
-    if (c.handoffAsked) {
-      c.handoffAsked = false;
-      const h = extractHandoff(input().lastReply);
-      c.handoff = h || null;
-    }
     const want = { chips: opts.onScreen, name: opts.firstTurn && !c.named };
     if (!opts.onScreen) c.due = true;
     this.emitChips(sid);
