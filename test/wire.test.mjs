@@ -1613,3 +1613,88 @@ test("an MCP server's link opens only over https and never to this machine; Alwa
   assert.deepEqual(core.ownersAlways([rules, mode], [1], undefined), { picks: [1] }, "a mode change needs no place");
   assert.deepEqual(core.ownersAlways([rules, mode], [0, 7, "x"], "projectSettings"), { picks: [0], destination: "projectSettings" });
 });
+
+// ---- An agent's handoff to a fresh session (decision 103)
+
+const handoffServer = (chat, how) => core.mcpServer({ name: core.PANEL_MCP_SERVER, version: "0.1.0" }, [{ ...core.HANDOFF_TOOL, call: (a) => chat.handoff(String(a.prompt ?? ""), how) }]);
+const callHandoff = (server, prompt) => server({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "handoff", arguments: { prompt } } });
+
+test("handoff: the tool is named handoff, takes a prompt, and says a rerun is not its job (103, 63)", () => {
+  assert.equal(core.HANDOFF_TOOL.name, "handoff");
+  assert.deepEqual(core.HANDOFF_TOOL.inputSchema.required, ["prompt"]);
+  assert.match(core.HANDOFF_TOOL.description, /Do not rerun a step/);
+  assert.equal(core.handoffSetting(undefined), "card", "the default");
+  assert.equal(core.handoffSetting("immediate"), "immediate");
+  assert.equal(core.handoffSetting("off"), "off");
+  assert.equal(core.handoffSetting("rubbish"), "card");
+});
+
+test("handoff as a card: the prompt waits on the owner, edited, then Continue starts the fresh session with it and ends the old process; the old history and a divider go to the fresh chat (103)", async () => {
+  const started = [];
+  const { chat } = makeChat("basic", {});
+  chat.opts.switchTo = async (p) => (started.push(p), true);
+  chat.preload([{ type: "_note", text: "an earlier line", tone: "info" }]);
+  const answer = callHandoff(handoffServer(chat, "card"), "Carry on with the flash; the port is COM4.");
+  await waitFor(() => chat.state.pending.length === 1);
+  const p = chat.state.pending[0];
+  assert.equal(p.form, "handoff");
+  assert.equal(p.input.prompt, "Carry on with the flash; the port is COM4.");
+  assert.equal(core.chatStatus(chat.state), "waiting", "a card waits on the owner, so the process is kept");
+  assert.equal(started.length, 0, "nothing starts before the owner says");
+  chat.decideHandoff(p.requestId, true, "Carry on with the flash; the port is COM4. Edited.");
+  const r = await answer;
+  assert.deepEqual(started, ["Carry on with the flash; the port is COM4. Edited."], "the prompt as the owner left it");
+  assert.match(r.result.content[0].text, /Handed off/);
+  assert.equal(chat.state.pending.length, 0);
+  chat.dispose();
+});
+
+test("handoff as a card: Stay answers the call and nothing starts; the agent carries on (103)", async () => {
+  const started = [];
+  const { chat } = makeChat("basic", {});
+  chat.opts.switchTo = async (p) => (started.push(p), true);
+  const answer = callHandoff(handoffServer(chat, "card"), "Start over.");
+  await waitFor(() => chat.state.pending.length === 1);
+  chat.decideHandoff(chat.state.pending[0].requestId, false);
+  const r = await answer;
+  assert.equal(r.result.content[0].text, core.HANDOFF_STAY);
+  assert.deepEqual(started, []);
+  assert.equal(chat.state.pending.length, 0);
+  chat.dispose();
+});
+
+test("handoff immediate: no card, the fresh session starts at once with the agent's prompt; an empty prompt, or a start that fails, is a tool error the agent reads (103)", async () => {
+  const started = [];
+  const { chat } = makeChat("basic", {});
+  chat.opts.switchTo = async (p) => (started.push(p), true);
+  const r = await callHandoff(handoffServer(chat, "immediate"), "  Go on.  ");
+  assert.deepEqual(started, ["Go on."]);
+  assert.equal(chat.state.pending.length, 0, "no card");
+  assert.equal(r.result.content[0].text, core.HANDOFF_DONE);
+  const empty = await callHandoff(handoffServer(chat, "immediate"), "   ");
+  assert.equal(empty.result.isError, true);
+  assert.equal(started.length, 1);
+  chat.opts.switchTo = async () => false;
+  const failed = await callHandoff(handoffServer(chat, "immediate"), "Go on.");
+  assert.equal(failed.result.isError, true);
+  assert.match(failed.result.content[0].text, /carries on/);
+  chat.dispose();
+});
+
+test("handoff: the fresh chat holds the old timeline above a divider with the prompt, no step still looks live, and no new entry takes an old one's id (103)", () => {
+  const old = core.initialState("aaaaaaaa-2222-4333-8444-555555555555", "plan");
+  let s = core.reduceAll(old, [
+    { type: "_note", text: "an earlier line", tone: "info" },
+    { type: "assistant", message: { id: "msg_1", role: "assistant", content: [{ type: "tool_use", id: "toolu_1", name: "Bash", input: { command: "ls" } }] } },
+  ]);
+  const fresh = core.initialState("bbbbbbbb-2222-4333-8444-555555555555", "plan");
+  const carried = core.carryTimeline(s, fresh, "Carry on.");
+  assert.equal(carried.sessionId, "bbbbbbbb-2222-4333-8444-555555555555");
+  assert.equal(carried.mode, "plan", "never a looser mode");
+  assert.equal(carried.timeline.length, s.timeline.length + 1);
+  const divider = carried.entries[carried.timeline.at(-1)];
+  assert.deepEqual([divider.kind, divider.tone, divider.detail], ["note", "handoff", "Carry on."]);
+  assert.ok(Object.values(carried.entries).filter((e) => e.kind === "tool").every((t) => t.status === "done"));
+  const after = core.reduce(carried, { type: "_note", text: "next", tone: "info" });
+  assert.equal(new Set(after.timeline).size, after.timeline.length, "ids stay unique");
+});

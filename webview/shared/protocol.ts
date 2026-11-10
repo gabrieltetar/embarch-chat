@@ -179,6 +179,8 @@ export type ChatToHost =
   | { t: "assistCancel" }
   /** A chip that acts: a fresh chat with this chat's handoff (36). */
   | { t: "freshChat" }
+  /** The owner's choice on an agent's handoff card (103): Continue in a fresh session with `prompt` as it was left, or Stay. */
+  | { t: "handoff"; requestId: string; go: boolean; prompt?: string }
   /** A dry run of rewinding the files to before the owner's message `uuid` (decision 73). */
   | { t: "rewindCheck"; uuid: string }
   /** Rewinds to before the owner's message `uuid`: its files, and/or the conversation as a fork (decision 73). */

@@ -146,7 +146,7 @@ export function activate(context: vscode.ExtensionContext): void {
   let shownNow: (sid: string) => boolean = () => false;
   /** Whether a chat is open (`isOpen` below): a bridge the CLI started by itself holds its process only then (100). */
   let openNow: (sid: string) => boolean = () => false;
-  chats = new ChatManager(() => ({ claudePath: cfg().claudePath, idleMs: cfg().idleMs, log, hooks: (cwd) => hostHooks(log, cwd), hold: (sid) => promptuRuns?.holdReason(sid, shownNow(sid)) ?? null, open: (sid) => openNow(sid), env: spawnEnv }));
+  chats = new ChatManager(() => ({ claudePath: cfg().claudePath, idleMs: cfg().idleMs, log, hooks: (cwd, chat) => hostHooks(log, cwd, chat), handoff: (sid, prompt) => handoffChat(sid, prompt), hold: (sid) => promptuRuns?.holdReason(sid, shownNow(sid)) ?? null, open: (sid) => openNow(sid), env: spawnEnv }));
   const manager = chats;
   deskService = new DeskService(() => client, manager, folders, log);
   const desk = deskService;
@@ -544,7 +544,7 @@ export function activate(context: vscode.ExtensionContext): void {
     body: AssignBody | null,
     cwd: string,
     label: string | null,
-    opts: { onRefusal?: (why: string) => void; fork?: { from: string; at: string; events: WireMessage[] }; mode?: string } = {},
+    opts: { onRefusal?: (why: string) => void; fork?: { from: string; at: string; events: WireMessage[] }; mode?: string; /** Shown where the owner is looking, not opened (a handoff takes over its chat's panel instead, 103). */ quiet?: boolean } = {},
   ): Promise<ChatRecord | null> {
     const sid = crypto.randomUUID();
     let itemId: string | null = null;
@@ -581,7 +581,7 @@ export function activate(context: vscode.ExtensionContext): void {
     if (fork) rec.chat.preload(fork.events);
     if (refused !== null) opts.onRefusal!(refused);
     desk.rebuild();
-    await show(sid);
+    if (!opts.quiet) await show(sid);
     if (due === "mark") void tellDesk(rec);
     return rec;
   }
@@ -707,6 +707,37 @@ export function activate(context: vscode.ExtensionContext): void {
     haiku.handoffTaken(sid);
     haiku.sent(fresh.chat.sessionId);
     fresh.chat.send(text);
+  }
+
+  /**
+   * An agent's handoff (decision 103): `freshChat`'s start — a new session on
+   * the same work item — but in the chat's own panel and timeline: the old
+   * history stays above a divider, and the fresh session takes the chat's
+   * mode (never a looser one), model, effort and Ultracode. The old session
+   * stays on the list, readable, on the same item. The caller ends its process.
+   */
+  async function handoffChat(sid: string, prompt: string): Promise<boolean> {
+    const rec = manager.get(sid);
+    if (!rec) return false;
+    const cwd = windowCwd(rec.chat.opts.cwd) ?? rec.chat.opts.cwd;
+    const item = desk.itemFor(sid)?.id ?? rec.itemId;
+    const body: AssignBody | null = item ? { item_id: item } : rec.untracked ? { untracked: true } : null;
+    const fresh = await startChat(body, cwd, rec.itemTitle, { mode: rec.chat.state.mode, quiet: true });
+    if (!fresh) return false;
+    log(`[${sid.slice(0, 8)}] handed off to ${fresh.chat.sessionId}`);
+    if (rec.chat.pickedModel) await fresh.chat.setModel(rec.chat.pickedModel);
+    const { effort, ultracode } = rec.chat.state;
+    if (effort || ultracode) await fresh.chat.setEffort(effort, ultracode);
+    fresh.chat.carryInto(rec.chat.state, prompt);
+    rec.chat.note("Handed off to a fresh session, which carries on in this panel. This session stays readable on the list.");
+    haiku.sent(fresh.chat.sessionId);
+    fresh.chat.send(prompt);
+    // The panel that showed the old chat now shows the fresh one; a chat nobody was looking at stays off screen, on the list.
+    manager.current = manager.current === sid ? fresh.chat.sessionId : manager.current;
+    panels.retarget(sid, fresh.chat.sessionId);
+    if (chatView.host?.sid === sid) chatView.show(fresh.chat.sessionId);
+    threads.push();
+    return true;
   }
 
   // ------------------------------------------------------------ forks

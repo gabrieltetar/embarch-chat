@@ -11,7 +11,8 @@ import { ClaudeProcess, SpawnSpec, chatEnv } from "./process";
 import { HostHooks, answererFor, initializeRequest } from "./host";
 import { findTranscript, holdsMessage, projectsRoot } from "./transcript";
 import { appendTitle } from "./history";
-import { ChatState, Pending, chatStatus, initialState, reduce, reduceAll } from "./reducer";
+import { ChatState, Pending, carryTimeline, chatStatus, initialState, reduce, reduceAll } from "./reducer";
+import { HANDOFF_DONE, HANDOFF_STAY, HandoffPort } from "../handoff";
 import { anyMovable, soonMovable } from "./tasks";
 import { Attachment, ContextItem, Outgoing, outgoing, stripInvisible } from "./message";
 import type { AppliedSettings, ContextUsage, ModelInfo, PermissionDecision, WireMessage } from "./types";
@@ -33,7 +34,9 @@ export interface ChatOptions {
   fork?: { from: string; at: string };
   log?: (line: string) => void;
   /** What the panel does for the CLI (decisions 61, 65), read as each process starts: settings may have changed. Given the chat's folder. */
-  hooks?: (cwd: string) => HostHooks;
+  hooks?: (cwd: string, chat: HandoffPort) => HostHooks;
+  /** An agent's handoff (103) goes on: starts the fresh session with the prompt in this chat's panel; false when it could not start. */
+  switchTo?: (prompt: string) => Promise<boolean>;
   /**
    * Back after a reload with no conversation on record (63): a process of
    * it may have left a transcript of queue lines, so its first process
@@ -119,7 +122,10 @@ function isCompactEnd(o: WireMessage): boolean {
  * compaction that will not come, or not taken by a process that died — for
  * the draft).
  */
-export class Chat extends EventEmitter {
+/** After the handoff's answer is written, the old process ends: closing at once could drop the answer. */
+const HANDOFF_CLOSE_MS = 500;
+
+export class Chat extends EventEmitter implements HandoffPort {
   state: ChatState;
   private proc: ClaudeProcess | undefined;
   private hasSession: boolean;
@@ -276,7 +282,7 @@ export class Chat extends EventEmitter {
     if (rerun) env = { ...env, CLAUDE_CODE_RESUME_INTERRUPTED_TURN: "1", CLAUDE_CODE_RESUME_INTERRUPTED_TURN_MAX_AGE_MS: String(RERUN_MAX_AGE_MS) };
     let label = rerun;
     // The panel's own hooks and MCP servers (61, 65), read as each process starts, in its one initialize.
-    const hooks = this.opts.hooks?.(this.opts.cwd) ?? {};
+    const hooks = this.opts.hooks?.(this.opts.cwd, this) ?? {};
     const init = initializeRequest(hooks);
     const spec: SpawnSpec = {
       claudePath: this.opts.claudePath,
@@ -587,6 +593,51 @@ export class Chat extends EventEmitter {
     // What a reload gave back goes too: the CLI takes it after the step.
     this.sendLines(this.ensureProcess(), this.takeRestored());
     this.touch();
+  }
+
+  /** Handoff cards (decision 103) waiting for the owner, by request id: the prompt as the agent wrote it, and the tool call's answer. */
+  private handoffs = new Map<string, { prompt: string; decide: (d: { go: boolean; prompt: string }) => void }>();
+
+  /**
+   * The agent's `handoff(prompt)` (decision 103). As a card the owner sees the
+   * prompt, editable, with Continue and Stay; Stay answers the call so the
+   * agent carries on. Continue, or `immediate`, starts the fresh session in
+   * this panel and ends this chat's process once the answer has gone.
+   */
+  async handoff(prompt: string, how: "card" | "immediate"): Promise<string> {
+    const text = prompt.trim();
+    if (!text) throw new Error("handoff needs a prompt: the fresh session's first message.");
+    let go = true;
+    let sent = text;
+    if (how === "card") {
+      const id = randomUUID();
+      const d = await new Promise<{ go: boolean; prompt: string }>((decide) => {
+        this.handoffs.set(id, { prompt: text, decide });
+        this.dispatch({ type: "_handoff", requestId: id, prompt: text });
+      });
+      go = d.go;
+      sent = d.prompt;
+    }
+    if (!go) return HANDOFF_STAY;
+    if (!this.opts.switchTo || !(await this.opts.switchTo(sent))) throw new Error("The fresh session could not start; this session carries on.");
+    const t = setTimeout(() => this.closeProcess(), HANDOFF_CLOSE_MS);
+    t.unref?.();
+    return HANDOFF_DONE;
+  }
+
+  /** The owner's choice on a handoff card: `prompt` is what they left in it (empty: as the agent wrote it). */
+  decideHandoff(requestId: string, go: boolean, prompt?: string): void {
+    const h = this.handoffs.get(requestId);
+    if (!h) return;
+    this.handoffs.delete(requestId);
+    this.dispatch({ type: "_answered", requestId });
+    h.decide({ go, prompt: prompt?.trim() || h.prompt });
+  }
+
+  /** This chat as the first part of a fresh session's: its history above a divider naming the handoff (103). */
+  carryInto(prev: ChatState, prompt: string): void {
+    this.state = carryTimeline(prev, this.state, prompt);
+    this.emit("event", { type: "_snapshot" });
   }
 
   /** A line of the panel's own in the chat. */
@@ -1122,6 +1173,8 @@ export class Chat extends EventEmitter {
 
   dispose(): void {
     this.disposed = true;
+    for (const h of this.handoffs.values()) h.decide({ go: false, prompt: h.prompt });
+    this.handoffs.clear();
     this.queued = [];
     this.restored = [];
     this.clearIdle();

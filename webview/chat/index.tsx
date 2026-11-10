@@ -385,6 +385,14 @@ function App() {
           ) : (
             <div class="note task">{e.text}</div>
           );
+        // Where an agent's handoff began this session (103): a divider, its prompt folded under it.
+        if (e.tone === "handoff")
+          return (
+            <details class="note handoff">
+              <summary>{e.text}</summary>
+              <pre>{e.detail}</pre>
+            </details>
+          );
         if (e.tone === "peer")
           return (
             <details class="note peer">

@@ -387,6 +387,18 @@
             "scope": "machine",
             "description": "Give Claude a getDiagnostics tool that reads VS Code's Problems panel, unsaved edits included — Claude Code's own IDE tool, served by this extension over the chat's stdio (decision 65). Off by default; on, its definition rides in every chat's tool list. Takes effect when a chat's process next starts. User or Remote settings only — a workspace cannot turn it on."
           },
+          "embarchChat.handoff": {
+            "type": "string",
+            "enum": ["card", "immediate", "off"],
+            "enumDescriptions": [
+              "Claude's handoff tool shows the prompt in a card you can edit, with Continue in a fresh session and Stay.",
+              "The fresh session starts at once, with Claude's prompt.",
+              "No handoff tool is declared."
+            ],
+            "default": "card",
+            "scope": "machine",
+            "description": "Whether Claude can hand this chat over to a fresh session in the same panel, with a prompt of its own (decision 103). The old history stays above a divider; the fresh session keeps the chat's mode, model, effort and work item, and the old session stays on the list. Takes effect when a chat's process next starts. User or Remote settings only — a workspace cannot set it."
+          },
           "embarchChat.attachOpenFile": {
             "type": "boolean",
             "default": true,

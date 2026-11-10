@@ -7,16 +7,20 @@ import * as vscode from "vscode";
 import type { HostHooks } from "./wire/host";
 import { saveIfDirty } from "./autosave";
 import { DIAGNOSTICS_TOOL, FileDiagnostics, PANEL_MCP_SERVER, formatDiagnostics } from "./diagnostics";
-import { mcpServer } from "./mcpServer";
+import { HANDOFF_TOOL, HandoffPort, handoffSetting } from "./handoff";
+import { McpTool, mcpServer } from "./mcpServer";
 
 /** For one chat's process: `cwd` is the folder the chat runs in, the only one besides the window's whose files autosave touches (61). */
-export function hostHooks(log: (s: string) => void, cwd: string): HostHooks {
+export function hostHooks(log: (s: string) => void, cwd: string, chat: HandoffPort): HostHooks {
   const c = vscode.workspace.getConfiguration("embarchChat");
   const h: HostHooks = {};
   if (c.get<boolean>("autosave", true)) h.beforeFileTool = (tool, file, hookCwd) => saveIfDirty(tool, file, hookCwd, cwd, log);
-  if (c.get<boolean>("diagnosticsTool", false)) {
-    h.mcp = { [PANEL_MCP_SERVER]: mcpServer({ name: PANEL_MCP_SERVER, version: "0.1.0" }, [{ ...DIAGNOSTICS_TOOL, call: getDiagnostics }]) };
-  }
+  // The panel's one MCP server carries whichever tools are on; with none, it is not declared (65, 103).
+  const tools: McpTool[] = [];
+  if (c.get<boolean>("diagnosticsTool", false)) tools.push({ ...DIAGNOSTICS_TOOL, call: getDiagnostics });
+  const how = handoffSetting(c.get<string>("handoff", "card"));
+  if (how !== "off") tools.push({ ...HANDOFF_TOOL, call: (args) => chat.handoff(typeof args.prompt === "string" ? args.prompt : "", how) });
+  if (tools.length) h.mcp = { [PANEL_MCP_SERVER]: mcpServer({ name: PANEL_MCP_SERVER, version: "0.1.0" }, tools) };
   return h;
 }
 

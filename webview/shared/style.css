@@ -631,6 +631,29 @@ button.note.task.link:focus-visible {
   font-family: inherit;
   color: var(--vscode-foreground);
 }
+.note.handoff {
+  align-self: stretch;
+  text-align: center;
+  border-top: 1px solid var(--vscode-editorWidget-border, var(--muted));
+  padding-top: 6px;
+  margin: 8px 0;
+}
+.note.handoff summary {
+  cursor: pointer;
+}
+.note.handoff pre {
+  margin: 4px 0 0;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: inherit;
+  color: var(--vscode-foreground);
+}
+.handoff-card textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+}
 .note.compact::before,
 .note.compact::after {
   content: " — ";

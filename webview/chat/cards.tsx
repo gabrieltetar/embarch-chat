@@ -274,6 +274,29 @@ function PlanCard({ p, ctx }: { p: Pending; ctx: ToolCtx }) {
   );
 }
 
+/**
+ * An agent's handoff (decision 103): the prompt it wrote, editable, and the
+ * owner's word — Continue starts a fresh session in this panel with the prompt
+ * as left; Stay answers the agent's call and it carries on here.
+ */
+function HandoffCard({ p }: { p: Pending }) {
+  const asked = String(p.input.prompt ?? "");
+  const [text, setText] = useState(asked);
+  return (
+    <div class="card handoff-card">
+      <div class="card-title">Claude proposes a fresh session</div>
+      <div class="muted">It starts here, in this panel, with this as its first message; everything above stays.</div>
+      <textarea rows={8} aria-label="The fresh session's first message" value={text} onInput={(e) => setText((e.target as HTMLTextAreaElement).value)} />
+      <div class="actions">
+        <button class="primary" disabled={!text.trim()} onClick={() => post({ t: "handoff", requestId: p.requestId, go: true, prompt: text })}>
+          Continue in a fresh session
+        </button>
+        <button onClick={() => post({ t: "handoff", requestId: p.requestId, go: false })}>Stay</button>
+      </div>
+    </div>
+  );
+}
+
 /** A card that came while the owner typed (55): one line of what waits, nothing in it answers. */
 function HeldCard({ p, ctx, onShow }: { p: Pending; ctx: ToolCtx; onShow: () => void }) {
   const qs = (Array.isArray(p.input.questions) ? p.input.questions : []) as Question[];
@@ -282,7 +305,9 @@ function HeldCard({ p, ctx, onShow }: { p: Pending; ctx: ToolCtx; onShow: () => 
       ? `Claude asks: ${qs[0]?.question ?? ""}${qs.length > 1 ? ` (+${qs.length - 1})` : ""}`
       : p.form === "plan"
         ? "Claude's plan is ready"
-        : p.form === "dialog" || p.form === "elicitation"
+        : p.form === "handoff"
+          ? "Claude proposes a fresh session"
+          : p.form === "dialog" || p.form === "elicitation"
           ? dialogLine(p)
           : `Allow ${toolLabel(p.toolName)}? ${toolSummary(p.toolName, p.input, ctx.cwd)}`;
   return (
@@ -341,6 +366,8 @@ export function PendingCards({
           <QuestionCard key={p.requestId} p={p} ctx={ctx} />
         ) : p.form === "plan" ? (
           <PlanCard key={p.requestId} p={p} ctx={ctx} />
+        ) : p.form === "handoff" ? (
+          <HandoffCard key={p.requestId} p={p} />
         ) : p.form === "dialog" || p.form === "elicitation" ? (
           <DialogCard key={p.requestId} p={p} ctx={ctx} recall={recall} />
         ) : (

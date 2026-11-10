@@ -52,7 +52,7 @@ export type TabState = "plain" | "pending" | "done";
 
 /** Chats opened as editor tabs, one per session. */
 export class ChatPanels implements vscode.Disposable {
-  private panels = new Map<string, { panel: vscode.WebviewPanel; host: ChatHost; icon: TabState }>();
+  private panels = new Map<string, { panel: vscode.WebviewPanel; host: ChatHost; icon: TabState; at: { sid: string } }>();
   /** Called when a tab shows or hides. */
   onShown: () => void = () => {};
   /** Called when the owner closed a tab: Ctrl+Shift+T can bring it back (59). */
@@ -88,27 +88,40 @@ export class ChatPanels implements vscode.Disposable {
     // What the page opens goes into the tab's own group, beside it (decision 92).
     const host = new ChatHost(panel.webview, this.ctx, sid, true, () => panel.reveal(undefined, false), () => panel.viewColumn ?? vscode.ViewColumn.Active);
     panel.webview.html = webviewHtml(panel.webview, this.extensionUri, "chat", title);
-    this.panels.set(sid, { panel, host, icon: "plain" });
+    // A handoff (103) moves the tab to another chat: `at.sid` is the chat it shows now.
+    const at = { sid };
+    this.panels.set(sid, { panel, host, icon: "plain", at });
     // A new tab opens active, and VS Code tells no view-state change for that.
-    this.lastActive = sid;
+    this.lastActive = at.sid;
     panel.onDidChangeViewState?.(() => {
       if (panel.active) {
-        this.lastActive = sid;
-        this.onActive(sid);
+        this.lastActive = at.sid;
+        this.onActive(at.sid);
       }
       this.onShown();
     });
     panel.onDidDispose(() => {
       host.dispose();
-      this.panels.delete(sid);
+      this.panels.delete(at.sid);
       // Not as the window closes: the reload memory keeps which chat was current (63).
-      if (!this.disposing) this.onGone(sid);
-      this.ctx.chats.release(sid);
+      if (!this.disposing) this.onGone(at.sid);
+      this.ctx.chats.release(at.sid);
       this.onShown();
       if (this.disposing) return;
-      this.closed = [...this.closed.filter((x) => x !== sid), sid].slice(-20);
+      this.closed = [...this.closed.filter((x) => x !== at.sid), at.sid].slice(-20);
       this.onClosed();
     });
+  }
+
+  /** The tab of chat `from` now shows chat `to` (a handoff, decision 103): same tab, the page told. */
+  retarget(from: string, to: string): void {
+    const p = this.panels.get(from);
+    if (!p || this.panels.has(to)) return;
+    this.panels.delete(from);
+    p.at.sid = to;
+    this.panels.set(to, p);
+    p.host.show(to);
+    if (this.lastActive === from) this.lastActive = to;
   }
 
   /** The last closed tab's chat, taken off the list; null when none is left. */

@@ -88,12 +88,13 @@ export interface NoteEntry {
   kind: "note";
   id: string;
   text: string;
-  tone: "info" | "error" | "compact" | "interrupt" | "task" | "peer";
+  tone: "info" | "error" | "compact" | "interrupt" | "task" | "peer" | "handoff";
   /**
    * "task": the line the CLI sent Claude when a background task ended, as a
    * one-line row; `tool` is the call that started it, for the row's link.
    * "peer": another session's message, collapsed to its sender, `detail` its
-   * text (decision 89).
+   * text (decision 89). "handoff": the divider where an agent's handoff
+   * (decision 103) began a fresh session, `detail` the prompt it started with.
    */
   tool?: string;
   detail?: string;
@@ -117,9 +118,11 @@ export interface Pending {
    * How the panel shows it: a question form, a plan, or allow/deny — all
    * `can_use_tool`; or an MCP server's elicitation (`toolName` the server,
    * `input` the request) or one of the CLI's dialogs (`toolName` its kind,
-   * `input` its payload), decision 66.
+   * `input` its payload), decision 66; or the agent's own handoff (103),
+   * which the CLI never asked about: `input.prompt` is what the fresh session
+   * would start with.
    */
-  form: "question" | "plan" | "permission" | "elicitation" | "dialog";
+  form: "question" | "plan" | "permission" | "elicitation" | "dialog" | "handoff";
   /** Some of an Edit's or Write's changes rejected in its diff tab (decision 64): how many are kept; `input` makes only those. */
   kept?: string;
   /** A plan's comments on its lines, made in its document tab (decision 77): sent with "keep planning". */
@@ -972,9 +975,26 @@ export function reduce(s: ChatState, o: WireMessage): ChatState {
     }
     case "_sideClear":
       return { ...s, side: (s.side ?? []).filter((q) => q.pending) };
+    case "_handoff":
+      return s.pending.some((x) => x.requestId === o.requestId) ? s : { ...s, pending: [...s.pending, { requestId: String(o.requestId), toolName: "handoff", input: { prompt: String(o.prompt ?? "") }, form: "handoff" }] };
     case "_note":
       return note(s, String(o.text), (o.tone as NoteEntry["tone"]) ?? "info", typeof o.kept === "string" ? o.kept : undefined, o.offer === "rerun" ? "rerun" : undefined);
     default:
       return s;
   }
+}
+
+/**
+ * The chat a handoff starts (decision 103), in the same panel: `prev`'s whole
+ * visible history above a divider naming the handoff, and the prompt in the
+ * divider. What was live in it — a step still running, a question — ended with
+ * its process, so it shows as done; the counter carries on from `prev`'s, so
+ * no new entry takes an old one's id.
+ */
+export function carryTimeline(prev: ChatState, next: ChatState, prompt: string): ChatState {
+  const entries: Record<string, Entry> = {};
+  for (const [id, e] of Object.entries(prev.entries)) entries[id] = e.kind === "tool" && (e.status === "running" || e.status === "awaiting") ? { ...e, status: "done" } : e;
+  const id = `n:${prev.seq}:handoff`;
+  entries[id] = { kind: "note", id, text: "Handed off to a fresh session", tone: "handoff", detail: prompt };
+  return { ...next, timeline: [...prev.timeline, id], entries, seq: prev.seq + 1 };
 }

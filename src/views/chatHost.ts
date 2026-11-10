@@ -410,7 +410,7 @@ export class ChatHost implements vscode.Disposable {
     if (!rec) return;
     const chat = rec.chat;
     // A permission, question or plan prompt; a dialog or an elicitation takes `respond` (66).
-    const pending = (id: string) => chat.state.pending.find((p) => p.requestId === id && p.form !== "dialog" && p.form !== "elicitation");
+    const pending = (id: string) => chat.state.pending.find((p) => p.requestId === id && p.form !== "dialog" && p.form !== "elicitation" && p.form !== "handoff");
     switch (m.t) {
       case "send":
         // One that waits nowhere goes at once, as it always did.
@@ -502,6 +502,10 @@ export class ChatHost implements vscode.Disposable {
       case "permDestination":
         // Remembered for every chat and window, as Claude Code remembers it (78).
         if (isDestination(m.destination)) await this.ctx.remembered.update(DESTINATION_KEY, m.destination);
+        return;
+      case "handoff":
+        // An agent's handoff (103): the card's, never answered to the CLI; only where the chat runs.
+        if (rec.ours) chat.decideHandoff(m.requestId, m.go, m.prompt);
         return;
       case "answer": {
         const p = pending(m.requestId);
