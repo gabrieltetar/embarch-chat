@@ -7,7 +7,8 @@
 
 import { EventEmitter } from "events";
 import * as fs from "fs";
-import { Chat } from "./wire/chat";
+import { Chat, ChatOptions } from "./wire/chat";
+import { chatEnv } from "./wire/process";
 import type { HostHooks } from "./wire/host";
 import type { HandoffPort } from "./handoff";
 import { chatStatus } from "./wire/reducer";
@@ -72,6 +73,17 @@ export interface ChatSettings {
   open?: (sessionId: string) => boolean;
   /** The environment a new chat keeps for life: this window's login and desk as they are when it is created. */
   env?: () => NodeJS.ProcessEnv;
+  /** What a chat's process waits on before it spawns, given the chat's environment: its login's warm-up while the token is due (105). */
+  gate?: (env: NodeJS.ProcessEnv) => Promise<void> | null;
+  /** After a turn ended on the CLI's refresh lock: warms the chat's login up until it is fresh (105). */
+  recover?: (env: NodeJS.ProcessEnv) => Promise<boolean>;
+}
+
+/** A new chat's environment, kept for life, and its login's warm-up (105), which goes by that environment. */
+function loginOpts(s: ChatSettings): Pick<ChatOptions, "env" | "gate" | "recover"> {
+  const env = s.env?.();
+  const own = env ?? chatEnv();
+  return { env, gate: s.gate && (() => s.gate!(own)), recover: s.recover && (() => s.recover!(own)) };
 }
 
 /**
@@ -151,7 +163,7 @@ export class ChatManager extends EventEmitter {
     opts: { untracked?: boolean; deskDue?: DeskDue | null; fork?: { from: string; at: string }; mode?: string; settle?: boolean } = {},
   ): ChatRecord {
     const s = this.settings();
-    const chat = new Chat({ sessionId, cwd, claudePath: s.claudePath, existing: false, idleMs: s.idleMs, log: s.log, hooks: s.hooks, fork: opts.fork, mode: opts.mode, settle: opts.settle, switchTo: s.handoff && ((prompt) => s.handoff!(sessionId, prompt)), hold: s.hold && (() => s.hold!(sessionId)), open: s.open && (() => s.open!(sessionId)), env: s.env?.() });
+    const chat = new Chat({ sessionId, cwd, claudePath: s.claudePath, existing: false, idleMs: s.idleMs, log: s.log, hooks: s.hooks, fork: opts.fork, mode: opts.mode, settle: opts.settle, switchTo: s.handoff && ((prompt) => s.handoff!(sessionId, prompt)), hold: s.hold && (() => s.hold!(sessionId)), open: s.open && (() => s.open!(sessionId)), ...loginOpts(s) });
     const rec: ChatRecord = {
       chat,
       ours: true,
@@ -192,7 +204,7 @@ export class ChatManager extends EventEmitter {
     const s = this.settings();
     const ran = file ? transcriptMode(file) : null;
     const m = mode ?? (ran && (PERMISSION_MODES as string[]).includes(ran) ? ran : "default");
-    const chat = new Chat({ sessionId, cwd: cwd ?? "", claudePath: s.claudePath, existing: true, idleMs: s.idleMs, log: s.log, hooks: s.hooks, mode: m, switchTo: s.handoff && ((prompt) => s.handoff!(sessionId, prompt)), hold: s.hold && (() => s.hold!(sessionId)), open: s.open && (() => s.open!(sessionId)), env: s.env?.() });
+    const chat = new Chat({ sessionId, cwd: cwd ?? "", claudePath: s.claudePath, existing: true, idleMs: s.idleMs, log: s.log, hooks: s.hooks, mode: m, switchTo: s.handoff && ((prompt) => s.handoff!(sessionId, prompt)), hold: s.hold && (() => s.hold!(sessionId)), open: s.open && (() => s.open!(sessionId)), ...loginOpts(s) });
     const rec: ChatRecord = { chat, ours: false, viewer: true, resumable, itemId, itemTitle, untracked: false, deskDue: null, createdMs: Date.now(), lastMs: Date.now() };
     this.records.set(sessionId, rec);
     this.wire(sessionId, rec);

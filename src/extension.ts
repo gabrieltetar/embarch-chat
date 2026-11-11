@@ -37,6 +37,7 @@ import { claudeVersion, versionWarning } from "./wire/version";
 import { chatEnv } from "./wire/process";
 import { DEFAULT_LOGIN, DeskConfig, FolderRule, LoginConfig, currentLogin, loginEnv, matchFolderRule, ruleDesk } from "./logins";
 import { haikuEnv } from "./assistant/haiku";
+import { LoginGate, warmUp } from "./loginGate";
 import { findTranscript, isSessionId } from "./wire/transcript";
 import { appendTitle, forkPoint, historyUpTo } from "./wire/history";
 import type { WireMessage } from "./wire/types";
@@ -150,7 +151,20 @@ export function activate(context: vscode.ExtensionContext): void {
   let shownNow: (sid: string) => boolean = () => false;
   /** Whether a chat is open (`isOpen` below): a bridge the CLI started by itself holds its process only then (100). */
   let openNow: (sid: string) => boolean = () => false;
-  chats = new ChatManager(() => ({ claudePath: cfg().claudePath, idleMs: cfg().idleMs, log, hooks: (cwd, chat) => hostHooks(log, cwd, chat), handoff: (sid, prompt) => handoffChat(sid, prompt), hold: (sid) => promptuRuns?.holdReason(sid, shownNow(sid)) ?? null, open: (sid) => openNow(sid), env: spawnEnv }));
+  // One warm-up per login while its token is due (105): chats' processes wait on it, Haiku's calls skip it.
+  const loginGate = new LoginGate({ warm: (env) => warmUp(cfg().claudePath, env), log });
+  chats = new ChatManager(() => ({
+    claudePath: cfg().claudePath,
+    idleMs: cfg().idleMs,
+    log,
+    hooks: (cwd, chat) => hostHooks(log, cwd, chat),
+    handoff: (sid, prompt) => handoffChat(sid, prompt),
+    hold: (sid) => promptuRuns?.holdReason(sid, shownNow(sid)) ?? null,
+    open: (sid) => openNow(sid),
+    env: spawnEnv,
+    gate: (env) => loginGate.wait(env),
+    recover: (env) => loginGate.recover(env),
+  }));
   const manager = chats;
   deskService = new DeskService(() => client, manager, folders, log);
   const desk = deskService;
@@ -197,7 +211,7 @@ export function activate(context: vscode.ExtensionContext): void {
     return libraryCache.entries;
   };
 
-  assistant = new HaikuAssistant(() => ({ claudePath: cfg().claudePath, enabled: cfg().assistant, log, env: haikuEnv(spawnEnv()) }));
+  assistant = new HaikuAssistant(() => ({ claudePath: cfg().claudePath, enabled: cfg().assistant, log, env: haikuEnv(spawnEnv()), quiet: () => loginGate.quiet(spawnEnv()) }));
   const haiku = assistant;
 
   // The open file and the selection go with a message by default (decision 60).

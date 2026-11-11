@@ -18,6 +18,7 @@ import { Attachment, ContextItem, Outgoing, outgoing, stripInvisible } from "./m
 import type { AppliedSettings, ContextUsage, ModelInfo, PermissionDecision, WireMessage } from "./types";
 import { DIALOG_CANCELLED, answerable, unansweredNote } from "./dialogs";
 import { Destination, PlanComment, alwaysPermissions, planFeedback } from "./cards";
+import { isRefreshLockError } from "../loginGate";
 
 export interface ChatOptions {
   sessionId: string;
@@ -47,6 +48,10 @@ export interface ChatOptions {
   hold?: () => string | null;
   /** Whether the chat is open — a tab, or the sidebar's chat: a bridge the CLI started by itself holds the process only then (100). */
   open?: () => boolean;
+  /** What a process waits on before it spawns: the login's warm-up while its token is due (105), else null. */
+  gate?: () => Promise<void> | null;
+  /** After a turn ended on the CLI's refresh lock (105): warms the login up until it is fresh. Whether it is. */
+  recover?: () => Promise<boolean>;
 }
 
 /**
@@ -89,6 +94,11 @@ export const NO_REPLY_NOTE = "No reply was recorded for this message before the 
 export const RERUN_OFFER_NOTE = "The window reloaded while Claude was working: the interrupted step was not continued.";
 /** How old a step the CLI reruns, as Claude Code sets it (an hour). */
 export const RERUN_MAX_AGE_MS = 3_600_000;
+/** A turn ended on the CLI's refresh lock (105): what the chat does next, then how it went. */
+export const LOCK_RESEND_NOTE = "Claude Code could not refresh the login: another of its processes held the refresh. Your message goes again once the login is refreshed.";
+export const LOCK_REFRESH_NOTE = "Claude Code could not refresh the login: another of its processes held the refresh. Refreshing it now.";
+export const LOCK_FRESH_NOTE = "The login is refreshed: send again to go on.";
+export const LOCK_STALE_NOTE = "The login is still not refreshed. Send again in a minute; if it keeps failing, sign in again with /login in Claude Code.";
 
 /** initialize's `models`, trimmed to what the model pill reads: each alias and the effort levels it takes. */
 export function modelInfos(list: unknown): ModelInfo[] {
@@ -156,6 +166,12 @@ export class Chat extends EventEmitter implements HandoffPort {
   handNamed = false;
   /** A name for a chat with no session yet, given once its first turn has ended. */
   private pendingTitle: string | null = null;
+  /** The owner's last message as it went (105): sent again after a turn that ended on the login's refresh lock. */
+  private lastSent: { uuid: string; out: Outgoing; text: string; images: number; context: ContextItem[] } | null = null;
+  /** The message the running turn answers (its echo's uuid); whether a step of Claude's ran in it; whether it hit the lock. */
+  private turnUuid: string | undefined;
+  private turnRan = false;
+  private turnLocked = false;
 
   /** The owner's name still waiting for the chat's first turn: what a reload must carry (decision 63). */
   get pendingName(): string | null {
@@ -285,6 +301,9 @@ export class Chat extends EventEmitter implements HandoffPort {
     // The panel's own hooks and MCP servers (61, 65), read as each process starts, in its one initialize.
     const hooks = this.opts.hooks?.(this.opts.cwd, this) ?? {};
     const init = initializeRequest(hooks);
+    // A due token is refreshed by one warm-up first (105): the spawn waits, what is sent meanwhile is held for it.
+    const ready = this.opts.gate?.() ?? null;
+    if (ready) this.log("the login's token is due: the process starts after its warm-up");
     const spec: SpawnSpec = {
       claudePath: this.opts.claudePath,
       cwd: this.opts.cwd,
@@ -301,6 +320,7 @@ export class Chat extends EventEmitter implements HandoffPort {
         ...(this.state.effort ? { effortLevel: this.state.effort } : {}),
         ...(this.state.ultracode ? { ultracode: true } : {}),
       },
+      ...(ready ? { ready } : {}),
     };
     const proc = new ClaudeProcess(spec);
     // The models and the levels each takes; then what this process runs at.
@@ -335,6 +355,14 @@ export class Chat extends EventEmitter implements HandoffPort {
         return;
       }
       if ((o.type === "user" && o.isReplay) || o.type === "result") this.hasSession = true;
+      // What a turn that ends on the refresh lock may send again (105): the message it answers, if no step of Claude's ran.
+      if (o.type === "user" && o.isReplay) {
+        this.turnUuid = typeof o.uuid === "string" ? o.uuid : undefined;
+        this.turnRan = false;
+      } else if (o.type === "assistant" && !o.parent_tool_use_id) {
+        if (isRefreshLockError(o)) this.turnLocked = true;
+        else this.turnRan = true;
+      }
       // The rerun's first frame says so (`resume_reason`): the label goes before it.
       if (label && typeof o.resume_reason === "string") {
         label = false;
@@ -366,6 +394,10 @@ export class Chat extends EventEmitter implements HandoffPort {
           const t = this.pendingTitle;
           this.pendingTitle = null;
           void this.rename(t);
+        }
+        if (this.turnLocked) {
+          this.turnLocked = false;
+          void this.afterRefreshLock(this.turnRan ? undefined : this.turnUuid);
         }
         void this.refreshContext();
       } else if (o.type === "system" && (o.subtype === "background_tasks_changed" || o.subtype === "task_notification")) {
@@ -443,7 +475,44 @@ export class Chat extends EventEmitter implements HandoffPort {
     this.dispatch({ type: "_sent", n, text, images: images.length, at: Date.now(), uuid, ...(held ? { held: true } : {}), ...(context.length ? { context } : {}) });
     const out = outgoing(text, images, context, extra.pastes);
     if (held) this.held.push({ out, text, entry: `s:${n}` });
-    else this.deliver(out, uuid);
+    else {
+      this.lastSent = { uuid, out, text, images: images.length, context };
+      this.deliver(out, uuid);
+    }
+    this.touch();
+  }
+
+  /**
+   * A turn ended on the CLI's refresh lock (105): the login is warmed up
+   * until it is fresh, then `uuid`'s message — the one the turn answered,
+   * undefined when a step of Claude's ran in it — goes again, once, unless
+   * the owner has sent something since. Only the owner's own message, as it
+   * went the first time; one sent again is not sent a third time.
+   */
+  private async afterRefreshLock(uuid: string | undefined): Promise<void> {
+    if (!this.opts.recover) return;
+    const again = uuid !== undefined && this.lastSent?.uuid === uuid ? this.lastSent : null;
+    if (again) this.lastSent = null;
+    const sent = this.sent;
+    this.dispatch({ type: "_note", text: again ? LOCK_RESEND_NOTE : LOCK_REFRESH_NOTE, tone: "info" });
+    const fresh = await this.opts.recover();
+    // A chat that ended with its issue meanwhile takes no message (105, 104).
+    if (this.disposed || this.ended) return;
+    if (!fresh) {
+      this.log("the login is still due after the warm-ups: nothing sent again");
+      this.dispatch({ type: "_note", text: LOCK_STALE_NOTE, tone: "error" });
+      return;
+    }
+    if (!again || this.sent !== sent) {
+      if (again) this.log("not sent again: the owner sent since");
+      this.dispatch({ type: "_note", text: LOCK_FRESH_NOTE, tone: "info" });
+      return;
+    }
+    this.log("sent again after the login's refresh");
+    const n = ++this.sent;
+    const id = randomUUID();
+    this.dispatch({ type: "_sent", n, text: again.text, images: again.images, at: Date.now(), uuid: id, ...(again.context.length ? { context: again.context } : {}) });
+    this.deliver(again.out, id);
     this.touch();
   }
 

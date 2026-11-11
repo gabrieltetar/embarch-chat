@@ -6,6 +6,7 @@ export * from "./wire/limits";
 export * from "./wire/tasks";
 export * from "./wire/process";
 export * from "./logins";
+export * from "./loginGate";
 export * from "./wire/host";
 export * from "./wire/chat";
 export * from "./wire/message";

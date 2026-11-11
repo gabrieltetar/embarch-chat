@@ -18,6 +18,8 @@ export interface AssistantSettings {
   log: (line: string) => void;
   /** For tests: the env each call runs with. */
   env?: NodeJS.ProcessEnv;
+  /** True while the login's token is due or its warm-up runs (105): no call starts, so none refreshes it or is killed holding its lock. */
+  quiet?: () => boolean;
 }
 
 /** `name`: a turn call that also names the chat — the owner's next message or keystroke does not cancel it. */
@@ -69,6 +71,10 @@ export class HaikuAssistant extends EventEmitter {
   private async call(sid: string, kind: Kind, prompt: string, onText?: (t: string) => void): Promise<HaikuResult | null> {
     const s = this.settings();
     if (!s.enabled) return null;
+    if (s.quiet?.()) {
+      s.log(`[${sid.slice(0, 8)}] haiku ${kind}: skipped, the login is being refreshed`);
+      return null;
+    }
     const key = `${sid}:${kind}`;
     this.calls.get(key)?.abort();
     const ac = new AbortController();

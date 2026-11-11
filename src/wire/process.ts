@@ -30,6 +30,8 @@ export interface SpawnSpec {
   initialize?: Record<string, unknown>;
   /** The chat's own flag settings (`--settings`): its effort and Ultracode, for this process only. */
   settings?: Record<string, unknown>;
+  /** What the spawn waits on — the login's warm-up (decision 105) — with what is written meanwhile held for it. */
+  ready?: Promise<void>;
 }
 
 /** The official panel's flags (proposal, "What is possible"), plus streaming and prompt suggestions. */
@@ -103,6 +105,8 @@ export class ClaudeProcess extends EventEmitter {
   exited = false;
   /** Set before `start`: what answers the CLI's hook callbacks and MCP messages. */
   answerer: ControlAnswerer | undefined;
+  /** Lines written while the spawn waits on `spec.ready`: they follow the initialize, in order. */
+  private early: string[] | null = null;
 
   constructor(readonly spec: SpawnSpec) {
     super();
@@ -121,6 +125,23 @@ export class ClaudeProcess extends EventEmitter {
       setImmediate(() => this.emit("error", e));
       return;
     }
+    if (!this.spec.ready) return this.spawn(args);
+    this.early = [];
+    const go = () => {
+      if (!this.exited) this.spawn(args);
+    };
+    this.spec.ready.then(go, go);
+  }
+
+  /** Before the spawn: there is nothing to end or kill, so it never happens, and the process is gone as if it had exited. */
+  private cancelEarly(signal: string | null): void {
+    this.exited = true;
+    this.early = null;
+    this.failWaiters(new Error("claude was not started"));
+    setImmediate(() => this.emit("exit", { code: signal ? null : 0, signal, stderr: "" }));
+  }
+
+  private spawn(args: string[]): void {
     const child = cp.spawn(this.spec.claudePath, args, {
       cwd: this.spec.cwd,
       env: this.spec.env ?? chatEnv(),
@@ -160,6 +181,9 @@ export class ClaudeProcess extends EventEmitter {
         /* an old CLI, or one that died: the user message initializes with defaults */
       },
     );
+    const early = this.early ?? [];
+    this.early = null;
+    for (const line of early) child.stdin!.write(line);
   }
 
   private onData(d: string): void {
@@ -223,6 +247,10 @@ export class ClaudeProcess extends EventEmitter {
   }
 
   write(o: unknown): boolean {
+    if (this.early && !this.child && !this.exited) {
+      this.early.push(JSON.stringify(o) + "\n");
+      return true;
+    }
     if (!this.child || this.exited || !this.child.stdin || this.child.stdin.destroyed || this.child.stdin.writableEnded) return false;
     this.child.stdin.write(JSON.stringify(o) + "\n");
     return true;
@@ -266,6 +294,7 @@ export class ClaudeProcess extends EventEmitter {
 
   /** Ends stdin so the CLI finishes and exits; kills it if it lingers. */
   close(graceMs = 5000): void {
+    if (this.early && !this.child && !this.exited) return this.cancelEarly(null);
     if (!this.child || this.exited) return;
     this.child.stdin?.end();
     const child = this.child;
@@ -275,6 +304,7 @@ export class ClaudeProcess extends EventEmitter {
   }
 
   kill(): void {
+    if (this.early && !this.child && !this.exited) return this.cancelEarly("SIGTERM");
     if (this.child && !this.exited) this.child.kill();
   }
 }
