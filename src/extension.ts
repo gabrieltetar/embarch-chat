@@ -36,6 +36,8 @@ import { CHAT_VIEW, ChatPanels, ChatViewProvider, THREADS_VIEW, ThreadsViewProvi
 import { claudeVersion, versionWarning } from "./wire/version";
 import { chatEnv } from "./wire/process";
 import { DEFAULT_LOGIN, DeskConfig, FolderRule, LoginConfig, currentLogin, loginEnv, matchFolderRule, ruleDesk } from "./logins";
+import { LOGIN_STATE_PATH, mirrorWindow, resolveChatLogin, updateLoginState } from "./loginState";
+import { ACCOUNT_POLL_MS, accountFile, credentialsFile, loginItem, readAccount } from "./loginAccount";
 import { haikuEnv } from "./assistant/haiku";
 import { LoginGate, warmUp } from "./loginGate";
 import { findTranscript, isSessionId } from "./wire/transcript";
@@ -98,29 +100,77 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const LOGIN_STATE_KEY = "embarchChat.login";
   let pickedLogin: string | undefined = context.workspaceState.get<string>(LOGIN_STATE_KEY);
+  const loginStateFile = expandHome(LOGIN_STATE_PATH);
 
   const folderRule = () => matchFolderRule(cfg().folderRules, folders());
   const windowLogin = () => currentLogin(pickedLogin, folderRule(), cfg().logins);
   const activeDesk = () => ruleDesk(folderRule(), cfg().desks);
-  /** What a chat, the assistant or Promptu starts with. A chat reads it once, when it is created: it keeps that login for life, across idle closes. */
+  /** What the assistant or Promptu starts with: the window's login and desk. */
   const spawnEnv = (): NodeJS.ProcessEnv => loginEnv(chatEnv(), cfg().logins[windowLogin()], activeDesk());
+  /**
+   * What a chat starts with, read once when it is created or becomes this
+   * window's: its own login (106), kept for life across idle closes and
+   * resumes, and the window's desk. See ChatSettings.env.
+   */
+  const chatSpawnEnv = (sid: string, from: string | null, keep: boolean): NodeJS.ProcessEnv => {
+    let login = windowLogin();
+    try {
+      login = resolveChatLogin(loginStateFile, sid, from, login, cfg().logins, keep);
+    } catch (e) {
+      log(`login state: ${(e as Error).message}`);
+    }
+    return loginEnv(chatEnv(), cfg().logins[login], activeDesk());
+  };
+  /** The window's pick, mirrored for claude-login (106): Claude Code's panel and a terminal in its folders start on it too. */
+  const mirrorLogin = () => {
+    const picked = pickedLogin && cfg().logins[pickedLogin] ? pickedLogin : null;
+    try {
+      updateLoginState(loginStateFile, (s) => mirrorWindow(s, cfg().logins, folders(), picked));
+    } catch (e) {
+      log(`login state: ${(e as Error).message}`);
+    }
+  };
 
   const loginStatus = vscode.window.createStatusBarItem("embarchChat.login", vscode.StatusBarAlignment.Right);
   loginStatus.name = "EmbArch Chat login";
   loginStatus.command = "embarchChat.pickLogin";
   const refreshLoginStatus = () => {
-    const names = Object.keys(cfg().logins);
+    const logins = cfg().logins;
     // Only one login configured (today's default): nothing to pick, so stay out of the way.
-    if (names.length <= 1) {
+    if (Object.keys(logins).length <= 1) {
       loginStatus.hide();
       return;
     }
-    loginStatus.text = `$(account) ${windowLogin()}`;
-    loginStatus.tooltip = "Login for new EmbArch chats — click to change (a running chat keeps its own)";
+    // The account each folder really holds, not just its label (106).
+    const item = loginItem(windowLogin(), Object.fromEntries(Object.entries(logins).map(([name, l]) => [name, readAccount(l.configDir)])));
+    loginStatus.text = item.text;
+    loginStatus.tooltip = item.tooltip;
     loginStatus.show();
   };
+  // A `/login` in any panel writes its account into its login's folder,
+  // outside the workspace, and the CLI replaces those files rather than
+  // writing them in place: polled by path, which outlives the replacement.
+  let watchedLogins: string[] = [];
+  const onLoginFile = () => refreshLoginStatus();
+  const watchLogins = () => {
+    for (const f of watchedLogins) fs.unwatchFile(f, onLoginFile);
+    const logins = Object.values(cfg().logins);
+    watchedLogins = logins.length > 1 ? [...new Set(logins.flatMap((l) => [accountFile(l.configDir), credentialsFile(l.configDir)]))] : [];
+    for (const f of watchedLogins) fs.watchFile(f, { interval: ACCOUNT_POLL_MS, persistent: false }, onLoginFile);
+  };
+  watchLogins();
   refreshLoginStatus();
-  context.subscriptions.push(loginStatus);
+  mirrorLogin();
+  context.subscriptions.push(
+    loginStatus,
+    { dispose: () => watchedLogins.forEach((f) => fs.unwatchFile(f, onLoginFile)) },
+    // Two windows on one folder: the last one picked or focused is the one claude-login follows.
+    vscode.window.onDidChangeWindowState((w) => w.focused && mirrorLogin()),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      mirrorLogin();
+      refreshLoginStatus();
+    }),
+  );
 
   // The desk is this machine's, and its URL and token path come from user or
   // remote settings only (machine scope): a repo's .vscode/settings.json
@@ -143,7 +193,11 @@ export function activate(context: vscode.ExtensionContext): void {
       ) {
         client = makeClient();
       }
-      if (e.affectsConfiguration("embarchChat.logins") || e.affectsConfiguration("embarchChat.folderRules")) refreshLoginStatus();
+      if (e.affectsConfiguration("embarchChat.logins")) watchLogins();
+      if (e.affectsConfiguration("embarchChat.logins") || e.affectsConfiguration("embarchChat.folderRules")) {
+        mirrorLogin();
+        refreshLoginStatus();
+      }
     }),
   );
 
@@ -161,7 +215,7 @@ export function activate(context: vscode.ExtensionContext): void {
     handoff: (sid, prompt) => handoffChat(sid, prompt),
     hold: (sid) => promptuRuns?.holdReason(sid, shownNow(sid)) ?? null,
     open: (sid) => openNow(sid),
-    env: spawnEnv,
+    env: chatSpawnEnv,
     gate: (env) => loginGate.wait(env),
     recover: (env) => loginGate.recover(env),
   }));
@@ -573,7 +627,7 @@ export function activate(context: vscode.ExtensionContext): void {
     body: AssignBody | null,
     cwd: string,
     label: string | null,
-    opts: { onRefusal?: (why: string) => void; fork?: { from: string; at: string; events: WireMessage[] }; mode?: string; /** Shown where the owner is looking, not opened (a handoff takes over its chat's panel instead, 103). */ quiet?: boolean } = {},
+    opts: { onRefusal?: (why: string) => void; fork?: { from: string; at: string; events: WireMessage[] }; mode?: string; /** Shown where the owner is looking, not opened (a handoff takes over its chat's panel instead, 103). */ quiet?: boolean; /** The chat whose login it keeps (106): a handoff's. */ loginFrom?: string } = {},
   ): Promise<ChatRecord | null> {
     const sid = crypto.randomUUID();
     let itemId: string | null = null;
@@ -605,7 +659,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     log(`new chat ${sid} on ${itemId ?? (body && "untracked" in body ? "untracked" : "no item yet")} in ${cwd}`);
     const fork = opts.fork;
-    const rec = manager.create(sid, cwd, itemId, itemTitle, { untracked: !!body && "untracked" in body, deskDue: due, fork: fork && { from: fork.from, at: fork.at }, mode: opts.mode });
+    const rec = manager.create(sid, cwd, itemId, itemTitle, { untracked: !!body && "untracked" in body, deskDue: due, fork: fork && { from: fork.from, at: fork.at }, mode: opts.mode, loginFrom: opts.loginFrom });
     // A fork shows the conversation it starts from (decision 73).
     if (fork) rec.chat.preload(fork.events);
     if (refused !== null) opts.onRefusal!(refused);
@@ -744,7 +798,7 @@ export function activate(context: vscode.ExtensionContext): void {
     const cwd = windowCwd(rec.chat.opts.cwd) ?? rec.chat.opts.cwd;
     const item = desk.itemFor(sid)?.id ?? rec.itemId;
     const body: AssignBody | null = item ? { item_id: item } : rec.untracked ? { untracked: true } : null;
-    const fresh = await startChat(body, cwd, rec.itemTitle, { mode: rec.chat.state.mode, quiet: true });
+    const fresh = await startChat(body, cwd, rec.itemTitle, { mode: rec.chat.state.mode, quiet: true, loginFrom: sid });
     if (!fresh) return false;
     log(`[${sid.slice(0, 8)}] handed off to ${fresh.chat.sessionId}`);
     if (rec.chat.pickedModel) await fresh.chat.setModel(rec.chat.pickedModel);
@@ -963,12 +1017,18 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("embarchChat.newChat", () => newChat()),
     vscode.commands.registerCommand("embarchChat.pickLogin", async () => {
-      const names = Object.keys(cfg().logins);
-      const picks = names.map((name) => ({ label: name, description: name === currentLogin(undefined, folderRule(), cfg().logins) ? "folder default" : undefined, name }));
-      const picked = await vscode.window.showQuickPick(picks, { placeHolder: "Login for new EmbArch chats in this window" });
+      const logins = cfg().logins;
+      const byRule = currentLogin(undefined, folderRule(), logins);
+      const picks = Object.entries(logins).map(([name, l]) => {
+        const a = readAccount(l.configDir);
+        const account = a ? (a.org ? `${a.email} · ${a.org}` : a.email) : "not logged in";
+        return { label: name, description: name === byRule ? `folder default — ${account}` : account, name };
+      });
+      const picked = await vscode.window.showQuickPick(picks, { placeHolder: "Login for new chats and Claude Code panels in this window" });
       if (!picked) return;
       pickedLogin = picked.name;
       await context.workspaceState.update(LOGIN_STATE_KEY, pickedLogin);
+      mirrorLogin();
       refreshLoginStatus();
     }),
     vscode.commands.registerCommand("embarchChat.openInEditor", () => {

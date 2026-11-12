@@ -222,6 +222,7 @@ const vscode = {
     tabGroups: { all: [], close: async () => true, onDidChangeTabs: event(bus, "tabs") },
     onDidChangeActiveTextEditor: event(bus, "activeEditor"),
     onDidChangeTextEditorSelection: event(bus, "selection"),
+    onDidChangeWindowState: event(bus, "windowState"),
   },
   TabInputWebview: class {
     constructor(viewType) {
@@ -244,6 +245,7 @@ const vscode = {
       },
     }),
     onDidChangeConfiguration: () => disposable(),
+    onDidChangeWorkspaceFolders: event(bus, "folders"),
     onDidCloseTextDocument: event(bus, "closeDoc"),
     registerTextDocumentContentProvider: (scheme, provider) => {
       state.contentProviders.set(scheme, provider);
