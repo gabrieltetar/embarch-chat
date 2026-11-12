@@ -607,6 +607,9 @@ export class ChatHost implements vscode.Disposable {
       case "remoteControl":
         if (rec.ours) await chat.remoteControl(typeof m.name === "string" && m.name.trim() ? m.name.trim() : undefined);
         return;
+      case "remote":
+        if (rec.ours) chat.setRemote(m.on === true);
+        return;
       case "keep": {
         // The reply's own text, from the host's state: the page names it, never supplies it.
         const e = chat.state.entries[m.entryId];

@@ -248,6 +248,13 @@ export interface ChatState {
   remoteByDefault?: boolean;
   /** Claude Code's notice for such a bridge was shown in this chat: once is enough. */
   remoteDisclosed?: boolean;
+  /**
+   * Whether Remote Control starts with this chat's next process (100):
+   * `setting` is Claude Code's word for it — this chat's process's
+   * initialize, else the login's probe (EMB-164) — and `on` is what the chat
+   * will do, the owner's pick for it first.
+   */
+  remoteStartup?: { setting: boolean; on: boolean };
   /** The note that offers to continue the step a reload interrupted (63), until a process starts. */
   rerunOffer: string | null;
   seq: number;
@@ -960,6 +967,8 @@ export function reduce(s: ChatState, o: WireMessage): ChatState {
     }
     case "_remoteDefault":
       return { ...s, remoteByDefault: o.on === true };
+    case "_remoteStartup":
+      return { ...s, remoteStartup: { setting: o.setting === true, on: o.on === true } };
     case "_effort":
       return { ...s, effort: typeof o.effort === "string" ? o.effort : null, ultracode: o.ultracode === true };
     case "_model":

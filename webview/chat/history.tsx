@@ -487,8 +487,9 @@ export function useEscEsc(enabled: boolean): void {
       if (ev.key !== "Escape") return;
       const ta = document.querySelector<HTMLTextAreaElement>(".composer textarea");
       // Not while the input asks aside (57): that Esc leaves the side-question
-      // mode; nor with a footer pill's panel open (81, 82): that Esc closes it.
-      const free = on.current && !ta?.value && !ta?.classList.contains("aside") && !document.querySelector(".popup, .menu, .dialog-back, .msg-menu, .pop, .rail-pop");
+      // mode; nor with a menu of the rail's open, the settings among them
+      // (81, 82, EMB-164): that Esc closes it.
+      const free = on.current && !ta?.value && !ta?.classList.contains("aside") && !document.querySelector(".popup, .menu, .dialog-back, .msg-menu, .rail-pop");
       if (!free) {
         last.current = 0;
         return;

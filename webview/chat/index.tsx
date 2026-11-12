@@ -36,7 +36,7 @@ import { Queued } from "./queue";
 import { setAtlas } from "./atlas";
 import "./reflinks";
 import { setChatRepo, setRefs } from "./refs";
-import { FOOTER_COMMANDS, McpPill, ModelPill, RemotePill, footerCommand } from "./footer";
+import { FOOTER_COMMANDS, footerCommand } from "./settings";
 import { KeepReply } from "./keep";
 import { Stamp, useNow } from "./clock";
 import { dayKey, elapsedText, stalled } from "./time";
@@ -497,7 +497,7 @@ function App() {
     ) : null;
   const busy = state.busy || state.compacting;
   // The page's own /rewind, /copy and /export join the session's commands once it has them: a chat with none yet has nothing to rewind.
-  // And the footer's /remote-control (footer.tsx), which the CLI has not over this wire.
+  // And /remote-control (settings.tsx), which the CLI has not over this wire.
   const commands = state.slashCommands.length ? [...state.slashCommands, ...[...LOCAL_COMMANDS, ...FOOTER_COMMANDS].filter((c) => !state.slashCommands.includes(c))] : state.slashCommands;
   // The time above the owner's messages and Claude's replies, a date line where the day changes (68).
   const stamps = new Map<string, { at: number; day: boolean }>();
@@ -613,7 +613,6 @@ function App() {
               sid={state.sessionId}
               busy={busy}
               waiting={state.pending.length > 0}
-              mode={state.mode}
               slashCommands={commands}
               placeholder={placeholder}
               mentions={mentions}
@@ -629,13 +628,7 @@ function App() {
               promptuView={pv}
               usage={usage}
               memoryPass={memoryPass}
-              footer={
-                <>
-                  <ModelPill state={state} />
-                  {view.ours && <McpPill state={state} />}
-                  <RemotePill state={state} />
-                </>
-              }
+              settings={{ state, ours: view.ours }}
               onCommand={(text) => localCommand(text, live.current) || (view.ours && footerCommand(text))}
               onSend={(text, opts) => {
                 stick.current = true;

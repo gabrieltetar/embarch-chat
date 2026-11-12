@@ -619,44 +619,59 @@ await check("/ completes the session's commands", async () => {
   assert.deepEqual(await text(".popup div"), ["/compact", "/context", "/copy", "/remote-control"]);
 });
 
-await check("the input is one row: mode, pills, box, Send icon; nothing under the box; popovers inside the pane (EMB-60)", async () => {
+// The settings menu (EMB-164): the gear at the rail's foot opens it beside the rail; a check opens and closes it as it needs.
+const SET = ".rail .rail-entry.settings";
+const settingsOpen = () => exec("return !!document.querySelector('.settings-pop')");
+const openSettings = async () => {
+  if (!(await settingsOpen())) await click(SET);
+  await settle();
+};
+const closeSettings = async () => {
+  if (await settingsOpen()) await click(SET);
+  await settle();
+};
+const sec = (name) => `.settings-pop .set-sec[aria-label="${name}"]`;
+const escIn = (sel) => exec("document.querySelector(arguments[0]).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))", [sel]);
+
+await check("the input is one row: the box and the Send icon; nothing under the box; the settings menu opens inside the pane (EMB-60, EMB-164)", async () => {
   await send([snapshot({ model: "opus", effort: "high", mcp: [{ name: "embarch-api", status: "connected" }], remote: { status: "connected", url: "https://claude.ai/code/session_x" } })]);
-  for (const width of ["400px", ""]) {
-    await exec("document.getElementById('app').style.width = arguments[0]", [width]);
-    await settle();
-    const m = await exec(`const r = (e) => { const b = e.getBoundingClientRect(); return { l: b.left, r: b.right, t: b.top, b: b.bottom }; };
-      const bar = document.querySelector('.composer .bar'), q = (s) => bar.querySelector(s);
-      const parts = ['select', '.pill.model', '.pill.mcp', '.pill.remote', '.field', 'button.primary'].map((s) => q(s));
-      const pane = document.querySelector('.composer').getBoundingClientRect();
-      return { missing: parts.map((e, i) => e ? null : i).filter((i) => i !== null), boxes: parts.filter(Boolean).map(r), bar: r(bar), pane: { l: pane.left, r: pane.right, b: pane.bottom }, vh: window.innerHeight,
-        after: [...document.querySelectorAll('.composer > *')].map((e) => e.className).slice(-1)[0], label: q('button.primary').textContent.trim(), title: q('button.primary').title };`);
-    assert.deepEqual(m.missing, [], `${width}: every part is in the one row`);
-    for (let i = 1; i < m.boxes.length; i++) assert.ok(m.boxes[i].l >= m.boxes[i - 1].r - 1, `${width}: in order, left to right: ${JSON.stringify(m.boxes)}`);
-    assert.ok(m.boxes.every((b) => b.t >= m.bar.t - 1 && b.b <= m.bar.b + 1), `${width}: one row: ${JSON.stringify(m)}`);
-    assert.ok(m.boxes[5].r <= m.pane.r + 1 && m.pane.b <= m.vh + 1, `${width}: Send on screen`);
-    assert.equal(m.label, "", "Send is an icon, no text");
-    assert.match(m.title, /Send/);
-    assert.equal(m.after, "bar", "nothing under the box");
-    for (const pill of [".pill.model", ".pill.mcp"]) {
-      await click(".composer " + pill);
+  try {
+    for (const width of ["400px", ""]) {
+      await exec("document.getElementById('app').style.width = arguments[0]", [width]);
       await settle();
-      const p = await exec("const e = document.querySelector('.composer .pop'), b = e.getBoundingClientRect(), c = document.querySelector('.composer').getBoundingClientRect(); return b.left >= c.left - 1 && b.right <= c.right + 1 && b.top >= 0", []);
-      assert.equal(p, true, `${width}: ${pill}'s popover inside the pane`);
-      await click(".composer " + pill);
+      const m = await exec(`const r = (e) => { const b = e.getBoundingClientRect(); return { l: b.left, r: b.right, t: b.top, b: b.bottom }; };
+        const bar = document.querySelector('.composer .bar'), q = (s) => bar.querySelector(s);
+        const parts = ['.field', 'button.primary'].map((s) => q(s));
+        const pane = document.querySelector('.composer').getBoundingClientRect();
+        return { missing: parts.map((e, i) => e ? null : i).filter((i) => i !== null), others: bar.querySelectorAll('select, .pill').length, boxes: parts.filter(Boolean).map(r), bar: r(bar), pane: { l: pane.left, r: pane.right, b: pane.bottom }, vh: window.innerHeight,
+          after: [...document.querySelectorAll('.composer > *')].map((e) => e.className).slice(-1)[0], label: q('button.primary').textContent.trim(), title: q('button.primary').title };`);
+      assert.deepEqual(m.missing, [], `${width}: the box and Send are in the one row`);
+      assert.equal(m.others, 0, `${width}: no mode, model, MCP or Remote Control left of the box`);
+      assert.ok(m.boxes[1].l >= m.boxes[0].r - 1, `${width}: in order, left to right: ${JSON.stringify(m.boxes)}`);
+      assert.ok(m.boxes.every((b) => b.t >= m.bar.t - 1 && b.b <= m.bar.b + 1), `${width}: one row: ${JSON.stringify(m)}`);
+      assert.ok(m.boxes[1].r <= m.pane.r + 1 && m.pane.b <= m.vh + 1, `${width}: Send on screen`);
+      assert.equal(m.label, "", "Send is an icon, no text");
+      assert.match(m.title, /Send/);
+      assert.equal(m.after, "bar", "nothing under the box");
+      await openSettings();
+      const inside = await exec("const b = document.querySelector('.settings-pop').getBoundingClientRect(); return b.left >= 0 && b.right <= document.documentElement.clientWidth + 1 && b.top >= 0");
+      assert.equal(inside, true, `${width}: the settings menu inside the pane`);
+      await closeSettings();
     }
+  } finally {
+    await exec("document.getElementById('app').style.width = ''");
   }
-  await exec("document.getElementById('app').style.width = ''");
 });
 
-await check("mode and model switch, context meter and Compact", async () => {
+await check("mode and model in the settings menu, context meter and Compact (EMB-164)", async () => {
   await send([snapshot({ context: { totalTokens: 150000, maxTokens: 200000, percentage: 75, categories: [{ name: "Messages", tokens: 150000 }] } })]);
   assert.ok((await text(".meter"))[0].includes("75%"));
   await clearPosts();
-  await exec("const s=document.querySelectorAll('.composer select')[0]; s.value='plan'; s.dispatchEvent(new Event('change'))");
-  // The model is in Claude Code's model pill now: its list opens over the input.
-  await click(".composer .pill.model");
-  await settle();
-  await exec("[...document.querySelectorAll('.model-pop .pop-row')].find((e) => e.textContent.startsWith('Opus')).click()");
+  await openSettings();
+  assert.deepEqual(await text(`${sec("Permission mode")} .pop-row`), ["Auto", "Ask", "Accept edits", "Plan"]);
+  await click(`${sec("Permission mode")} .pop-row`, "Plan");
+  await click(`${sec("Model")} .pop-row`, "Opus");
+  await closeSettings();
   await click(".meter button", "Compact");
   const ps = await posts();
   assert.ok(ps.some((p) => p.t === "mode" && p.mode === "plan"));
@@ -664,53 +679,82 @@ await check("mode and model switch, context meter and Compact", async () => {
   assert.ok(ps.some((p) => p.t === "compact"));
 });
 
-await check("the model pill: model, effort and Ultracode for this chat, as Claude Code's — the levels the model takes, Ultracode where the CLI offers it, none of it on Haiku (its changelog L2008, L1858, L416)", async () => {
+await check("the gear shows what its menu hides: named by mode and model on hover, tinted in Plan and Ask, a red mark when Remote Control or an MCP server failed (EMB-164)", async () => {
+  const gear = () => exec("const b = document.querySelector(arguments[0]); return [b.className.split(' ').filter((c) => c && c !== 'rail-entry' && c !== 'settings').sort(), b.querySelector('.rail-label').textContent, b.title, b.getAttribute('aria-expanded')]", [SET]);
+  await send([snapshot({ mode: "auto", model: "opus", effort: "high" })]);
+  assert.deepEqual(await gear(), [[], "Auto · Opus · high", "Settings: Auto · Opus · high", "false"]);
+  await send([{ t: "event", e: { type: "_mode", mode: "plan" } }]);
+  const plan = await gear();
+  assert.deepEqual([plan[0], plan[1]], [["mode-plan"], "Plan · Opus · high"]);
+  await send([snapshot({ mode: "default", model: "opus", effort: "high", remote: { status: "failed", error: "the session expired" } })]);
+  const ask = await gear();
+  assert.deepEqual(ask[0], ["bad", "mode-ask"]);
+  assert.equal(ask[2], "Settings: Ask · Opus · high — Remote Control failed");
+  await shot("settings-gear");
+  await send([snapshot({ mode: "acceptEdits", mcp: [{ name: "embarch-api", status: "failed" }, { name: "bench", status: "failed" }, { name: "claude.ai Asana", status: "needs-auth" }] })]);
+  const mcp = await gear();
+  assert.deepEqual(mcp[0], ["bad"]);
+  assert.match(mcp[2], /— 2 MCP servers failed$/);
+  // A connector never signed in to waits on it for good: no mark for that alone.
+  await send([snapshot({ mcp: [{ name: "claude.ai Asana", status: "needs-auth" }, { name: "embarch-api", status: "connected" }] })]);
+  assert.deepEqual((await gear())[0], []);
+});
+
+await check("the settings menu's model: model, effort and Ultracode for this chat, as Claude Code's model pill — the levels the model takes, Ultracode where the CLI offers it, none of it on Haiku (its changelog L2008, L1858, L416; EMB-164)", async () => {
   const lines = outLines("effort");
   const models = core.modelInfos(lines.find((o) => o.type === "control_response" && o.response.response?.models).response.response.models);
   const applied = (effort, ultracode, model = "claude-sonnet-5-5", ultracodeAvailable = true) => ({ model, effort, ultracode, ultracodeAvailable });
-  // Picked before the first message: nothing runs, so the pill shows the pick.
+  const named = () => text(`${SET} .rail-label`);
+  const M = sec("Model");
+  // Picked before the first message: nothing runs, so the gear names the pick.
   await send([snapshot({ process: "none", effort: "low" })]);
-  assert.deepEqual(await text(".composer .pill.model"), ["Default · low"]);
+  assert.deepEqual(await named(), ["Auto · Default · low"]);
   await send([snapshot({ model: "claude-sonnet-5-5", models, applied: applied("low", false), effort: "low" })]);
-  assert.deepEqual(await text(".composer .pill.model"), ["Sonnet · low"]);
-  await click(".composer .pill.model");
-  await settle();
-  assert.deepEqual(await text(".model-pop .pop-row"), ["Default model", "Opus", "Sonnet", "Haiku"], "the panel's list, as before");
-  assert.deepEqual(await text(".model-pop .pop-row.on"), ["Sonnet"]);
-  assert.deepEqual(await text(".model-pop .effort-row button"), ["Default", "low", "medium", "high", "xhigh", "max"]);
-  assert.deepEqual(await text(".model-pop .effort-row button.on"), ["low"]);
-  assert.equal(await exec("return document.querySelector('.model-pop .ultracode input').checked"), false);
-  await shot("model-pop");
+  assert.deepEqual(await named(), ["Auto · Sonnet · low"]);
+  await openSettings();
+  assert.deepEqual(await text(`${M} .pop-row`), ["Default model", "Opus", "Sonnet", "Haiku"], "the panel's list, as before");
+  assert.deepEqual(await text(`${M} .pop-row.on`), ["Sonnet"]);
+  assert.deepEqual(await text(`${M} .effort-row button`), ["Default", "low", "medium", "high", "xhigh", "max"]);
+  assert.deepEqual(await text(`${M} .effort-row button.on`), ["low"]);
+  assert.equal(await exec("return document.querySelector(arguments[0]).checked", [`${M} .ultracode input`]), false);
+  await shot("settings-model");
   await clearPosts();
-  await click(".model-pop .effort-row button", "high");
-  await click(".model-pop .ultracode input");
+  await click(`${M} .effort-row button`, "high");
+  await click(`${M} .ultracode input`);
   assert.deepEqual((await posts()).filter((p) => p.t === "effort"), [
     { t: "effort", effort: "high", ultracode: false },
     { t: "effort", effort: "low", ultracode: true },
   ]);
-  // The CLI says what runs: the pill follows it.
+  // The CLI says what runs: the gear follows it.
   await send([{ t: "event", e: { type: "_effort", effort: "high", ultracode: true } }, { t: "event", e: { type: "_applied", applied: applied("high", true) } }]);
-  assert.deepEqual(await text(".composer .pill.model"), ["Sonnet · high · Ultracode"]);
+  assert.deepEqual(await named(), ["Auto · Sonnet · high · Ultracode"]);
   await clearPosts();
-  await click(".model-pop .effort-row button", "Default");
+  await click(`${M} .effort-row button`, "Default");
   assert.deepEqual((await posts()).filter((p) => p.t === "effort"), [{ t: "effort", effort: null, ultracode: true }], "back to the model's own level");
   // Haiku takes no effort, and the CLI offers no Ultracode on it.
   await send([{ t: "event", e: { type: "_model", model: "haiku" } }, { t: "event", e: { type: "_applied", applied: applied(null, false, "claude-haiku-4-5-20251001", false) } }]);
-  assert.deepEqual(await text(".composer .pill.model"), ["Haiku"]);
-  assert.deepEqual(await text(".model-pop .effort-row button"), []);
-  assert.ok((await text(".model-pop .pop-note"))[0].includes("takes no effort level"));
-  assert.equal(await exec("return document.querySelectorAll('.model-pop .ultracode').length"), 0);
-  await exec("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))");
+  assert.deepEqual(await named(), ["Auto · Haiku"]);
+  assert.deepEqual(await text(`${M} .effort-row button`), []);
+  assert.ok((await text(`${M} .pop-note`))[0].includes("takes no effort level"));
+  assert.equal(await exec("return document.querySelectorAll(arguments[0]).length", [`${M} .ultracode`]), 0);
+  await escIn(".settings-pop");
   await settle();
-  assert.equal((await text(".model-pop")).length, 0);
+  assert.equal(await settingsOpen(), false, "Esc closes it");
 });
 
-await check("the Remote Control pill, in Claude Code's words: connecting, then on — a click opens the session on claude.ai/code — or failed until /remote-control dismisses it; nothing while off (its changelog L5709, L2097)", async () => {
+await check("Remote Control in the settings menu, in Claude Code's words: off, connecting, then on with the session's link, or failed with the gear marked; /remote-control still answers here; before the first message the switch says what the start will do, and changes it (its changelog L5709, L2097; 100; EMB-164)", async () => {
   const lines = outLines("remote");
   const answer = lines.find((o) => o.type === "control_response" && o.response.response?.session_url).response.response;
   const connected = lines.find((o) => o.type === "system" && o.subtype === "bridge_state" && o.state === "connected");
+  const R = sec("Remote Control");
+  const sw = () => exec("return document.querySelector(arguments[0]).checked", [`${R} input`]);
+  const note = async () => (await text(`${R} .pop-note`))[0];
+  const marked = () => exec("return document.querySelector(arguments[0]).classList.contains('bad')", [SET]);
   await send([snapshot(), ...events(upTo(lines, (o) => o.type === "result"))]);
-  assert.equal((await text(".composer .pill.remote")).length, 0, "off: no pill");
+  await openSettings();
+  assert.equal(await sw(), false);
+  assert.equal(await note(), "Off.");
+  await closeSettings();
   await exec("const t = document.querySelector('.composer textarea'); t.value = '/rem'; t.dispatchEvent(new Event('input', { bubbles: true }))");
   await settle();
   assert.ok((await text(".popup div")).some((t) => t.startsWith("/remote-control")), "the panel's own command completes");
@@ -718,27 +762,47 @@ await check("the Remote Control pill, in Claude Code's words: connecting, then o
   // Typed, it is the page's to answer (as /rewind is): the host is asked, nothing goes to Claude.
   await clearPosts();
   const ta = Object.values(await wd("POST", `${S}/element`, { using: "css selector", value: ".composer textarea" }))[0];
-  await wd("POST", `${S}/element/${ta}/value`, { text: "/remote-control phone \uE007" });
+  await wd("POST", `${S}/element/${ta}/value`, { text: "/remote-control phone " });
   await settle();
   assert.deepEqual((await posts()).filter((p) => p.t === "remoteControl" || p.t === "send"), [{ t: "remoteControl", name: "phone" }]);
   await send([{ t: "event", e: { type: "_remote", remote: { status: "connecting" } } }]);
-  assert.equal(await exec("return document.querySelector('.composer .pill.remote.connecting').title"), "Connecting to claude.ai/code…");
+  await openSettings();
+  assert.equal(await note(), "Connecting to claude.ai/code…");
+  assert.equal(await sw(), true);
   await send([{ t: "event", e: { type: "_remote", remote: { status: "connecting", url: answer.session_url, epoch: answer.bridge_epoch } } }, { t: "event", e: connected }]);
-  const on = await exec("const b = document.querySelector('.composer button.pill.remote.on'); return b && [b.textContent, b.title]");
-  assert.deepEqual(on, ["Remote Control", "Remote Control is active · Click to open claude.ai/code · Run /remote-control to turn off"]);
-  await shot("remote-pill");
+  assert.equal(await note(), "On: the phone reaches this chat.");
+  assert.match(await exec("return document.querySelector(arguments[0]).title", [SET]), /· Remote Control on/);
+  await shot("settings-remote");
   await clearPosts();
-  await click(".composer .pill.remote.on");
+  await click(`${R} .pop-row.link`);
   assert.deepEqual((await posts()).filter((p) => p.t === "openLink"), [{ t: "openLink", url: "https://claude.ai/code/session_01FIXTURE0000000000000000" }]);
+  await clearPosts();
+  await click(`${R} input`);
+  assert.deepEqual((await posts()).filter((p) => p.t === "remote"), [{ t: "remote", on: false }], "the switch, as /remote-control");
   await send([{ t: "event", e: { type: "system", subtype: "bridge_state", state: "failed", bridge_epoch: answer.bridge_epoch, detail: "the session expired" } }]);
-  assert.deepEqual(await exec("const p = document.querySelector('.composer .pill.remote.bad'); return [p.textContent, p.title]"), ["Remote Control ✗", "Remote Control error: the session expired · Run /remote-control to dismiss"]);
+  assert.equal(await note(), "Failed: the session expired");
+  assert.equal(await sw(), false);
+  assert.equal(await marked(), true, "the gear is marked");
   await send([{ t: "event", e: { type: "_remote", remote: null } }]);
-  assert.equal((await text(".composer .pill.remote")).length, 0, "dismissed");
-  // A bridge Claude Code started by itself, not /remote-control here: on all the same, with no link to open (review r4 L6).
+  assert.equal(await note(), "Off.");
+  assert.equal(await marked(), false);
+  // A bridge started with the chat's claude (100): on, held while the chat is open.
   await send([{ t: "event", e: { type: "system", subtype: "bridge_state", state: "connected", bridge_epoch: 7 } }]);
-  const auto = await exec("const p = document.querySelector('.composer .pill.remote.on'); return p && [p.tagName, p.textContent, p.title]");
-  assert.deepEqual(auto, ["SPAN", "Remote Control", "Remote Control is active: Claude Code started it for this session · Run /remote-control to turn off"]);
+  assert.equal(await note(), "On since this chat's claude started: the phone reaches it while the chat is open.");
+  assert.equal((await text(`${R} .pop-row.link`)).length, 0, "no link named");
+  // Before the first message: what the start will do, as Claude Code's setting says, and the owner's pick for this chat.
+  await send([snapshot({ process: "none", remoteStartup: { setting: true, on: true } })]);
+  assert.equal(await sw(), true);
+  assert.equal(await note(), "Turns on when Claude starts, at your first message (remoteControlAtStartup).");
+  await clearPosts();
+  await click(`${R} input`);
+  assert.deepEqual((await posts()).filter((p) => p.t === "remote"), [{ t: "remote", on: false }]);
+  await send([{ t: "event", e: { type: "_remoteStartup", setting: true, on: false } }]);
+  assert.equal(await sw(), false);
+  assert.equal(await note(), "Off for this chat, though remoteControlAtStartup would turn it on.");
+  await closeSettings();
 });
+
 
 await check("Keep, on a block of Claude's reply, sends it to the work item as a finding or a decision: in one row with the turn's Copy under its last block, under the pointer on an earlier one; a subagent's text has none (decisions 40, 74)", async () => {
   await send([snapshot(), sent("Run the bash command `echo hello-from-bash` and then reply with just: done"), ...events(outLines("basic"))]);
@@ -3437,103 +3501,134 @@ await check("a card comes forward tinted, its sticky buttons with it: no band of
   assert.equal(bar, card);
 });
 
-await check("the MCP pill: each server with Claude Code's mark and words, a ✗ when one failed, Reconnect and Disable on this chat's process; /mcp opens it (its changelog L6014)", async () => {
+await check("MCP servers in the settings menu: each with Claude Code's mark and words, a ✗ when one failed and the gear marked, Reconnect and Disable on this chat's process; /mcp opens the menu (its changelog L6014; EMB-164)", async () => {
   // The servers as the recording's mcp_status answered, and one whose rebuilt binary did not start.
   const answer = outLines("mcp").find((o) => o.type === "control_response" && o.response.response?.mcpServers).response.response.mcpServers;
   const servers = [...answer, { name: "embarch-api", status: "failed", error: "MCP error -32000: Connection closed", source: "dynamic" }];
+  const MS = sec("MCP servers");
+  const marked = () => exec("return document.querySelector(arguments[0]).classList.contains('bad')", [SET]);
   await send([snapshot(), sent("ok"), ...events(outLines("mcp").filter((o) => o.type === "system" && o.subtype === "init"))]);
-  assert.deepEqual(await text(".composer .pill.mcp"), ["MCP"], "every server connected: no mark");
+  await closeSettings();
+  assert.equal(await marked(), false, "every server connected: no mark");
   await send([{ t: "event", e: { type: "_mcp", servers } }]);
-  assert.deepEqual(await text(".composer .pill.mcp"), ["MCP ✗1"]);
+  assert.equal(await marked(), true);
+  assert.match(await exec("return document.querySelector(arguments[0]).title", [SET]), /— 1 MCP server failed$/);
   await clearPosts();
-  await click(".composer .pill.mcp");
-  await settle();
+  await openSettings();
   assert.ok((await posts()).some((p) => p.t === "mcpStatus"), "opening asks the CLI afresh");
-  const rows = await exec("return [...document.querySelectorAll('.mcp-pop .mcp-row')].map((r) => [r.querySelector('.st').textContent, r.querySelector('.name').textContent, r.querySelector('.st-label').textContent, [...r.querySelectorAll('button')].map((b) => b.textContent)])");
+  assert.deepEqual(await text(`${MS} .pop-head`), ["MCP servers ✗1"]);
+  const rows = await exec("return [...document.querySelectorAll(arguments[0])].map((r) => [r.querySelector('.st').textContent, r.querySelector('.name').textContent, r.querySelector('.st-label').textContent, [...r.querySelectorAll('button')].map((b) => b.textContent)])", [`${MS} .mcp-row`]);
   assert.deepEqual(rows, [
     ["✓", "bench", "Connected", ["Reconnect", "Disable"]],
     ["✓", "embarch-chat", "this window's", []],
     ["✗", "embarch-api", "Failed", ["Reconnect", "Disable"]],
   ]);
-  assert.deepEqual(await text(".mcp-pop .mcp-err"), ["MCP error -32000: Connection closed"]);
-  await shot("mcp-pop");
+  assert.deepEqual(await text(`${MS} .mcp-err`), ["MCP error -32000: Connection closed"]);
+  await shot("settings-mcp");
   await clearPosts();
-  await click(".mcp-pop .mcp-row.failed button", "Reconnect");
+  await click(`${MS} .mcp-row.failed button`, "Reconnect");
   await settle();
   assert.deepEqual((await posts()).filter((p) => p.t === "mcp"), [{ t: "mcp", name: "embarch-api", action: "reconnect" }]);
-  assert.deepEqual(await text(".mcp-pop .mcp-row.failed button"), ["Reconnecting…", "Disable"], "under way until the list comes back");
+  assert.deepEqual(await text(`${MS} .mcp-row.failed button`), ["Reconnecting…", "Disable"], "under way until the list comes back");
   await send([{ t: "event", e: { type: "_mcp", servers: [...answer, { name: "embarch-api", status: "connected", source: "dynamic" }] } }]);
-  assert.deepEqual(await text(".composer .pill.mcp"), ["MCP"]);
+  assert.equal(await marked(), false);
   await clearPosts();
-  await click(".mcp-pop .mcp-row button", "Disable");
+  await click(`${MS} .mcp-row button`, "Disable");
   await settle();
   assert.deepEqual((await posts()).filter((p) => p.t === "mcp"), [{ t: "mcp", name: "bench", action: "disable" }]);
   await send([{ t: "event", e: { type: "_mcp", servers: servers.map((x) => (x.name === "bench" ? { ...x, status: "disabled" } : x)) } }]);
-  assert.deepEqual(await exec("return [...document.querySelector('.mcp-pop .mcp-row').querySelectorAll('button')].map((b) => b.textContent)"), ["Enable"]);
+  assert.deepEqual(await exec("return [...document.querySelector(arguments[0]).querySelectorAll('button')].map((b) => b.textContent)", [`${MS} .mcp-row`]), ["Enable"]);
   // Escape closes it; the CLI's /mcp, typed, opens it again.
-  await exec("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))");
+  await escIn(".settings-pop");
   await settle();
-  assert.equal((await text(".mcp-pop")).length, 0);
+  assert.equal(await settingsOpen(), false);
   await clearPosts();
   // An earlier check's draft is this chat's too: from an empty input.
   await exec("const t = document.querySelector('.composer textarea'); t.value = ''; t.dispatchEvent(new Event('input', { bubbles: true }))");
   await type("/mcp " + ENTER);
-  assert.equal((await text(".mcp-pop")).length, 1);
+  assert.equal(await settingsOpen(), true);
   assert.ok(!(await posts()).some((p) => p.t === "send"), "the page answers it; nothing goes to Claude");
   assert.equal(await value(), "", "the draft clears");
   // A closed process: the list as last known, nothing to act on.
   await send([{ t: "event", e: { type: "_process", state: "closed" } }]);
-  assert.equal(await exec("return document.querySelectorAll('.mcp-pop button').length"), 0);
-  assert.ok((await text(".mcp-pop .pop-note"))[0].includes("next message starts every server afresh"));
-  // A chat read-only here has no pill.
+  assert.equal(await exec("return document.querySelectorAll(arguments[0]).length", [`${MS} button`]), 0);
+  assert.ok((await text(`${MS} .pop-note`))[0].includes("next message starts every server afresh"));
+  // A chat this window does not run: no servers and no Remote Control in its menu.
   await send([snapshot({}, { ...OURS, ours: false, readOnly: false, resumable: true })]);
-  assert.equal((await text(".composer .pill.mcp")).length, 0);
+  await openSettings();
+  assert.equal((await text(MS)).length, 0);
+  assert.equal((await text(sec("Remote Control"))).length, 0);
+  await closeSettings();
 });
 
-await check("Esc that closes the MCP or the model panel does only that: the turn runs on, and it is not the first of Esc twice (73, 81)", async () => {
+await check("Esc that closes the settings menu does only that: the turn runs on, and it is not the first of Esc twice (73, 81; EMB-164)", async () => {
   await fresh({ mcp: [{ name: "embarch-api", status: "failed", error: "MCP error -32000: Connection closed" }] }, false);
   await send([sentU(1, "flash it"), toolCall("tf1", "mcp__embarch-api__flash", { project: "demo" })]);
   await type("/mcp " + ENTER);
-  assert.equal((await text(".mcp-pop")).length, 1);
+  assert.equal(await settingsOpen(), true);
   assert.equal(await focused(), "TEXTAREA", "the input keeps the keys");
   await clearPosts();
   await keys(ESC);
-  assert.equal((await text(".mcp-pop")).length, 0, "Esc closed the panel");
+  assert.equal(await settingsOpen(), false, "Esc closed the menu");
   assert.ok(!(await posts()).some((p) => p.t === "interrupt"), "and did not stop the turn");
   await keys(ESC);
   assert.ok((await posts()).some((p) => p.t === "interrupt"), "the next Esc is Stop's");
-  // Idle, the input empty: the Esc that closes the model panel opens no rewind with the next.
+  // Idle, the input empty: the Esc that closes the menu opens no rewind with the next.
   await basicChat();
-  await click(".composer .pill.model");
-  await settle();
+  await type("/mcp " + ENTER);
+  assert.equal(await settingsOpen(), true);
   await keys(ESC);
-  assert.equal((await text(".model-pop")).length, 0);
+  assert.equal(await settingsOpen(), false);
   await keys(ESC);
   assert.equal((await text(".dialog.rewind")).length, 0);
 });
 
-await check("the model pill by keyboard: Enter opens it, Tab reaches each model and Enter picks one, the keys back on the pill; the levels are radios (82)", async () => {
+await check("the settings menu by keyboard: Enter on the gear opens it with the keys inside, Tab reaches each mode and model and Enter picks one, Esc gives the keys back to the gear; the levels are radios (82; EMB-164)", async () => {
   await fresh({}, false);
-  await exec("document.querySelector('.composer .pill.model').focus(); return true");
+  await closeSettings();
+  await exec("document.querySelector(arguments[0]).focus(); return true", [SET]);
   await keys(ENTER);
-  assert.equal((await text(".model-pop")).length, 1);
-  const rows = await exec("return [...document.querySelectorAll('.model-pop [role=menuitemradio]')].map((r) => [r.tagName, r.textContent, r.getAttribute('aria-checked')])");
+  assert.equal(await settingsOpen(), true);
+  assert.equal(await exec("return document.activeElement.textContent"), "Auto", "the keys inside, on its first entry");
+  const rows = await exec("return [...document.querySelectorAll(arguments[0])].map((r) => [r.tagName, r.textContent, r.getAttribute('aria-checked')])", [`${sec("Model")} [role=menuitemradio]`]);
   assert.deepEqual(rows, [
     ["BUTTON", "Default model", "true"],
     ["BUTTON", "Opus", "false"],
     ["BUTTON", "Sonnet", "false"],
     ["BUTTON", "Haiku", "false"],
   ]);
-  const levels = await exec("return [...document.querySelectorAll('.model-pop .effort-row button')].map((b) => [b.getAttribute('role'), b.getAttribute('aria-checked')])");
+  const levels = await exec("return [...document.querySelectorAll(arguments[0])].map((b) => [b.getAttribute('role'), b.getAttribute('aria-checked')])", [`${sec("Model")} .effort-row button`]);
   assert.ok(levels.length > 1 && levels.every(([role]) => role === "radio"), JSON.stringify(levels));
   assert.equal(levels.filter(([, on]) => on === "true").length, 1, "one level checked");
   await clearPosts();
-  await keys(TAB + TAB);
+  // Auto, Ask, Accept edits, Plan, then the models.
+  await keys(TAB.repeat(5));
   assert.equal(await exec("return document.activeElement.textContent"), "Opus");
   await keys(ENTER);
   assert.deepEqual((await posts()).filter((p) => p.t === "model"), [{ t: "model", model: "opus" }]);
-  assert.equal((await text(".model-pop")).length, 0);
-  assert.equal(await focused(), "BUTTON.pill.model");
+  assert.equal(await settingsOpen(), true, "a pick leaves the menu open, to check the rest");
+  await keys(ESC);
+  assert.equal(await settingsOpen(), false);
+  assert.match(await focused(), /^BUTTON\.rail-entry\.settings/, "the keys back on the gear");
+});
+
+await check("a chat with no message whose claude has not started opens with its settings shown, the draft keeping the keys; its first message closes them; one already running opens without (EMB-164)", async () => {
+  await fresh({ process: "none", remoteStartup: { setting: true, on: true } }, false);
+  assert.equal(await settingsOpen(), true, "shown at once");
+  assert.equal(await exec("return document.querySelector(arguments[0]).getAttribute('aria-expanded')", [SET]), "true");
+  assert.equal((await text(`${sec("Remote Control")} .pop-note`))[0], "Turns on when Claude starts, at your first message (remoteControlAtStartup).");
+  await exec("document.querySelector('.composer textarea').focus()");
+  await type("hello");
+  assert.equal(await settingsOpen(), true, "typing leaves them shown");
+  assert.equal(await focused(), "TEXTAREA");
+  const [menuBottom, inputTop] = await exec("return [document.querySelector('.settings-pop').getBoundingClientRect().bottom, document.querySelector('.composer').getBoundingClientRect().top]");
+  assert.ok(menuBottom <= inputTop + 1, `the menu stands on the input's row, the draft in sight: ${menuBottom} vs ${inputTop}`);
+  await shot("settings-new-chat");
+  await type(ENTER);
+  assert.ok((await posts()).some((p) => p.t === "send" && p.text === "hello"));
+  assert.equal(await settingsOpen(), false, "the first message closes them");
+  await fresh({}, false);
+  assert.equal(await settingsOpen(), false, "a running chat opens without them");
 });
 
 // ------------------------------------------------------------ the rail and Promptu (decisions 94–98)
@@ -3599,13 +3694,13 @@ const shiftTab = async () => {
 };
 const promptuPosts = async (op) => (await posts()).filter((p) => p.t === "promptu" && (!op || p.op === op));
 
-await check("the rail: Memory, Promptu, the 📚, the 💡 and the 💬 down the chat's left edge, folded to their icons until the pointer is on it, which shows their names over the timeline without moving it; the 💡 and 📚 left the input's bar (94)", async () => {
+await check("the rail: Memory, Promptu, the 📚, the 💡, the 💬 and the settings gear down the chat's left edge, folded to their icons until the pointer is on it, which shows their names over the timeline without moving it; the 💡 and 📚 left the input's bar (94, EMB-164)", async () => {
   await fresh();
-  assert.deepEqual(await text(".rail .rail-entry .rail-label"), ["Usage", "Memory", "Promptu", "Library", "Suggestions", "Side question"]);
+  assert.deepEqual(await text(".rail .rail-entry .rail-label"), ["Usage", "Memory", "Promptu", "Library", "Suggestions", "Side question", "Auto · Default"]);
   // Usage alone at the top, the rest at the bottom by the input (the owner's P16).
-  const [col, use, mem, bulb] = await Promise.all([".rail-col", ".rail .rail-entry.usage", ".rail .rail-entry.memory", ".rail .rail-entry.btw"].map((sel) => exec("const r=document.querySelector(arguments[0]).getBoundingClientRect(); return [Math.round(r.top), Math.round(r.bottom)]", [sel])));
+  const [col, use, mem, bulb] = await Promise.all([".rail-col", ".rail .rail-entry.usage", ".rail .rail-entry.memory", ".rail .rail-entry.settings"].map((sel) => exec("const r=document.querySelector(arguments[0]).getBoundingClientRect(); return [Math.round(r.top), Math.round(r.bottom)]", [sel])));
   assert.ok(use[0] - col[0] < 12, `Usage at the top: ${use} in ${col}`);
-  assert.ok(col[1] - bulb[1] < 12, `the 💬 at the bottom: ${bulb} in ${col}`);
+  assert.ok(col[1] - bulb[1] < 12, `the gear at the bottom: ${bulb} in ${col}`);
   assert.ok(mem[0] - use[1] > 100, `a gap between them: ${use} ${mem}`);
   assert.deepEqual(await exec("const r=document.querySelector('.rail'); return [r.getAttribute('role'), r.getAttribute('aria-label'), r.getAttribute('aria-orientation')]"), ["toolbar", "Chat tools", "vertical"], "named, a toolbar (review F9)");
   await exec("document.querySelector('.rail .rail-entry.memory').focus()");
@@ -3615,7 +3710,7 @@ await check("the rail: Memory, Promptu, the 📚, the 💡 and the 💬 down the
   // One-colour SVGs in currentColor, no emoji and no filter (EMB-56).
   assert.deepEqual(
     await exec("return [...document.querySelectorAll('.rail .rail-entry .rail-icon')].map((i) => [i.querySelectorAll('svg path').length, i.textContent.trim(), getComputedStyle(i).filter, getComputedStyle(i.querySelector('svg')).stroke === getComputedStyle(i).color])"),
-    [1, 2, 3, 4, 5, 6].map(() => [1, "", "none", true]),
+    [1, 2, 3, 4, 5, 6, 7].map(() => [1, "", "none", true]),
     "each rail icon is one SVG path in currentColor, no text, no filter",
   );
   assert.deepEqual(await text(".composer .bar .btw"), [], "the side question left the bar for the rail");
@@ -4376,13 +4471,14 @@ await check("dark and light take EmbArch's accents and semantics; a high-contras
   assert.deepEqual(await exec("return window.__violations"), []);
 });
 
-await check("high contrast: the chosen model and effort carry an outline, as VS Code marks a selection there (53)", async () => {
+await check("high contrast: the chosen mode, model and effort carry an outline, as VS Code marks a selection there (53, EMB-164)", async () => {
   await go("/chat.html");
   await fresh({}, false);
   await exec("document.body.classList.replace('vscode-dark', 'vscode-high-contrast')");
-  await click(".composer .pill.model");
+  await click(".rail .rail-entry.settings");
   await settle();
-  assert.deepEqual(await exec("return [...document.querySelectorAll('.model-pop .on')].map((e) => [e.textContent, getComputedStyle(e).outlineStyle])"), [
+  assert.deepEqual(await exec("return [...document.querySelectorAll('.settings-pop .on')].map((e) => [e.textContent, getComputedStyle(e).outlineStyle])"), [
+    ["Auto", "solid"],
     ["Default model", "solid"],
     ["Default", "solid"],
   ]);

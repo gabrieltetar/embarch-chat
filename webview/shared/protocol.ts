@@ -212,12 +212,14 @@ export type ChatToHost =
   /** `/btw <question>`: a side question, answered beside the chat (57). */
   | { t: "btw"; question: string }
   | { t: "sideClear" }
-  /** The MCP pill opened: the servers as the CLI has them now. */
+  /** The settings menu opened (EMB-164): the MCP servers as the CLI has them now. */
   | { t: "mcpStatus" }
   /** Claude Code's MCP dialog's actions on one server. */
   | { t: "mcp"; name: string; action: "reconnect" | "enable" | "disable" }
   /** `/remote-control [name]`: Remote Control on, or off (dismissed, after a failure). */
   | { t: "remoteControl"; name?: string }
+  /** The settings menu's Remote Control switch (EMB-164): now on a running process, else at its start. */
+  | { t: "remote"; on: boolean }
   /** Keep a reply on the chat's work item as a note of this kind (Claude Code's bookmark, the desk's way). */
   | { t: "keep"; entryId: string; kind: KeepKind }
   /** Continue the step a reload interrupted (decision 63): the owner's word, never the reload's. */

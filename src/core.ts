@@ -11,6 +11,7 @@ export * from "./loginAccount";
 export * from "./loginGate";
 export * from "./wire/host";
 export * from "./wire/chat";
+export * from "./startupProbe";
 export * from "./wire/message";
 export * from "./wire/version";
 export * from "./wire/transcript";

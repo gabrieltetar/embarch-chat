@@ -51,7 +51,8 @@ import type { Attachment } from "../../src/wire/message";
 import type { EditorItem } from "../../src/editorContext";
 import { IMAGE_TYPES, looksBinary, pasteToMark, pastesIn, rememberPaste, stripInvisible, strippedNotice } from "../../src/wire/message";
 import type { HostToChat, MentionItem, TerminalRef } from "../shared/protocol";
-import { MODES } from "../shared/protocol";
+import type { ChatState } from "../../src/wire/reducer";
+import { SETTINGS_EVENT, SettingsPanel, settingsGear } from "./settings";
 import { vscodeApi } from "../shared/vscode";
 import { CategoryMenu, MenuGroup, MenuKeys } from "./menus";
 import type { MemoryOut } from "../../src/promptu/cli";
@@ -77,7 +78,6 @@ interface Props {
   busy: boolean;
   /** A card waits on the owner: a message sent now goes in after its answer (55). */
   waiting: boolean;
-  mode: string;
   slashCommands: string[];
   placeholder: string;
   mentions: { q: string; items: MentionItem[] } | null;
@@ -102,9 +102,9 @@ interface Props {
   memoryPass: MemoryPass | null;
   /** This chat's Promptu run while one is under way (its dialog shows, or in Quick mode only the icon turns). */
   promptuView: PromptuView | null;
-  /** The pills after the mode select, left of the box (footer.tsx): the model pill, MCP, Remote. */
-  footer?: preact.ComponentChildren;
-  /** The page's own commands — /copy, /export, /rewind (history.tsx), /mcp, /remote-control (footer.tsx) — answered here: true when taken. */
+  /** What the settings menu shows and changes (settings.tsx, EMB-164): the chat's state; `ours`: this window runs it. */
+  settings: { state: ChatState; ours: boolean };
+  /** The page's own commands — /copy, /export, /rewind (history.tsx), /mcp, /remote-control (settings.tsx) — answered here: true when taken. */
   onCommand: (text: string) => boolean;
   onSend: (text: string, opts: SendOpts) => void;
   onChip: (chip: Chip) => void;
@@ -229,7 +229,7 @@ function setTyping(v: boolean): void {
 }
 
 export function Composer(p: Props) {
-  const { sid, busy, mode, slashCommands, placeholder, mentions, library, chips, onChip } = p;
+  const { sid, busy, slashCommands, placeholder, mentions, library, chips, onChip } = p;
   const promptuBusy = !!p.promptuView;
   const [text, setTextState] = useState(() => (vscodeApi.getState() as Saved | undefined)?.drafts?.[sid] ?? "");
   const [pop, setPop] = useState<Pop | null>(null);
@@ -238,15 +238,18 @@ export function Composer(p: Props) {
   const [cards, setCards] = useState<{ judged: string; list: Card[] }>({ judged: "", list: [] });
   const [used, setUsed] = useState<string[]>([]);
   const [menu, setMenu] = useState<null | "bulb" | "library">(null);
-  /** What the rail has open beside it: Promptu's card or the Memory menu (95, 98). */
-  const [railPop, setRailPop] = useState<null | "promptu" | "memory" | "usage">(null);
+  /** What the rail has open beside it: Promptu's card, the Memory menu, the Usage card or the settings menu (95, 98, 99, EMB-164). */
+  const [railPop, setRailPop] = useState<null | "promptu" | "memory" | "usage" | "settings">(null);
   /** The time the Usage icon shows its reading at: drawn again as a window resets (review F14). */
   const usageNow = useUsageNow(p.usage);
+  /** The settings gear's look: tinted in Plan and Ask, marked when a server or Remote Control failed (EMB-164). */
+  const gear = settingsGear(p.settings.state);
   /** The keys opened it: it holds the focus, and the pointer leaving never closes it (review F10). */
   const [popByKey, setPopByKey] = useState(false);
   const memBtn = useRef<HTMLButtonElement>(null);
   const promptuBtn = useRef<HTMLButtonElement>(null);
   const usageBtn = useRef<HTMLButtonElement>(null);
+  const settingsBtn = useRef<HTMLButtonElement>(null);
   const popTimer = useRef(0);
   const [memory, setMemory] = useState<{ loading: boolean; data?: MemoryOut; error?: string }>({ loading: false });
   const [forced, setForced] = useState<string | null>(forcedPattern[sid] ?? null);
@@ -422,6 +425,34 @@ export function Composer(p: Props) {
     const t = window.setTimeout(() => setAsking(false), 8000);
     return () => clearTimeout(t);
   }, [promptuBusy, asking]);
+
+  // A chat with no message yet, its claude not started, shows its settings,
+  // the draft keeping the focus: the owner checks the model, effort and
+  // Remote Control before the first message (EMB-164). `/mcp` opens them too.
+  useEffect(() => {
+    if (p.taskStart && p.settings.ours && p.settings.state.process !== "running") setRailPop("settings");
+    const open = () => (setPopByKey(false), setRailPop("settings"));
+    window.addEventListener(SETTINGS_EVENT, open);
+    return () => window.removeEventListener(SETTINGS_EVENT, open);
+  }, []);
+
+  // The settings menu stands on the input's row, whatever its height: what is typed stays in sight (EMB-164).
+  const root = useRef<HTMLDivElement>(null);
+  const [lift, setLift] = useState(0);
+  useEffect(() => {
+    const el = root.current;
+    if (railPop !== "settings" || !el) return;
+    const measure = () => setLift(el.offsetHeight);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [railPop]);
+
+  // The 💡's or the 📚's menu opening closes what the rail has open: both sit over the input's corner.
+  useEffect(() => {
+    if (menu) setRailPop(null);
+  }, [menu]);
 
   // The card or the Memory menu closes on a click elsewhere.
   useEffect(() => {
@@ -714,6 +745,8 @@ export function Composer(p: Props) {
     setMenu(null);
     setCards({ judged: "", list: [] });
     setUsed([]);
+    // The settings were checked before the message: it closes them (EMB-164).
+    setRailPop((x) => (x === "settings" ? null : x));
   };
 
   /** A draft held for its cards (26) is not sent after all: written again, taken aside by the 💬, or asked aside. */
@@ -1070,7 +1103,7 @@ export function Composer(p: Props) {
   const leavePromptu = () => leaveHover("promptu");
   /** Esc in a pop: closed, the focus back on the entry that opened it when the keys did, else in the draft. */
   const closePop = () => {
-    const back = popByKey ? (railPop === "memory" ? memBtn.current : railPop === "usage" ? usageBtn.current : promptuBtn.current) : ta.current;
+    const back = popByKey ? (railPop === "memory" ? memBtn.current : railPop === "usage" ? usageBtn.current : railPop === "settings" ? settingsBtn.current : promptuBtn.current) : ta.current;
     setRailPop(null);
     setPopByKey(false);
     back?.focus();
@@ -1094,6 +1127,7 @@ export function Composer(p: Props) {
   return (
     <div
       class="composer"
+      ref={root}
       onKeyDownCapture={menuFirst}
       onFocusOut={(e) => {
         // Leaving the input, not moving within it (the 💡, a chip), ends the typing (55).
@@ -1164,15 +1198,6 @@ export function Composer(p: Props) {
         </div>
       )}
       <div class="bar">
-        <select title="Permission mode" value={mode} onChange={(e) => post({ t: "mode", mode: (e.target as HTMLSelectElement).value })}>
-          {MODES.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.label}
-            </option>
-          ))}
-          {!MODES.some((m) => m.id === mode) && <option value={mode}>{mode}</option>}
-        </select>
-        {p.footer}
       <div class="field" ref={field}>
         <div class="overlay" ref={overlay} aria-hidden="true">
           {after !== null ? (
@@ -1319,6 +1344,16 @@ export function Composer(p: Props) {
                 title={p.canAsk ? (aside ? "Side question mode: Enter asks aside — click or Esc to leave" : "Side question (/btw) — answered beside the chat, not added to it") : "Side questions need a conversation this window runs: send it a message first"}
                 onClick={toggleAside}
               />
+              <RailEntry
+                icon="settings"
+                label={gear.label}
+                cls={gear.cls}
+                title={gear.title}
+                ariaLabel={gear.title}
+                expanded={railPop === "settings"}
+                btnRef={settingsBtn}
+                onClick={(byKey) => (railPop === "settings" ? setRailPop(null) : (setPopByKey(byKey), setRailPop("settings")))}
+              />
             </div>
             {railPop === "promptu" && p.promptu && (
               <PromptuCard
@@ -1338,6 +1373,7 @@ export function Composer(p: Props) {
             )}
             {railPop === "memory" && <MemoryPanel mem={memory} pass={p.memoryPass} onRefresh={loadMemory} focusIn={popByKey} onClose={closePop} />}
             {railPop === "usage" && <UsageCard usage={p.usage} focusIn={popByKey} onClose={closePop} onEnter={() => clearTimeout(popTimer.current)} onLeave={() => leaveHover("usage")} />}
+            {railPop === "settings" && <SettingsPanel state={p.settings.state} ours={p.settings.ours} focusIn={popByKey} onClose={closePop} lift={lift} />}
           </>,
           p.rail,
         )}

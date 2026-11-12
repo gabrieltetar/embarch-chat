@@ -363,6 +363,12 @@
             "scope": "machine",
             "description": "The Haiku assistant at the input: ghost text, the 💡 cards, reply chips and naming each chat (one stripped `claude -p --model haiku` call each, about $0.002). Off, only the CLI's own suggestion and the instant prefix match over your past prompts remain. User or Remote settings only — a workspace cannot turn it on."
           },
+          "embarchChat.startupProbe": {
+            "type": "boolean",
+            "default": true,
+            "scope": "machine",
+            "description": "Fill a chat's settings menu before its first message: one short claude per login and folder, sent no message (no tokens), says which models and effort levels there are, the MCP servers, and whether Remote Control starts with a chat. Off, they show once the chat's own claude starts. User or Remote settings only."
+          },
           "embarchChat.showMessageTimestamps": {
             "type": "boolean",
             "default": false,

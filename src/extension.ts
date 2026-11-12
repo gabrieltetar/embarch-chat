@@ -40,6 +40,7 @@ import { LOGIN_STATE_PATH, mirrorWindow, resolveChatLogin, updateLoginState } fr
 import { ACCOUNT_POLL_MS, accountFile, credentialsFile, loginItem, readAccount } from "./loginAccount";
 import { haikuEnv } from "./assistant/haiku";
 import { LoginGate, warmUp } from "./loginGate";
+import { StartupProbes } from "./startupProbe";
 import { findTranscript, isSessionId } from "./wire/transcript";
 import { appendTitle, forkPoint, historyUpTo } from "./wire/history";
 import type { WireMessage } from "./wire/types";
@@ -58,6 +59,7 @@ function cfg() {
     deskUrl: c.get<string>("deskUrl", "http://127.0.0.1:4891"),
     deskTokenPath: c.get<string>("deskTokenPath", "~/.config/embarch-desk/desk-token"),
     assistant: c.get<boolean>("assistant", true),
+    startupProbe: c.get<boolean>("startupProbe", true),
     attachOpenFile: c.get<boolean>("attachOpenFile", true),
     attachSelection: c.get<boolean>("attachSelection", true),
     // Where a chat opens (decision 92): an editor tab, unless the owner keeps the sidebar.
@@ -207,6 +209,8 @@ export function activate(context: vscode.ExtensionContext): void {
   let openNow: (sid: string) => boolean = () => false;
   // One warm-up per login while its token is due (105): chats' processes wait on it, Haiku's calls skip it.
   const loginGate = new LoginGate({ warm: (env) => warmUp(cfg().claudePath, env), log });
+  // What a chat's settings menu shows before its first message (EMB-164): one short claude per login and folder.
+  const probes = new StartupProbes(() => ({ claudePath: cfg().claudePath, log, gate: (env) => loginGate.wait(env) }));
   chats = new ChatManager(() => ({
     claudePath: cfg().claudePath,
     idleMs: cfg().idleMs,
@@ -218,8 +222,11 @@ export function activate(context: vscode.ExtensionContext): void {
     env: chatSpawnEnv,
     gate: (env) => loginGate.wait(env),
     recover: (env) => loginGate.recover(env),
+    seed: cfg().startupProbe ? (chat, env) => probes.get(env, chat.opts.cwd, (info) => chat.seedStartup(info)) : undefined,
   }));
   const manager = chats;
+  // Asked once as the window starts, so the first chat's menu is filled when it opens.
+  if (cfg().startupProbe) for (const f of folders().slice(0, 1)) probes.get(spawnEnv(), f, () => undefined);
   deskService = new DeskService(() => client, manager, folders, log);
   const desk = deskService;
   const diff = new DiffContent();

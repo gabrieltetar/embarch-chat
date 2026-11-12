@@ -19,7 +19,7 @@ import { vscodeApi } from "../shared/vscode";
 const post = (m: unknown) => vscodeApi.postMessage(m);
 
 /** Each rail entry's icon: 16 px strokes in `currentColor`, so the theme's foreground colour is theirs (decision 94). */
-export type RailIcon = "usage" | "memory" | "promptu" | "library" | "bulb" | "aside";
+export type RailIcon = "usage" | "memory" | "promptu" | "library" | "bulb" | "aside" | "settings";
 const RAIL_ICONS: Record<RailIcon, string> = {
   usage: "M2.5 13.5h11 M4.5 13V8 M8 13V3.5 M11.5 13V6",
   memory: "M8 3v10 M8 4.5C8 3.4 7 2.5 5.8 2.5 4.5 2.5 3.6 3.5 3.7 4.7 2.7 5.1 2.2 6.2 2.6 7.2 2 7.9 2 9 2.7 9.7 2.5 10.8 3.3 11.8 4.4 11.8 4.7 12.8 5.7 13.4 6.7 13.2 7.5 13 8 12.4 8 11.5 M8 4.5C8 3.4 9 2.5 10.2 2.5 11.5 2.5 12.4 3.5 12.3 4.7 13.3 5.1 13.8 6.2 13.4 7.2 14 7.9 14 9 13.3 9.7 13.5 10.8 12.7 11.8 11.6 11.8 11.3 12.8 10.3 13.4 9.3 13.2 8.5 13 8 12.4",
@@ -27,6 +27,9 @@ const RAIL_ICONS: Record<RailIcon, string> = {
   library: "M3 2.5v11 M6.5 2.5v11 M10 3l3 10.5 M2 2.5h5 M2 13.5h5",
   aside: "M2.5 3h11v7.5h-6L5 13.5v-3H2.5z",
   bulb: "M6 12.5h4 M6.5 14.5h3 M8 1.5a4.5 4.5 0 0 0-2.5 8.2c.6.5 1 1.1 1 2h3c0-.9.4-1.5 1-2A4.5 4.5 0 0 0 8 1.5z",
+  // An eight-tooth gear (EMB-164).
+  settings:
+    "M6.7 3.4L6.9 1.6L9.1 1.6L9.3 3.4L10.4 3.8L11.8 2.7L13.3 4.2L12.2 5.6L12.6 6.7L14.4 6.9L14.4 9.1L12.6 9.3L12.2 10.4L13.3 11.8L11.8 13.3L10.4 12.2L9.3 12.6L9.1 14.4L6.9 14.4L6.7 12.6L5.6 12.2L4.2 13.3L2.7 11.8L3.8 10.4L3.4 9.3L1.6 9.1L1.6 6.9L3.4 6.7L3.8 5.6L2.7 4.2L4.2 2.7L5.6 3.8Z M10.2 8a2.2 2.2 0 1 1-4.4 0 2.2 2.2 0 0 1 4.4 0z",
 };
 
 function RailGlyph({ name }: { name: RailIcon }) {
@@ -88,7 +91,7 @@ export function RailEntry(p: {
  * the focus when the keys opened it — never on a hover, so typing in the
  * draft goes on — and that Esc closes, the focus going back where it was.
  */
-function RailPop(p: { cls: string; label: string; focusIn: boolean; onClose: () => void; onEnter?: () => void; onLeave?: () => void; children: ComponentChildren }) {
+export function RailPop(p: { cls: string; label: string; focusIn: boolean; onClose: () => void; onEnter?: () => void; onLeave?: () => void; style?: Record<string, string>; children: ComponentChildren }) {
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!p.focusIn) return;
@@ -98,6 +101,7 @@ function RailPop(p: { cls: string; label: string; focusIn: boolean; onClose: () 
   return (
     <div
       class={`rail-pop ${p.cls}`}
+      style={p.style}
       ref={box}
       role="dialog"
       aria-label={p.label}

@@ -123,6 +123,8 @@ before(async () => {
     "embarchChat.chatLocation": "sidebar",
     // Promptu is not here until a test says so: never the owner's own binary (96).
     "embarchChat.promptuPath": path.join(dir, "no-promptu"),
+    // No short claude per login (EMB-164) unless a test says so: these tests count the CLI's spawns.
+    "embarchChat.startupProbe": false,
   });
   process.env.FAKE_PROMPTU_DIR = path.join(dir, "promptu");
   fs.chmodSync(FAKE_PROMPTU, 0o755);
@@ -343,6 +345,36 @@ async function startUntracked(fixture) {
     return s && s.state.sessionId !== before && s.header?.untracked && s.state.sessionId;
   }, 5000, "the new chat");
 }
+
+test("a new chat's page shows its login's models, MCP servers and Remote Control at startup before the first message, from one short claude sent no message (EMB-164)", { skip }, async () => {
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "probe-")), "probe.jsonl");
+  const models = [{ value: "default", resolvedModel: "claude-opus-5-5", supportsEffort: true, supportedEffortLevels: ["low", "high"] }];
+  const lines = [
+    { d: "in", o: { type: "control_request", request_id: "init-1", request: { subtype: "initialize" } } },
+    { d: "out", o: { type: "control_response", response: { subtype: "success", request_id: "init-1", response: { models, remote_control_available: true, remote_control_auto_enable: true, remote_control_auto_on_by_default: false } } } },
+    { d: "in", o: { type: "control_request", request_id: "m-1", request: { subtype: "mcp_status" } } },
+    { d: "out", o: { type: "control_response", response: { subtype: "success", request_id: "m-1", response: { mcpServers: [{ name: "embarch-api", status: "connected" }] } } } },
+  ];
+  fs.writeFileSync(file, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+  mock.state.config["embarchChat.startupProbe"] = true;
+  try {
+    const sid = await startUntracked(file);
+    // The new chat's snapshot and the events after it: the probe may answer before the page shows the chat, or after.
+    const page = () => {
+      const p = chatView.webview.posted;
+      const i = p.map((m) => m.t === "snapshot" && m.state.sessionId === sid).lastIndexOf(true);
+      return { snap: p[i].state, events: p.slice(i + 1).filter((m) => m.t === "event").map((m) => m.e) };
+    };
+    const seen = (type) => page().events.filter((e) => e.type === type).pop();
+    await waitFor(() => seen("_mcp") || page().snap.mcp?.length, 8000, "the probe's servers");
+    assert.deepEqual(seen("_models")?.models ?? page().snap.models, [{ value: "default", resolved: "claude-opus-5-5", levels: ["low", "high"] }]);
+    const st = seen("_remoteStartup");
+    assert.deepEqual(st ? { setting: st.setting, on: st.on } : page().snap.remoteStartup, { setting: true, on: true });
+    assert.ok(!page().events.some((e) => e.type === "_process") && page().snap.process === "none", "the chat's own claude has not started");
+  } finally {
+    mock.state.config["embarchChat.startupProbe"] = false;
+  }
+});
 
 test("the chat page gets the library and the owner's past prompts", { skip }, async () => {
   const lib = await waitFor(() => posted((m) => m.t === "library"), 3000, "the library");

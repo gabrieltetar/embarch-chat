@@ -124,6 +124,17 @@ export function bridgesAtStartup(r: Record<string, unknown>): boolean {
   return r.remote_control_auto_on_by_default === false || r.ide_rc_auto_enable_gate === true;
 }
 
+/** What a chat shows of its login and folder before a process of its own runs (startupProbe.ts, EMB-164). */
+export interface StartupInfo {
+  models: ModelInfo[];
+  /** `mcp_status`'s `mcpServers`, as the CLI sent them. */
+  mcp: unknown[];
+  /** Remote Control starts with a chat's process (`bridgesAtStartup`, 100). */
+  remote: boolean;
+  /** ...because Claude Code's default, not the owner's setting, turned it on: its notice. */
+  remoteByDefault: boolean;
+}
+
 /** How long a side question may take, as Claude Code's panel allows (its SIDE_QUESTION_TIMEOUT_MS). */
 const SIDE_MS = 300_000;
 
@@ -184,8 +195,16 @@ export class Chat extends EventEmitter implements HandoffPort {
   private turnUuid: string | undefined;
   private turnRan = false;
   private turnLocked = false;
-  /** The owner turned this chat's bridge off: its next process does not start one at startup (100). */
-  private remoteDeclined = false;
+  /**
+   * The owner's pick for a bridge at this chat's next process start (100,
+   * EMB-164): false once turned off here, true once turned on, null to follow
+   * Claude Code's setting.
+   */
+  private remoteWish: boolean | null = null;
+  /** Claude Code's setting for a bridge at startup: this chat's process's initialize, else the login's probe (EMB-164). */
+  private remoteSetting: boolean | null = null;
+  /** A process of this chat's answered initialize: a probe's answer no longer applies (EMB-164). */
+  private ownInit = false;
 
   /** The owner's name still waiting for the chat's first turn: what a reload must carry (decision 63). */
   get pendingName(): string | null {
@@ -344,8 +363,11 @@ export class Chat extends EventEmitter implements HandoffPort {
       // Whether the bridge at startup is Claude Code's default's doing, not the owner's setting: its notice then says so (83; review r4 L6).
       const byDefault = r.remote_control_auto_enable === true && r.remote_control_auto_on_by_default === true;
       if (byDefault !== !!this.state.remoteByDefault) this.dispatch({ type: "_remoteDefault", on: byDefault });
+      this.ownInit = true;
+      this.remoteSetting = bridgesAtStartup(r);
+      this.showRemoteStartup();
       // The CLI never starts that bridge for a host: the host does, as Claude Code's panel does (100).
-      if (bridgesAtStartup(r) && !this.remoteDeclined && !this.state.remote) void this.bridge(proc, true);
+      if ((this.remoteWish ?? this.remoteSetting) && !this.state.remote) void this.bridge(proc, true);
       void this.readSettings();
     });
     // Their callbacks are answered in process.ts and never reach the refusal below (66).
@@ -1167,13 +1189,14 @@ export class Chat extends EventEmitter implements HandoffPort {
    * message [measured] — and holds it open; off, or on a failure, dismiss.
    * A permission prompt still comes here too [measured]; one answered on
    * the phone is withdrawn here by the CLI's `control_cancel_request`. A
-   * bridge started at startup (100) turns off the same way, and stays off
-   * for the chat; a failure dismissed does not.
+   * bridge started at startup (100) turns off the same way. Either way the
+   * chat's later processes follow: off stays off, on starts it again; a
+   * failure dismissed changes nothing.
    */
   async remoteControl(name?: string): Promise<void> {
     const was = this.state.remote;
     if (was) {
-      if (was.status !== "failed") this.remoteDeclined = true;
+      if (was.status !== "failed") this.wishRemote(false);
       // That bridge's own lines, still coming, must not turn it on again; with no epoch known, none of this process's.
       this.dispatch({ type: "_remote", remote: null, off: was.epoch ?? Number.MAX_SAFE_INTEGER });
       if (!this.running) return;
@@ -1190,8 +1213,46 @@ export class Chat extends EventEmitter implements HandoffPort {
       this.once("closed", () => void this.remoteControl(name));
       return;
     }
-    this.remoteDeclined = false;
+    this.wishRemote(true);
     await this.bridge(this.ensureProcess(), false, name);
+  }
+
+  /**
+   * The settings menu's Remote Control switch (EMB-164): on a running
+   * process, `/remote-control`'s toggle, a failure dismissed first; before
+   * one, what its start does — no process is started for it.
+   */
+  setRemote(on: boolean): void {
+    const r = this.state.remote;
+    if (!this.running) return this.wishRemote(on);
+    if (r?.status === "failed") this.dispatch({ type: "_remote", remote: null, off: r.epoch ?? Number.MAX_SAFE_INTEGER });
+    if (on !== (!!r && r.status !== "failed")) void this.remoteControl();
+  }
+
+  private wishRemote(on: boolean): void {
+    this.remoteWish = on;
+    this.showRemoteStartup();
+  }
+
+  /** What the menu shows of the next process start's bridge: Claude Code's setting, and what this chat will do. */
+  private showRemoteStartup(): void {
+    const setting = this.remoteSetting ?? false;
+    this.dispatch({ type: "_remoteStartup", setting, on: this.remoteWish ?? setting });
+  }
+
+  /**
+   * What a short `claude` of this chat's login and folder answered
+   * (startupProbe.ts, EMB-164): the models and their effort levels, the MCP
+   * servers and Remote Control at startup, shown before the first message.
+   * Once a process of the chat's own has answered, it is not taken.
+   */
+  seedStartup(info: StartupInfo): void {
+    if (this.ownInit || this.disposed) return;
+    if (info.models.length) this.dispatch({ type: "_models", models: info.models });
+    if (info.mcp.length) this.dispatch({ type: "_mcp", servers: info.mcp });
+    if (info.remoteByDefault !== !!this.state.remoteByDefault) this.dispatch({ type: "_remoteDefault", on: info.remoteByDefault });
+    this.remoteSetting = info.remote;
+    this.showRemoteStartup();
   }
 
   /** Asks `proc` for the bridge: by `/remote-control` here, or at startup when Claude Code's settings say so (`auto`, 100). */

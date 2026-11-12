@@ -158,6 +158,15 @@ code cites.
   frontmatter (none is Other); a click puts `/<name> ` at the head of the
   draft, as the session knows it (`/embarch-chat:<name>` for the plugin's).
   `/` completes them too.
+- **The settings gear** at the foot of the rail: the permission mode, the
+  model with its effort and Ultracode, Remote Control and the MCP servers,
+  in a menu beside the rail; the input's row is the box and Send. A new
+  chat opens with it shown, so the model and Remote Control are checked
+  before the first message, and one short `claude` per login and folder,
+  sent no message, fills it before the chat's own starts
+  (`embarchChat.startupProbe`). The gear's name is the mode and the model;
+  Plan and Ask tint it, and a red dot marks a failed server or Remote
+  Control.
 - **It looks like EmbArch over VS Code's own theme**: the UI text in IBM
   Plex Sans, shipped in the extension (code, diffs and tool output keep the
   editor's font); EmbArch's cyan accent and its green, amber, red and blue

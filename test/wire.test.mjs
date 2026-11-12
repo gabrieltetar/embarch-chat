@@ -1398,6 +1398,99 @@ test("a bridge at startup on by Claude Code's default, its IDE gate open: the pa
   chat.dispose();
 });
 
+/** A short claude's whole talk, as the probe has it (EMB-164): initialize, then mcp_status until no server is connecting. */
+function probeFixture(dir) {
+  const models = [
+    { value: "default", resolvedModel: "claude-opus-5-5", supportsEffort: true, supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"] },
+    { value: "haiku", resolvedModel: "claude-haiku-5-5", supportsEffort: false },
+  ];
+  const lines = [
+    { d: "in", o: { type: "control_request", request_id: "init-1", request: { subtype: "initialize" } } },
+    { d: "out", o: { type: "control_response", response: { subtype: "success", request_id: "init-1", response: { models, remote_control_available: true, remote_control_auto_enable: true, remote_control_auto_on_by_default: false } } } },
+    { d: "in", o: { type: "control_request", request_id: "m-1", request: { subtype: "mcp_status" } } },
+    { d: "out", o: { type: "control_response", response: { subtype: "success", request_id: "m-1", response: { mcpServers: [{ name: "embarch-api", status: "pending" }] } } } },
+    { d: "in", o: { type: "control_request", request_id: "m-2", request: { subtype: "mcp_status" } } },
+    { d: "out", o: { type: "control_response", response: { subtype: "success", request_id: "m-2", response: { mcpServers: [{ name: "embarch-api", status: "connected", tools: [{}, {}] }] } } } },
+  ];
+  const file = path.join(dir, "probe.jsonl");
+  fs.writeFileSync(file, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+  return file;
+}
+
+test("one short claude per login and folder answers a chat's settings before its first message: the models and their levels and Remote Control at once, the MCP servers once none is connecting; sent no message, no hook, no desk; asked again only after a minute (EMB-164)", async () => {
+  const dir = tmp("probe-");
+  const argsLog = path.join(dir, "args.jsonl");
+  const inputLog = path.join(dir, "input.jsonl");
+  const env = { ...process.env, FAKE_CLAUDE_FIXTURE: probeFixture(dir), FAKE_CLAUDE_ARGS_LOG: argsLog, FAKE_CLAUDE_INPUT_LOG: inputLog };
+  delete env.EMBARCH_DESK_INTERNAL;
+  const logs = [];
+  const probes = new core.StartupProbes(() => ({ claudePath: FAKE, log: (l) => logs.push(l) }));
+  const got = [];
+  probes.get(env, dir, (i) => got.push(i));
+  await waitFor(() => got.length === 2, 10000);
+  assert.deepEqual(got[0].models.map((m) => [m.value, m.levels]), [["default", ["low", "medium", "high", "xhigh", "max"]], ["haiku", []]]);
+  assert.deepEqual([got[0].mcp, got[0].remote, got[0].remoteByDefault], [[], true, false], "at once: models and Remote Control, no servers yet");
+  assert.deepEqual(core.mcpServers(got[1].mcp), [{ name: "embarch-api", status: "connected", tools: 2 }], "then the servers, connected");
+  await waitFor(() => logs.some((l) => l.startsWith("startup probe")));
+  const run = JSON.parse(fs.readFileSync(argsLog, "utf8").trim().split("\n")[0]);
+  assert.equal(run.env.EMBARCH_DESK_INTERNAL, "1", "the desk never sees it");
+  assert.deepEqual(JSON.parse(run.argv[run.argv.indexOf("--settings") + 1]), { disableAllHooks: true }, "no hook runs");
+  const inputs = fs.readFileSync(inputLog, "utf8").trim().split("\n").map((l) => JSON.parse(l).o);
+  assert.deepEqual(inputs.map((o) => o.request?.subtype ?? o.type), ["initialize", "mcp_status", "mcp_status"], "no message: no tokens, no transcript");
+  // Asked again within the minute: what is known, at once, and no new claude.
+  const again = [];
+  probes.get(env, dir, (i) => again.push(i));
+  assert.deepEqual(again, [got[1]]);
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(fs.readFileSync(argsLog, "utf8").trim().split("\n").length, 1);
+});
+
+test("a probe's answer fills a chat with no process: the models, the servers, Remote Control at startup and the switch for it; the chat's own claude replaces it, and the switch turned off before the first message keeps the bridge off (EMB-164)", async () => {
+  const { chat, inputs } = makeChat("remote", {
+    mode: "default",
+    fixture: startupBridgeFixture({ remote_control_auto_enable: true, remote_control_auto_on_by_default: false }, false),
+  });
+  const info = { models: [{ value: "default", resolved: "claude-opus-5-5", levels: ["low", "high"] }], mcp: [{ name: "embarch-api", status: "connected" }], remote: true, remoteByDefault: false };
+  chat.seedStartup(info);
+  assert.deepEqual(chat.state.models, info.models);
+  assert.deepEqual(chat.state.mcp, [{ name: "embarch-api", status: "connected" }]);
+  assert.deepEqual(chat.state.remoteStartup, { setting: true, on: true });
+  chat.setRemote(false);
+  assert.deepEqual(chat.state.remoteStartup, { setting: true, on: false }, "off for this chat, before any claude runs");
+  assert.equal(chat.state.process, "none", "the switch starts nothing");
+  chat.send("Reply with just: ok");
+  await turns(chat, 1);
+  assert.deepEqual(inputs().filter((o) => o.request?.subtype === "remote_control"), [], "no bridge at startup");
+  assert.deepEqual(chat.state.remoteStartup, { setting: true, on: false });
+  const models = chat.state.models;
+  chat.seedStartup({ ...info, models: [], mcp: [], remote: false });
+  assert.equal(chat.state.models, models, "its own claude answered: a probe no longer applies");
+  assert.deepEqual(chat.state.remoteStartup, { setting: true, on: false });
+  chat.dispose();
+});
+
+test("the switch turned on before the first message bridges the chat at startup, though Claude Code's setting would not (EMB-164)", async () => {
+  const { chat, inputs } = makeChat("remote", {
+    mode: "default",
+    fixture: startupBridgeFixture({ remote_control_auto_enable: false, remote_control_auto_on_by_default: false }),
+  });
+  chat.seedStartup({ models: [], mcp: [], remote: false, remoteByDefault: false });
+  assert.deepEqual(chat.state.remoteStartup, { setting: false, on: false });
+  chat.setRemote(true);
+  assert.deepEqual(chat.state.remoteStartup, { setting: false, on: true });
+  chat.send("Reply with just: ok");
+  await turns(chat, 1);
+  await waitFor(() => chat.state.remote?.status === "connected");
+  assert.deepEqual(inputs().filter((o) => o.request?.subtype === "remote_control").map((o) => o.request.enabled), [true]);
+  assert.equal(chat.state.remote.auto, true, "held only while the chat is open (100)");
+  // On a running process the switch is /remote-control's toggle.
+  chat.setRemote(false);
+  assert.equal(chat.state.remote, null);
+  await waitFor(() => inputs().filter((o) => o.request?.subtype === "remote_control").length === 2);
+  assert.deepEqual(inputs().filter((o) => o.request?.subtype === "remote_control").map((o) => o.request.enabled), [true, false]);
+  chat.dispose();
+});
+
 test("the MCP server answers what it does not serve with an error, a notification with nothing, and a failing tool as a tool error", async () => {
   const server = core.mcpServer({ name: "x", version: "1" }, [{ name: "boom", description: "", inputSchema: { type: "object" }, call: async () => { throw new Error("no editor"); } }]);
   assert.equal(await server({ jsonrpc: "2.0", method: "notifications/initialized" }), null);

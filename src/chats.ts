@@ -82,6 +82,8 @@ export interface ChatSettings {
   gate?: (env: NodeJS.ProcessEnv) => Promise<void> | null;
   /** After a turn ended on the CLI's refresh lock: warms the chat's login up until it is fresh (105). */
   recover?: (env: NodeJS.ProcessEnv) => Promise<boolean>;
+  /** Gives a chat of this window, given its environment, what its login and folder say before its first message (EMB-164). */
+  seed?: (chat: Chat, env: NodeJS.ProcessEnv) => void;
 }
 
 /** A chat's environment, kept for life, and its login's warm-up (105), which goes by that environment. */
@@ -186,6 +188,7 @@ export class ChatManager extends EventEmitter {
     };
     this.records.set(sessionId, rec);
     this.wire(sessionId, rec);
+    s.seed?.(chat, login.env ?? chatEnv());
     this.emit("changed");
     return rec;
   }
@@ -275,9 +278,11 @@ export class ChatManager extends EventEmitter {
     if (!rec) return null;
     if (rec.ours) return rec;
     if (!rec.resumable || rec.chat.hasEnded || this.isEnded(rec)) return null;
-    Object.assign(rec.chat.opts, loginOpts(this.settings(), sessionId, null, true));
+    const s = this.settings();
+    Object.assign(rec.chat.opts, loginOpts(s, sessionId, null, true));
     rec.ours = true;
     rec.viewer = false;
+    s.seed?.(rec.chat, rec.chat.opts.env ?? chatEnv());
     this.emit("changed");
     return rec;
   }
