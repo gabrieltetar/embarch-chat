@@ -5,7 +5,7 @@
 import * as cp from "child_process";
 
 /** The range this release's wire tests ran against (test/fixtures/wire/ and a live smoke run). */
-export const TESTED_RANGE = { min: "2.1.287", max: "2.1.308" };
+export const TESTED_RANGE = { min: "2.1.287", max: "2.1.322" };
 
 export function parseVersion(s: string): [number, number, number] | null {
   const m = /(\d+)\.(\d+)\.(\d+)/.exec(s);

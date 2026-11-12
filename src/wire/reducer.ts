@@ -151,7 +151,7 @@ export interface RemoteState {
   /** The bridge's epoch: a bridge_state of an older one says nothing of this. */
   epoch?: number;
   error?: string;
-  /** Started by the CLI itself (its `remoteControlAtStartup`), not by `/remote-control` here: no link to open, and the process held open only while the chat is (83, 100). */
+  /** Started at startup by Claude Code's `remoteControlAtStartup`, not by `/remote-control` here: the process held open only while the chat is (83, 100). */
   auto?: boolean;
 }
 
@@ -722,11 +722,11 @@ function foldSystem(s: ChatState, o: WireMessage): ChatState {
     // The bridge to claude.ai/code: "ready" comes with every process and says nothing of it.
     case "bridge_state": {
       const r = s.remote;
-      // One the panel did not start — the CLI's own remoteControlAtStartup —
-      // is on all the same (review r4 L6): the pill shows it, though it keeps
-      // the process past the idle close only while the chat is open (100); when Claude Code's
-      // default turned it on, its notice says so, once. The bridge the owner
-      // just turned off is not.
+      // One the panel did not start — no measured CLI starts one for a host,
+      // but a later one may — is on all the same (review r4 L6): the pill
+      // shows it, though it keeps the process past the idle close only while
+      // the chat is open (100); when Claude Code's default turned it on, its
+      // notice says so, once. The bridge the owner just turned off is not.
       if (!r) {
         if (o.state !== "connected") return s;
         const epoch = typeof o.bridge_epoch === "number" ? o.bridge_epoch : undefined;
@@ -735,7 +735,11 @@ function foldSystem(s: ChatState, o: WireMessage): ChatState {
         return s.remoteByDefault && !s.remoteDisclosed ? note({ ...on, remoteDisclosed: true }, REMOTE_DEFAULT_NOTICE, "info") : on;
       }
       if (typeof o.bridge_epoch === "number" && r.epoch !== undefined && o.bridge_epoch !== r.epoch) return s;
-      if (o.state === "connected") return { ...s, remote: { ...r, status: "connected", ...(typeof o.bridge_epoch === "number" ? { epoch: o.bridge_epoch } : {}) } };
+      if (o.state === "connected") {
+        const on: ChatState = { ...s, remote: { ...r, status: "connected", ...(typeof o.bridge_epoch === "number" ? { epoch: o.bridge_epoch } : {}) } };
+        // The panel's own bridge at startup (100) shows Claude Code's notice as the CLI's would.
+        return r.auto && s.remoteByDefault && !s.remoteDisclosed ? note({ ...on, remoteDisclosed: true }, REMOTE_DEFAULT_NOTICE, "info") : on;
+      }
       if (o.state === "failed" || o.state === "policy_disabled") return { ...s, remote: { ...r, status: "failed", error: typeof o.detail === "string" && o.detail ? o.detail : String(o.state) } };
       return s;
     }

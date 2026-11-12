@@ -69,7 +69,7 @@ export interface ChatSettings {
   handoff?: (sessionId: string, prompt: string) => Promise<boolean>;
   /** Why a chat's process stays up from outside it — a Promptu run of its own while its page shows (96, review F11) — or null. */
   hold?: (sessionId: string) => string | null;
-  /** Whether a chat is open, a tab or the sidebar's chat: a bridge the CLI started by itself holds its process only then (100). */
+  /** Whether a chat is open, a tab or the sidebar's chat: a bridge started at startup holds its process only then (100). */
   open?: (sessionId: string) => boolean;
   /**
    * The environment a chat keeps for life: its login — the one on record for

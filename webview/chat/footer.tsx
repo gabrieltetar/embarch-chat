@@ -10,8 +10,8 @@
 // starts; the model list is the panel's (MODELS), as before.
 //
 // Remote Control is Claude Code's footer pill (its changelog L5709, L2097):
-// shown while `/remote-control` has it on, or the CLI started the bridge
-// itself, or it has failed; on, a click opens the chat's session on
+// shown while `/remote-control` has it on, or Claude Code's
+// remoteControlAtStartup had the panel start it (100), or it has failed; on, a click opens the chat's session on
 // claude.ai/code, where a permission prompt can be answered from the phone;
 // failed, it says why until /remote-control dismisses it.
 //

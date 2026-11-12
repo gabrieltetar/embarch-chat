@@ -46,7 +46,7 @@ export interface ChatOptions {
   settle?: boolean;
   /** Why something outside the process keeps it up — a Promptu dialog or prompt still the owner's (96) — or null. */
   hold?: () => string | null;
-  /** Whether the chat is open — a tab, or the sidebar's chat: a bridge the CLI started by itself holds the process only then (100). */
+  /** Whether the chat is open — a tab, or the sidebar's chat: a bridge started at startup holds the process only then (100). */
   open?: () => boolean;
   /** What a process waits on before it spawns: the login's warm-up while its token is due (105), else null. */
   gate?: () => Promise<void> | null;
@@ -112,6 +112,18 @@ export function modelInfos(list: unknown): ModelInfo[] {
     }));
 }
 
+/**
+ * Whether initialize's answer says the host starts the bridge at startup
+ * (100), by Claude Code's panel's own test: Remote Control at startup is on
+ * and available, and on by the owner's setting — or, on only by Claude
+ * Code's default, with its IDE gate open. The CLI starts none for a host
+ * [measured 2.1.287, 2.1.322].
+ */
+export function bridgesAtStartup(r: Record<string, unknown>): boolean {
+  if (r.remote_control_auto_enable !== true || r.remote_control_available === false) return false;
+  return r.remote_control_auto_on_by_default === false || r.ide_rc_auto_enable_gate === true;
+}
+
 /** How long a side question may take, as Claude Code's panel allows (its SIDE_QUESTION_TIMEOUT_MS). */
 const SIDE_MS = 300_000;
 
@@ -172,6 +184,8 @@ export class Chat extends EventEmitter implements HandoffPort {
   private turnUuid: string | undefined;
   private turnRan = false;
   private turnLocked = false;
+  /** The owner turned this chat's bridge off: its next process does not start one at startup (100). */
+  private remoteDeclined = false;
 
   /** The owner's name still waiting for the chat's first turn: what a reload must carry (decision 63). */
   get pendingName(): string | null {
@@ -327,9 +341,11 @@ export class Chat extends EventEmitter implements HandoffPort {
     proc.on("initialized", (r: Record<string, unknown>) => {
       if (this.proc !== proc) return;
       if (Array.isArray(r.models)) this.dispatch({ type: "_models", models: modelInfos(r.models) });
-      // Whether a bridge the CLI starts by itself is Claude Code's default's doing, not the owner's setting: its notice then says so (83; review r4 L6).
+      // Whether the bridge at startup is Claude Code's default's doing, not the owner's setting: its notice then says so (83; review r4 L6).
       const byDefault = r.remote_control_auto_enable === true && r.remote_control_auto_on_by_default === true;
       if (byDefault !== !!this.state.remoteByDefault) this.dispatch({ type: "_remoteDefault", on: byDefault });
+      // The CLI never starts that bridge for a host: the host does, as Claude Code's panel does (100).
+      if (bridgesAtStartup(r) && !this.remoteDeclined && !this.state.remote) void this.bridge(proc, true);
       void this.readSettings();
     });
     // Their callbacks are answered in process.ts and never reach the refusal below (66).
@@ -1151,11 +1167,13 @@ export class Chat extends EventEmitter implements HandoffPort {
    * message [measured] — and holds it open; off, or on a failure, dismiss.
    * A permission prompt still comes here too [measured]; one answered on
    * the phone is withdrawn here by the CLI's `control_cancel_request`. A
-   * bridge the CLI started by itself turns off the same way.
+   * bridge started at startup (100) turns off the same way, and stays off
+   * for the chat; a failure dismissed does not.
    */
   async remoteControl(name?: string): Promise<void> {
     const was = this.state.remote;
     if (was) {
+      if (was.status !== "failed") this.remoteDeclined = true;
       // That bridge's own lines, still coming, must not turn it on again; with no epoch known, none of this process's.
       this.dispatch({ type: "_remote", remote: null, off: was.epoch ?? Number.MAX_SAFE_INTEGER });
       if (!this.running) return;
@@ -1172,8 +1190,13 @@ export class Chat extends EventEmitter implements HandoffPort {
       this.once("closed", () => void this.remoteControl(name));
       return;
     }
-    const proc = this.ensureProcess();
-    this.dispatch({ type: "_remote", remote: { status: "connecting" } });
+    this.remoteDeclined = false;
+    await this.bridge(this.ensureProcess(), false, name);
+  }
+
+  /** Asks `proc` for the bridge: by `/remote-control` here, or at startup when Claude Code's settings say so (`auto`, 100). */
+  private async bridge(proc: ClaudeProcess, auto: boolean, name?: string): Promise<void> {
+    this.dispatch({ type: "_remote", remote: { status: "connecting", ...(auto ? { auto: true } : {}) } });
     this.touch();
     try {
       const r = await proc.request("remote_control", { enabled: true, ...(name ? { name } : {}) }, 30000);
@@ -1181,7 +1204,7 @@ export class Chat extends EventEmitter implements HandoffPort {
       if (this.proc !== proc || !cur) return;
       const url = typeof r.session_url === "string" && /^https:\/\//.test(r.session_url) ? r.session_url : undefined;
       this.dispatch({ type: "_remote", remote: { ...cur, ...(url ? { url } : {}), ...(typeof r.bridge_epoch === "number" ? { epoch: r.bridge_epoch } : {}) } });
-      this.log(`remote control on${url ? `: ${url}` : ""}`);
+      this.log(`remote control on${auto ? " at startup" : ""}${url ? `: ${url}` : ""}`);
     } catch (e) {
       if (this.proc !== proc || !this.state.remote) return;
       this.dispatch({ type: "_remote", remote: { status: "failed", error: (e as Error).message } });
@@ -1223,8 +1246,8 @@ export class Chat extends EventEmitter implements HandoffPort {
     if (this.state.pending.length) return "waits on the owner";
     if (this.state.background.length) return "a background task runs";
     // Closing would drop the phone's session: the owner may answer, or write, from there. A
-    // bridge the owner turned on here (83), or one the CLI started by itself — its
-    // remoteControlAtStartup — while the chat is open (100): held for every chat, a closed one
+    // bridge the owner turned on here (83), or one started at startup by Claude Code's
+    // remoteControlAtStartup while the chat is open (100): held for every chat, a closed one
     // would keep its process for good.
     const remote = this.state.remote;
     if (remote && remote.status !== "failed" && (!remote.auto || this.opts.open?.())) return "Remote Control is on";

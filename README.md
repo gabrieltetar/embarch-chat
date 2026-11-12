@@ -107,7 +107,7 @@ code cites.
 - **Atlas citations become links** in a repo with an `embarch/atlas`:
   `<doc_id> p<N>` opens that page's text, `<board>:<ref>` the line naming it
   in the board's nets or parts.
-- `claude --version` outside the tested range (2.1.287–2.1.308) shows a
+- `claude --version` outside the tested range (2.1.287–2.1.322) shows a
   one-line warning and keeps working.
 - **The Haiku assistant at the input**, for the chat on screen only, in
   three waves: at once, typing through the ghost text shown and a prefix

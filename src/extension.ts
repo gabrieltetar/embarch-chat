@@ -203,7 +203,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   /** Whether a chat's page is on screen (`onScreen` below, once the views exist): Promptu holds a process only then (review F11). */
   let shownNow: (sid: string) => boolean = () => false;
-  /** Whether a chat is open (`isOpen` below): a bridge the CLI started by itself holds its process only then (100). */
+  /** Whether a chat is open (`isOpen` below): a bridge started at startup holds its process only then (100). */
   let openNow: (sid: string) => boolean = () => false;
   // One warm-up per login while its token is due (105): chats' processes wait on it, Haiku's calls skip it.
   const loginGate = new LoginGate({ warm: (env) => warmUp(cfg().claudePath, env), log });
