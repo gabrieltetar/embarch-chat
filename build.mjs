@@ -34,14 +34,6 @@ const builds = tests
       },
       {
         ...common,
-        entryPoints: { "last-session": "src/lastSessionCli.ts" },
-        outdir: "dist",
-        platform: "node",
-        format: "cjs",
-        outExtension: { ".js": ".js" },
-      },
-      {
-        ...common,
         entryPoints: { chat: "webview/chat/index.tsx", list: "webview/list/index.tsx" },
         outdir: "dist/webview",
         platform: "browser",
