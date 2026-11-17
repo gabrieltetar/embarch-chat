@@ -19,6 +19,7 @@ import type { AppliedSettings, ContextUsage, ModelInfo, PermissionDecision, Wire
 import { DIALOG_CANCELLED, answerable, unansweredNote } from "./dialogs";
 import { Destination, PlanComment, alwaysPermissions, planFeedback } from "./cards";
 import { isRefreshLockError } from "../loginGate";
+import { DEFAULT_LIMIT_PREFS, LimitPrefs, LimitWait, MAX_FRUITLESS, RESET_SLACK_MS, RateLimitInfo, WAIT_TICK_MS, continueText, limitHitOf, limitName, limitReply, rateLimitOf, sendAt } from "../afterLimit";
 
 export interface ChatOptions {
   sessionId: string;
@@ -52,6 +53,10 @@ export interface ChatOptions {
   gate?: () => Promise<void> | null;
   /** After a turn ended on the CLI's refresh lock (105): warms the login up until it is fresh. Whether it is. */
   recover?: () => Promise<boolean>;
+  /** What a usage limit hit does (109): the menu's switches as the machine's settings start them, and whether the handoff tool is declared at all (103). */
+  limits?: { prefs: LimitPrefs; handoffTool: boolean };
+  /** After a limit's reset, before the message goes (109); tests shorten it. */
+  limitSlackMs?: number;
 }
 
 /**
@@ -205,6 +210,17 @@ export class Chat extends EventEmitter implements HandoffPort {
   private remoteSetting: boolean | null = null;
   /** A process of this chat's answered initialize: a probe's answer no longer applies (EMB-164). */
   private ownInit = false;
+  /** The rail's Limits menu (109): what a usage limit hit does in this chat, and the handoff's switch (103). */
+  private limitPrefs: LimitPrefs;
+  /** The limit hit this chat waits on, and the timer that looks at the clock while it is armed (109). */
+  private wait: LimitWait | null = null;
+  private waitTimer: NodeJS.Timeout | undefined;
+  /** This process's newest `rate_limit_event`, and the CLI's made-up limit reply in the running turn (109). */
+  private rateLimit: RateLimitInfo | null = null;
+  private turnLimit: string | null = null;
+  /** Continues sent in a row whose turn the limit turned back before any step ran (109); the running turn answers one. */
+  private fruitless = 0;
+  private autoTurn = false;
 
   /** The owner's name still waiting for the chat's first turn: what a reload must carry (decision 63). */
   get pendingName(): string | null {
@@ -224,7 +240,8 @@ export class Chat extends EventEmitter implements HandoffPort {
   constructor(readonly opts: ChatOptions) {
     super();
     this.state = initialState(opts.sessionId, opts.mode ?? "auto");
-    this.state = { ...this.state, cwd: opts.cwd };
+    this.limitPrefs = { ...(opts.limits?.prefs ?? DEFAULT_LIMIT_PREFS) };
+    this.state = { ...this.state, cwd: opts.cwd, limitPrefs: this.limitPrefs, handoffTool: opts.limits?.handoffTool ?? true, limitWait: null };
     this.hasSession = opts.existing;
     this.lastStatus = chatStatus(this.state);
   }
@@ -397,9 +414,16 @@ export class Chat extends EventEmitter implements HandoffPort {
       if (o.type === "user" && o.isReplay) {
         this.turnUuid = typeof o.uuid === "string" ? o.uuid : undefined;
         this.turnRan = false;
+        this.turnLimit = null;
+        // A turn under way — the owner's, a continue of ours, the CLI's own after a reset — is what the wait was for (109).
+        if (this.wait) this.clearWait("a turn started");
       } else if (o.type === "assistant" && !o.parent_tool_use_id) {
+        const hit = limitReply(o);
         if (isRefreshLockError(o)) this.turnLocked = true;
+        else if (hit !== null) this.turnLimit = hit;
         else this.turnRan = true;
+      } else if (o.type === "rate_limit_event") {
+        this.rateLimit = rateLimitOf(o.rate_limit_info) ?? this.rateLimit;
       }
       // The rerun's first frame says so (`resume_reason`): the label goes before it.
       if (label && typeof o.resume_reason === "string") {
@@ -437,6 +461,7 @@ export class Chat extends EventEmitter implements HandoffPort {
           this.turnLocked = false;
           void this.afterRefreshLock(this.turnRan ? undefined : this.turnUuid);
         }
+        if (!own) this.afterTurnLimit();
         void this.refreshContext();
       } else if (o.type === "system" && (o.subtype === "background_tasks_changed" || o.subtype === "task_notification")) {
         this.touch();
@@ -503,6 +528,9 @@ export class Chat extends EventEmitter implements HandoffPort {
       this.note("This chat has ended: it takes no more input.", "error");
       return;
     }
+    // The owner's own word: the continues start counting again (109).
+    this.fruitless = 0;
+    this.autoTurn = false;
     text = stripInvisible(text).text;
     const context = extra.context ?? [];
     // Its own uuid: the CLI's queue knows it by it, to take it back or send it now (port item 72).
@@ -713,6 +741,125 @@ export class Chat extends EventEmitter implements HandoffPort {
     // What a reload gave back goes too: the CLI takes it after the step.
     this.sendLines(this.ensureProcess(), this.takeRestored());
     this.touch();
+  }
+
+  // ------------------------------------------------- a usage limit (109)
+
+  /** The rail's Limits menu: its switches and message, and the limit this chat waits on. */
+  get limits(): { prefs: LimitPrefs; wait: LimitWait | null } {
+    return { prefs: { ...this.limitPrefs }, wait: this.wait ? { ...this.wait } : null };
+  }
+
+  /** The handoff's switch (103, 109): on, an agent's handoff starts the fresh session at once; off, it asks on a card. */
+  get autoHandoff(): boolean {
+    return this.limitPrefs.handoff;
+  }
+
+  /** The owner changed the menu: a wait it covers is armed or disarmed at once. */
+  setLimitPrefs(p: Partial<LimitPrefs>): void {
+    const next: LimitPrefs = { ...this.limitPrefs };
+    if (typeof p.session === "boolean") next.session = p.session;
+    if (typeof p.weekly === "boolean") next.weekly = p.weekly;
+    if (typeof p.handoff === "boolean") next.handoff = p.handoff;
+    if (p.text !== undefined) next.text = continueText(p.text);
+    this.limitPrefs = next;
+    this.dispatch({ type: "_limitPrefs", prefs: next });
+    if (this.wait && !this.wait.stopped) this.showWait({ ...this.wait, armed: this.armable(this.wait) });
+  }
+
+  /** The owner's Cancel in the menu: this limit's message does not go. */
+  cancelWait(): void {
+    if (!this.wait) return;
+    this.log("limit wait cancelled by the owner");
+    this.clearWait(null);
+  }
+
+  /** After a reload (63): the menu as it was, and a wait still ahead, armed again. */
+  restoreLimits(saved: { prefs?: Partial<LimitPrefs>; wait?: LimitWait | null; fruitless?: number }): void {
+    if (this.disposed || this.ended) return;
+    if (saved.prefs) this.setLimitPrefs(saved.prefs);
+    if (typeof saved.fruitless === "number") this.fruitless = saved.fruitless;
+    if (saved.wait) this.showWait(saved.wait.stopped ? saved.wait : { ...saved.wait, armed: this.armable(saved.wait) });
+  }
+
+  /** How many continues in a row the limit turned back: a reload carries it, so a reload does not reset the bound. */
+  get limitTries(): number {
+    return this.fruitless;
+  }
+
+  /** A turn ended: on a limit hit, its wait; a continue's turn that ran a step clears the count. */
+  private afterTurnLimit(): void {
+    const reply = this.turnLimit;
+    this.turnLimit = null;
+    const auto = this.autoTurn;
+    this.autoTurn = false;
+    if (reply === null) {
+      if (auto) this.fruitless = 0;
+      return;
+    }
+    if (auto && this.turnRan) this.fruitless = 0;
+    const hit = limitHitOf(reply, this.rateLimit);
+    if (!hit) {
+      this.log(`limit hit, but not one that resets: ${reply.slice(0, 120)}`);
+      return;
+    }
+    const stopped = this.fruitless >= MAX_FRUITLESS;
+    const wait: LimitWait = { ...hit, armed: false, ...(stopped ? { stopped: true } : {}) };
+    if (!stopped) wait.armed = this.armable(wait);
+    this.log(`limit hit: ${hit.limit ?? hit.window}, resets ${hit.resetsAt ?? "?"}${wait.armed ? ", continue armed" : stopped ? `, stopped after ${this.fruitless} continues` : ""}`);
+    if (stopped) this.dispatch({ type: "_note", text: `The ${limitName(wait)} still turned Claude back after ${this.fruitless} continues: nothing more goes on its own. Send a message to go on.`, tone: "error" });
+    this.showWait(wait);
+  }
+
+  /** Whether the menu's switch for the wait's limit is on, and its reset is known. */
+  private armable(w: LimitWait): boolean {
+    return w.resetsAt !== null && (w.window === "session" ? this.limitPrefs.session : this.limitPrefs.weekly);
+  }
+
+  private showWait(w: LimitWait): void {
+    this.wait = w;
+    this.dispatch({ type: "_limitWait", wait: w });
+    this.armWait();
+  }
+
+  private clearWait(why: string | null): void {
+    if (this.waitTimer) clearTimeout(this.waitTimer);
+    this.waitTimer = undefined;
+    if (!this.wait) return;
+    if (why) this.log(`limit wait cleared: ${why}`);
+    this.wait = null;
+    this.dispatch({ type: "_limitWait", wait: null });
+  }
+
+  /** Looks at the clock every minute while armed: a timer set for hours would fire late on a machine that slept through the reset. */
+  private armWait(): void {
+    if (this.waitTimer) clearTimeout(this.waitTimer);
+    this.waitTimer = undefined;
+    const w = this.wait;
+    if (!w?.armed || this.disposed) return;
+    const at = sendAt(w, this.opts.limitSlackMs ?? RESET_SLACK_MS)!;
+    const left = at - Date.now();
+    if (left <= 0) return void this.fireWait();
+    this.waitTimer = setTimeout(() => this.armWait(), Math.min(left, WAIT_TICK_MS));
+    this.waitTimer.unref?.();
+  }
+
+  /** The reset has come: the menu's message goes, unless the chat is busy or ended meanwhile. */
+  private fireWait(): void {
+    const w = this.wait;
+    this.clearWait(null);
+    if (!w || this.disposed || this.ended) return;
+    if (this.state.busy || this.state.pending.length) {
+      this.log("limit reset: the chat is busy, nothing sent");
+      return;
+    }
+    const text = continueText(this.limitPrefs.text);
+    const tries = this.fruitless + 1;
+    this.log(`limit reset: sending the continue (${tries} in a row)`);
+    this.dispatch({ type: "_note", text: `The ${limitName(w)} reset: "${text}" went on its own.`, tone: "info" });
+    this.send(text);
+    this.fruitless = tries;
+    this.autoTurn = true;
   }
 
   /** Handoff cards (decision 103) waiting for the owner, by request id: the prompt as the agent wrote it, and the tool call's answer. */
@@ -1343,6 +1490,7 @@ export class Chat extends EventEmitter implements HandoffPort {
     this.queued = [];
     this.restored = [];
     this.rerun = false;
+    this.clearWait("the chat ended");
     this.closeProcess();
   }
 
@@ -1354,6 +1502,8 @@ export class Chat extends EventEmitter implements HandoffPort {
 
   dispose(): void {
     this.disposed = true;
+    if (this.waitTimer) clearTimeout(this.waitTimer);
+    this.waitTimer = undefined;
     for (const h of this.handoffs.values()) h.decide({ go: false, prompt: h.prompt });
     this.handoffs.clear();
     this.queued = [];

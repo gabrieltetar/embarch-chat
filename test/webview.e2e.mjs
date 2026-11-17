@@ -3696,7 +3696,7 @@ const promptuPosts = async (op) => (await posts()).filter((p) => p.t === "prompt
 
 await check("the rail: Memory, Promptu, the 📚, the 💡, the 💬 and the settings gear down the chat's left edge, folded to their icons until the pointer is on it, which shows their names over the timeline without moving it; the 💡 and 📚 left the input's bar (94, EMB-164)", async () => {
   await fresh();
-  assert.deepEqual(await text(".rail .rail-entry .rail-label"), ["Usage", "Memory", "Promptu", "Library", "Suggestions", "Side question", "Auto · Default"]);
+  assert.deepEqual(await text(".rail .rail-entry .rail-label"), ["Usage", "Memory", "Promptu", "Library", "Suggestions", "Side question", "Limits", "Auto · Default"]);
   // Usage alone at the top, the rest at the bottom by the input (the owner's P16).
   const [col, use, mem, bulb] = await Promise.all([".rail-col", ".rail .rail-entry.usage", ".rail .rail-entry.memory", ".rail .rail-entry.settings"].map((sel) => exec("const r=document.querySelector(arguments[0]).getBoundingClientRect(); return [Math.round(r.top), Math.round(r.bottom)]", [sel])));
   assert.ok(use[0] - col[0] < 12, `Usage at the top: ${use} in ${col}`);
@@ -3710,7 +3710,7 @@ await check("the rail: Memory, Promptu, the 📚, the 💡, the 💬 and the set
   // One-colour SVGs in currentColor, no emoji and no filter (EMB-56).
   assert.deepEqual(
     await exec("return [...document.querySelectorAll('.rail .rail-entry .rail-icon')].map((i) => [i.querySelectorAll('svg path').length, i.textContent.trim(), getComputedStyle(i).filter, getComputedStyle(i.querySelector('svg')).stroke === getComputedStyle(i).color])"),
-    [1, 2, 3, 4, 5, 6, 7].map(() => [1, "", "none", true]),
+    [1, 2, 3, 4, 5, 6, 7, 8].map(() => [1, "", "none", true]),
     "each rail icon is one SVG path in currentColor, no text, no filter",
   );
   assert.deepEqual(await text(".composer .bar .btw"), [], "the side question left the bar for the rail");
@@ -4173,6 +4173,60 @@ await check("the Usage icon: the plan's session and weekly share with their rese
   assert.equal(await level(), "none", "past both resets: grey");
   assert.equal(await name(), "Usage — session reset, weekly reset");
   await send([{ t: "usage", usage: null }]);
+});
+
+await check("the Limits menu: continue after the 5-hour limit on and after the weekly off, the message, the automatic handoff switch; an armed wait lights the icon and says when it goes, Cancel takes it away (109)", async () => {
+  await fresh({ limitPrefs: { session: true, weekly: false, text: "continue", handoff: false }, handoffTool: true, limitWait: null });
+  const entry = ".rail .rail-entry.limits";
+  const lit = () => exec("return document.querySelector(arguments[0]).classList.contains('lit')", [entry]);
+  assert.equal(await lit(), false);
+  await click(entry);
+  const boxes = () => exec("return [...document.querySelectorAll('.limits-pop .set-switch input')].map((i) => [i.parentElement.textContent.trim(), i.checked, i.disabled])");
+  assert.deepEqual(await boxes(), [
+    ["Continue after the 5-hour limit", true, false],
+    ["Continue after the weekly limit", false, false],
+    ["Automatic handoff", false, false],
+  ]);
+  assert.ok((await text(".limits-pop"))[0].includes("No limit has cut this chat off."));
+  await exec("[...document.querySelectorAll('.limits-pop .set-switch input')][1].click()");
+  await settle();
+  await exec("[...document.querySelectorAll('.limits-pop .set-switch input')][2].click()");
+  await settle();
+  // Typed as the owner types it, Enter saving it.
+  const field = Object.values(await wd("POST", `${S}/element`, { using: "css selector", value: ".limits-pop .limit-text input" }))[0];
+  await wd("POST", `${S}/element/${field}/clear`, {});
+  await wd("POST", `${S}/element/${field}/value`, { text: "keep going\uE007" });
+  await settle();
+  assert.deepEqual((await posts()).filter((p) => p.t === "limits"), [
+    { t: "limits", prefs: { weekly: true } },
+    { t: "limits", prefs: { handoff: true } },
+    { t: "limits", prefs: { text: "keep going" } },
+  ]);
+  const resetsAt = Math.floor(Date.now() / 1000) + 2 * 3600 + 120;
+  await send([
+    { t: "event", e: { type: "_limitPrefs", prefs: { session: true, weekly: true, text: "keep going", handoff: true } } },
+    { t: "event", e: { type: "_limitWait", wait: { limit: "five_hour", window: "session", resetsAt, hitAt: Date.now(), armed: true } } },
+  ]);
+  assert.equal(await lit(), true, "lit while a continue is armed");
+  const now = (await text(".limits-pop section[aria-label='Waiting'] .pop-note"))[0];
+  assert.ok(now.includes("The 5-hour limit cut the last turn off.") && now.includes('"keep going" goes in 2h'), now);
+  assert.ok((await exec("return document.querySelector(arguments[0]).getAttribute('aria-label')", [entry])).includes('"keep going" goes in 2h'), "its name says when");
+  await shot("limits-menu");
+  await clearPosts();
+  await click(".limits-pop button.pop-row", "Cancel this continue");
+  assert.deepEqual((await posts()).filter((p) => p.t === "limitCancel"), [{ t: "limitCancel" }]);
+  // Unarmed (its switch off), the mark shows instead of the light; with no handoff tool, the switch is disabled and says why.
+  await send([
+    { t: "event", e: { type: "_limitWait", wait: { limit: "seven_day", window: "weekly", resetsAt: resetsAt + 86400, hitAt: Date.now(), armed: false } } },
+    { t: "snapshot", state: { ...core.initialState(SID), cwd: "/work/rec/x", process: "running", limitPrefs: { session: true, weekly: false, text: "continue", handoff: true }, handoffTool: false, limitWait: { limit: "seven_day", window: "weekly", resetsAt: resetsAt + 86400, hitAt: Date.now(), armed: false } }, view: OURS, header: HEADER, warning: null },
+  ]);
+  assert.equal(await lit(), false);
+  assert.equal(await exec("return document.querySelector(arguments[0]).classList.contains('hit')", [entry]), true);
+  if (!(await text(".limits-pop")).length) await click(entry);
+  assert.ok((await text(".limits-pop section[aria-label='Waiting'] .pop-note"))[0].includes("Continue after it is off."));
+  assert.deepEqual((await boxes())[2], ["Automatic handoff", false, true]);
+  assert.ok((await text(".limits-pop"))[0].includes("embarchChat.handoff is off"));
+  await keys("\uE00C");
 });
 
 await check("the Memory menu's pass line and the icon's due marker: nothing with the settings unset; the date, and a marker once due; a click asks the host to start the pass, naming nothing itself (98)", async () => {

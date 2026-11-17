@@ -16,6 +16,13 @@ export function handoffSetting(v: unknown): HandoffSetting {
 /** What a chat does for the tool's call: the answer Claude reads. */
 export interface HandoffPort {
   handoff(prompt: string, how: "card" | "immediate"): Promise<string>;
+  /** The chat's own switch in the rail's Limits menu (109): on, no card. Read at each call, so a switch flipped mid-session holds. */
+  readonly autoHandoff?: boolean;
+}
+
+/** How a call goes: the chat's switch when it has one, else the machine's setting (103, 109). */
+export function handoffHow(chat: HandoffPort, setting: "card" | "immediate"): "card" | "immediate" {
+  return chat.autoHandoff === undefined ? setting : chat.autoHandoff ? "immediate" : "card";
 }
 
 export const HANDOFF_TOOL: Omit<McpTool, "call"> = {

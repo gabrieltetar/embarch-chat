@@ -31,6 +31,8 @@ import { PromptuRuns } from "./promptu/runs";
 import { PromptuService, embarchApiPresent } from "./promptu/service";
 import { startRough } from "./promptu/text";
 import { UsageStore } from "./usageStore";
+import { DEFAULT_CONTINUE_TEXT, continueText } from "./afterLimit";
+import { handoffSetting } from "./handoff";
 import { memoryPassConfig } from "./memoryPass";
 import { CHAT_VIEW, ChatPanels, ChatViewProvider, THREADS_VIEW, ThreadsViewProvider } from "./views/views";
 import { claudeVersion, versionWarning } from "./wire/version";
@@ -70,6 +72,16 @@ function cfg() {
     desks: c.get<Record<string, DeskConfig>>("desks", {}),
     folderRules: c.get<FolderRule[]>("folderRules", []),
     memoryPass: memoryPassConfig(c.get("memoryPass.stampPath"), c.get("memoryPass.intervalDays"), c.get("memoryPass.command")),
+    // A new chat's Limits menu (109): continue after the 5-hour limit on, after the weekly off; the handoff's switch from 103's setting.
+    limits: {
+      prefs: {
+        session: c.get<boolean>("continueAfterSessionLimit", true),
+        weekly: c.get<boolean>("continueAfterWeeklyLimit", false),
+        text: continueText(c.get<string>("continueMessage", DEFAULT_CONTINUE_TEXT)),
+        handoff: handoffSetting(c.get<string>("handoff", "card")) === "immediate",
+      },
+      handoffTool: handoffSetting(c.get<string>("handoff", "card")) !== "off",
+    },
   };
 }
 
@@ -223,6 +235,7 @@ export function activate(context: vscode.ExtensionContext): void {
     gate: (env) => loginGate.wait(env),
     recover: (env) => loginGate.recover(env),
     seed: cfg().startupProbe ? (chat, env) => probes.get(env, chat.opts.cwd, (info) => chat.seedStartup(info)) : undefined,
+    limits: () => cfg().limits,
   }));
   const manager = chats;
   // Asked once as the window starts, so the first chat's menu is filled when it opens.
@@ -812,6 +825,8 @@ export function activate(context: vscode.ExtensionContext): void {
     const { effort, ultracode } = rec.chat.state;
     if (effort || ultracode) await fresh.chat.setEffort(effort, ultracode);
     fresh.chat.carryInto(rec.chat.state, prompt);
+    // The Limits menu goes with the work (109): a fresh session of an overnight chat keeps continuing.
+    fresh.chat.setLimitPrefs(rec.chat.limits.prefs);
     rec.chat.note("Handed off to a fresh session, which carries on in this panel. This session stays readable on the list.");
     haiku.sent(fresh.chat.sessionId);
     fresh.chat.send(prompt);

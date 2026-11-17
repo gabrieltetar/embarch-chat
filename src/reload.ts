@@ -39,6 +39,7 @@ import * as vscode from "vscode";
 import type { ChatManager, ChatRecord } from "./chats";
 import { agentPid } from "./jump";
 import { NO_REPLY_NOTE, RERUN_MAX_AGE_MS, Untaken } from "./wire/chat";
+import type { LimitPrefs, LimitWait } from "./afterLimit";
 import { MODES, findTranscript, holdsMessage, transcriptMode } from "./wire/transcript";
 import { historyUpTo } from "./wire/history";
 
@@ -82,6 +83,8 @@ interface SavedChat {
   typed?: string;
   /** Which kind of page told it (review r6 L3). */
   typedFrom?: "tab" | "sidebar";
+  /** The Limits menu, the limit hit it waits on and the continues already sent in a row (109): a reload keeps the wait armed. */
+  limits?: { prefs: LimitPrefs; wait: LimitWait | null; fruitless: number };
 }
 
 interface Saved {
@@ -190,6 +193,7 @@ export class ReloadMemory implements vscode.Disposable {
         ...(untaken.length ? { untaken } : {}),
         ...(r.draft ? { draft: r.draft } : {}),
         ...(r.typed?.trim() ? { typed: r.typed, ...(r.typedFrom ? { typedFrom: r.typedFrom } : {}) } : {}),
+        limits: { ...r.chat.limits, fruitless: r.chat.limitTries },
       });
     }
     const saved: Saved | undefined = chats.length ? { at: Date.now(), current: this.manager.current, chats } : undefined;
@@ -263,6 +267,8 @@ export async function restoreAfterReload(o: RestoreCtx): Promise<void> {
     // No process runs it yet: the next one starts with them.
     if (c.model) void rec.chat.setModel(c.model);
     if (c.effort || c.ultracode) void rec.chat.setEffort(c.effort ?? null, !!c.ultracode);
+    // A new chat is this window's now; one on record waits until it is adopted below, so a viewer never sends (109).
+    if (fresh && c.limits) rec.chat.restoreLimits(c.limits);
     o.memory.noteRerun(c.sid, c.reruns);
     if (c.tab) o.openTab(c.sid);
     void bringBack(o, c, fresh).finally(() => o.memory.settled(c.sid));
@@ -291,6 +297,7 @@ async function bringBack(o: RestoreCtx, c: SavedChat, fresh: boolean): Promise<v
   rec.itemId = c.itemId ?? rec.itemId;
   rec.itemTitle = c.itemTitle ?? rec.itemTitle;
   if (c.draft) o.manager.setDraft(c.sid, c.draft);
+  if (c.limits && !fresh) rec.chat.restoreLimits(c.limits);
   const words = untakenOf(rec, c);
   // Nothing on record to continue: a new chat's words go back to the draft, and nothing runs.
   if (!c.running || fresh) return toDraft(o, rec, words);

@@ -610,6 +610,13 @@ export class ChatHost implements vscode.Disposable {
       case "remote":
         if (rec.ours) chat.setRemote(m.on === true);
         return;
+      case "limits":
+        // The rail's Limits menu (109): only where the chat runs.
+        if (rec.ours && m.prefs && typeof m.prefs === "object") chat.setLimitPrefs(m.prefs);
+        return;
+      case "limitCancel":
+        if (rec.ours) chat.cancelWait();
+        return;
       case "keep": {
         // The reply's own text, from the host's state: the page names it, never supplies it.
         const e = chat.state.entries[m.entryId];

@@ -2744,3 +2744,29 @@ body.in-editor .rail-col {
   margin: 4px 0 0;
   padding-left: 18px;
 }
+
+/* The rail's Limits menu (109): lit while a continue is armed; a hit not armed shows the mark Memory's due pass shows. */
+.rail-entry.limits.hit .rail-icon::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  right: -1px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+.limits-pop .limit-text {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin: 6px 0 2px;
+}
+.limits-pop .limit-text input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.limits-pop .set-switch.off {
+  opacity: 0.6;
+  cursor: default;
+}

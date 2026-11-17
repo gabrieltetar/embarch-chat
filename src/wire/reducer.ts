@@ -12,6 +12,7 @@ import { answerable, unansweredNote } from "./dialogs";
 import type { ContextItem } from "./message";
 import { originKind, readMessage, sameText } from "./message";
 import type { PlanComment } from "./cards";
+import type { LimitPrefs, LimitWait } from "../afterLimit";
 
 export type ProcessState = "none" | "starting" | "running" | "closed" | "error";
 
@@ -255,6 +256,12 @@ export interface ChatState {
    * will do, the owner's pick for it first.
    */
   remoteStartup?: { setting: boolean; on: boolean };
+  /** The rail's Limits menu (109): what a usage limit hit does in this chat, and the handoff's switch (103). */
+  limitPrefs?: LimitPrefs;
+  /** Whether the handoff tool is declared at all: `embarchChat.handoff` is not `off` (103). */
+  handoffTool?: boolean;
+  /** The usage limit hit this chat waits on, armed or not (109). */
+  limitWait?: LimitWait | null;
   /** The note that offers to continue the step a reload interrupted (63), until a process starts. */
   rerunOffer: string | null;
   seq: number;
@@ -967,6 +974,10 @@ export function reduce(s: ChatState, o: WireMessage): ChatState {
     }
     case "_remoteDefault":
       return { ...s, remoteByDefault: o.on === true };
+    case "_limitPrefs":
+      return { ...s, limitPrefs: o.prefs as LimitPrefs };
+    case "_limitWait":
+      return { ...s, limitWait: (o.wait as LimitWait | null) ?? null };
     case "_remoteStartup":
       return { ...s, remoteStartup: { setting: o.setting === true, on: o.on === true } };
     case "_effort":

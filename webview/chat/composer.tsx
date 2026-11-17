@@ -53,6 +53,8 @@ import { IMAGE_TYPES, looksBinary, pasteToMark, pastesIn, rememberPaste, stripIn
 import type { HostToChat, MentionItem, TerminalRef } from "../shared/protocol";
 import type { ChatState } from "../../src/wire/reducer";
 import { SETTINGS_EVENT, SettingsPanel, settingsGear } from "./settings";
+import { LimitsPanel, limitsLook } from "./limits";
+import { useNow } from "./clock";
 import { vscodeApi } from "../shared/vscode";
 import { CategoryMenu, MenuGroup, MenuKeys } from "./menus";
 import type { MemoryOut } from "../../src/promptu/cli";
@@ -238,18 +240,22 @@ export function Composer(p: Props) {
   const [cards, setCards] = useState<{ judged: string; list: Card[] }>({ judged: "", list: [] });
   const [used, setUsed] = useState<string[]>([]);
   const [menu, setMenu] = useState<null | "bulb" | "library">(null);
-  /** What the rail has open beside it: Promptu's card, the Memory menu, the Usage card or the settings menu (95, 98, 99, EMB-164). */
-  const [railPop, setRailPop] = useState<null | "promptu" | "memory" | "usage" | "settings">(null);
+  /** What the rail has open beside it: Promptu's card, the Memory menu, the Usage card, the Limits menu or the settings menu (95, 98, 99, 109, EMB-164). */
+  const [railPop, setRailPop] = useState<null | "promptu" | "memory" | "usage" | "limits" | "settings">(null);
   /** The time the Usage icon shows its reading at: drawn again as a window resets (review F14). */
   const usageNow = useUsageNow(p.usage);
   /** The settings gear's look: tinted in Plan and Ask, marked when a server or Remote Control failed (EMB-164). */
   const gear = settingsGear(p.settings.state);
+  /** The Limits entry's look (109): lit while a continue is armed, its hover the wait's line, kept current while one waits. */
+  const limitsNow = useNow(30_000, !!p.settings.state.limitWait);
+  const limits = limitsLook(p.settings.state, limitsNow);
   /** The keys opened it: it holds the focus, and the pointer leaving never closes it (review F10). */
   const [popByKey, setPopByKey] = useState(false);
   const memBtn = useRef<HTMLButtonElement>(null);
   const promptuBtn = useRef<HTMLButtonElement>(null);
   const usageBtn = useRef<HTMLButtonElement>(null);
   const settingsBtn = useRef<HTMLButtonElement>(null);
+  const limitsBtn = useRef<HTMLButtonElement>(null);
   const popTimer = useRef(0);
   const [memory, setMemory] = useState<{ loading: boolean; data?: MemoryOut; error?: string }>({ loading: false });
   const [forced, setForced] = useState<string | null>(forcedPattern[sid] ?? null);
@@ -1103,7 +1109,7 @@ export function Composer(p: Props) {
   const leavePromptu = () => leaveHover("promptu");
   /** Esc in a pop: closed, the focus back on the entry that opened it when the keys did, else in the draft. */
   const closePop = () => {
-    const back = popByKey ? (railPop === "memory" ? memBtn.current : railPop === "usage" ? usageBtn.current : railPop === "settings" ? settingsBtn.current : promptuBtn.current) : ta.current;
+    const back = popByKey ? (railPop === "memory" ? memBtn.current : railPop === "usage" ? usageBtn.current : railPop === "settings" ? settingsBtn.current : railPop === "limits" ? limitsBtn.current : promptuBtn.current) : ta.current;
     setRailPop(null);
     setPopByKey(false);
     back?.focus();
@@ -1345,6 +1351,17 @@ export function Composer(p: Props) {
                 onClick={toggleAside}
               />
               <RailEntry
+                icon="limits"
+                label="Limits"
+                cls={limits.cls}
+                lit={limits.lit}
+                title={limits.title}
+                ariaLabel={limits.title}
+                expanded={railPop === "limits"}
+                btnRef={limitsBtn}
+                onClick={(byKey) => (railPop === "limits" ? setRailPop(null) : (setPopByKey(byKey), setRailPop("limits")))}
+              />
+              <RailEntry
                 icon="settings"
                 label={gear.label}
                 cls={gear.cls}
@@ -1373,6 +1390,7 @@ export function Composer(p: Props) {
             )}
             {railPop === "memory" && <MemoryPanel mem={memory} pass={p.memoryPass} onRefresh={loadMemory} focusIn={popByKey} onClose={closePop} />}
             {railPop === "usage" && <UsageCard usage={p.usage} focusIn={popByKey} onClose={closePop} onEnter={() => clearTimeout(popTimer.current)} onLeave={() => leaveHover("usage")} />}
+            {railPop === "limits" && <LimitsPanel state={p.settings.state} ours={p.settings.ours} focusIn={popByKey} onClose={closePop} />}
             {railPop === "settings" && <SettingsPanel state={p.settings.state} ours={p.settings.ours} focusIn={popByKey} onClose={closePop} lift={lift} />}
           </>,
           p.rail,

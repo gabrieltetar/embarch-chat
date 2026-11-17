@@ -403,7 +403,25 @@
             ],
             "default": "card",
             "scope": "machine",
-            "description": "Whether Claude can hand this chat over to a fresh session in the same panel, with a prompt of its own (decision 103). The old history stays above a divider; the fresh session keeps the chat's mode, model, effort and work item, and the old session stays on the list. Takes effect when a chat's process next starts. User or Remote settings only — a workspace cannot set it."
+            "description": "Whether Claude can hand this chat over to a fresh session in the same panel, with a prompt of its own (decision 103). The old history stays above a divider; the fresh session keeps the chat's mode, model, effort and work item, and the old session stays on the list. `immediate` also starts each new chat with the Limits menu's Automatic handoff switch on; the switch then decides card or immediate for that chat (decision 109). Takes effect when a chat's process next starts. User or Remote settings only — a workspace cannot set it."
+          },
+          "embarchChat.continueAfterSessionLimit": {
+            "type": "boolean",
+            "default": true,
+            "scope": "machine",
+            "description": "A new chat starts with the Limits menu's \"Continue after the 5-hour limit\" on: a turn the Claude plan's 5-hour limit cuts off waits for the limit's reset, then the chat sends the continue message on its own (decision 109). Each chat's switch is its own, on the rail. User or Remote settings only."
+          },
+          "embarchChat.continueAfterWeeklyLimit": {
+            "type": "boolean",
+            "default": false,
+            "scope": "machine",
+            "description": "A new chat starts with the Limits menu's \"Continue after the weekly limit\" on: the same as after the 5-hour limit, for a weekly limit, all models' or one model's, so it spends the next week's allowance unattended (decision 109). Off by default. User or Remote settings only."
+          },
+          "embarchChat.continueMessage": {
+            "type": "string",
+            "default": "continue",
+            "scope": "machine",
+            "description": "What a chat sends on its own once a usage limit resets (decision 109). Each chat's menu can change it for that chat. User or Remote settings only."
           },
           "embarchChat.attachOpenFile": {
             "type": "boolean",

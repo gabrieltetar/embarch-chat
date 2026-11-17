@@ -11,6 +11,7 @@ import { Chat, ChatOptions } from "./wire/chat";
 import { chatEnv } from "./wire/process";
 import type { HostHooks } from "./wire/host";
 import type { HandoffPort } from "./handoff";
+import type { LimitPrefs } from "./afterLimit";
 import { chatStatus } from "./wire/reducer";
 import { FileMark, findTranscript, isSessionId, markFile, readLines, readTranscript, remark, sameFile, transcriptEvents, transcriptMode } from "./wire/transcript";
 import { PERMISSION_MODES } from "./wire/types";
@@ -84,6 +85,8 @@ export interface ChatSettings {
   recover?: (env: NodeJS.ProcessEnv) => Promise<boolean>;
   /** Gives a chat of this window, given its environment, what its login and folder say before its first message (EMB-164). */
   seed?: (chat: Chat, env: NodeJS.ProcessEnv) => void;
+  /** A new chat's Limits menu as the machine's settings start it, and whether the handoff tool is declared (103, 109). */
+  limits?: () => { prefs: LimitPrefs; handoffTool: boolean };
 }
 
 /** A chat's environment, kept for life, and its login's warm-up (105), which goes by that environment. */
@@ -173,7 +176,7 @@ export class ChatManager extends EventEmitter {
     const s = this.settings();
     // Its login goes on record now (106): a fork's parent's, a handoff's old chat's, else the window's.
     const login = loginOpts(s, sessionId, opts.loginFrom ?? opts.fork?.from ?? null, true);
-    const chat = new Chat({ sessionId, cwd, claudePath: s.claudePath, existing: false, idleMs: s.idleMs, log: s.log, hooks: s.hooks, fork: opts.fork, mode: opts.mode, settle: opts.settle, switchTo: s.handoff && ((prompt) => s.handoff!(sessionId, prompt)), hold: s.hold && (() => s.hold!(sessionId)), open: s.open && (() => s.open!(sessionId)), ...login });
+    const chat = new Chat({ sessionId, cwd, claudePath: s.claudePath, existing: false, idleMs: s.idleMs, log: s.log, hooks: s.hooks, fork: opts.fork, mode: opts.mode, settle: opts.settle, switchTo: s.handoff && ((prompt) => s.handoff!(sessionId, prompt)), hold: s.hold && (() => s.hold!(sessionId)), open: s.open && (() => s.open!(sessionId)), limits: s.limits?.(), ...login });
     const rec: ChatRecord = {
       chat,
       ours: true,
@@ -216,7 +219,7 @@ export class ChatManager extends EventEmitter {
     const ran = file ? transcriptMode(file) : null;
     const m = mode ?? (ran && (PERMISSION_MODES as string[]).includes(ran) ? ran : "default");
     // Read only, it puts nothing on record: a chat run elsewhere keeps the login it runs on (106).
-    const chat = new Chat({ sessionId, cwd: cwd ?? "", claudePath: s.claudePath, existing: true, idleMs: s.idleMs, log: s.log, hooks: s.hooks, mode: m, switchTo: s.handoff && ((prompt) => s.handoff!(sessionId, prompt)), hold: s.hold && (() => s.hold!(sessionId)), open: s.open && (() => s.open!(sessionId)), ...loginOpts(s, sessionId, null, false) });
+    const chat = new Chat({ sessionId, cwd: cwd ?? "", claudePath: s.claudePath, existing: true, idleMs: s.idleMs, log: s.log, hooks: s.hooks, mode: m, switchTo: s.handoff && ((prompt) => s.handoff!(sessionId, prompt)), hold: s.hold && (() => s.hold!(sessionId)), open: s.open && (() => s.open!(sessionId)), limits: s.limits?.(), ...loginOpts(s, sessionId, null, false) });
     const rec: ChatRecord = { chat, ours: false, viewer: true, resumable, itemId, itemTitle, untracked: false, deskDue: null, createdMs: Date.now(), lastMs: Date.now() };
     this.records.set(sessionId, rec);
     this.wire(sessionId, rec);

@@ -23,6 +23,7 @@ export * from "./fileLinks";
 export * from "./mcpServer";
 export * from "./diagnostics";
 export * from "./handoff";
+export * from "./afterLimit";
 export * from "./hunks";
 export * from "./assistant/edits";
 export * from "./assistant/haiku";

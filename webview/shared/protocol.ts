@@ -4,6 +4,7 @@
 // (decision 20).
 
 import type { ChatState } from "../../src/wire/reducer";
+import type { LimitPrefs } from "../../src/afterLimit";
 import type { RewindResult } from "../../src/wire/chat";
 import type { WireMessage } from "../../src/wire/types";
 import type { IndexIssue, IndexPr, PrRef } from "../../src/desk/client";
@@ -220,6 +221,10 @@ export type ChatToHost =
   | { t: "remoteControl"; name?: string }
   /** The settings menu's Remote Control switch (EMB-164): now on a running process, else at its start. */
   | { t: "remote"; on: boolean }
+  /** The rail's Limits menu (109): a switch or the message changed. */
+  | { t: "limits"; prefs: Partial<LimitPrefs> }
+  /** The Limits menu's Cancel: the waiting continue does not go. */
+  | { t: "limitCancel" }
   /** Keep a reply on the chat's work item as a note of this kind (Claude Code's bookmark, the desk's way). */
   | { t: "keep"; entryId: string; kind: KeepKind }
   /** Continue the step a reload interrupted (decision 63): the owner's word, never the reload's. */
