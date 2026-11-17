@@ -15,6 +15,8 @@ export function handoffSetting(v: unknown): HandoffSetting {
 
 /** What a chat does for the tool's call: the answer Claude reads. */
 export interface HandoffPort {
+  /** The chat's session id, so `last_session` never returns it. */
+  readonly sessionId?: string;
   handoff(prompt: string, how: "card" | "immediate"): Promise<string>;
   /** The chat's own switch in the rail's Limits menu (109): on, no card. Read at each call, so a switch flipped mid-session holds. */
   readonly autoHandoff?: boolean;

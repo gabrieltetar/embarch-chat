@@ -8,6 +8,7 @@ import type { HostHooks } from "./wire/host";
 import { saveIfDirty } from "./autosave";
 import { DIAGNOSTICS_TOOL, FileDiagnostics, PANEL_MCP_SERVER, formatDiagnostics } from "./diagnostics";
 import { HANDOFF_TOOL, HandoffPort, handoffHow, handoffSetting } from "./handoff";
+import { LAST_SESSION_TOOL, lastSessionCall } from "./lastSession";
 import { McpTool, mcpServer } from "./mcpServer";
 
 /** For one chat's process: `cwd` is the folder the chat runs in, the only one besides the window's whose files autosave touches (61). */
@@ -21,6 +22,7 @@ export function hostHooks(log: (s: string) => void, cwd: string, chat: HandoffPo
   const how = handoffSetting(c.get<string>("handoff", "card"));
   // The chat's own switch (109) picks card or immediate at each call; the setting's `off` still declares no tool.
   if (how !== "off") tools.push({ ...HANDOFF_TOOL, call: (args) => chat.handoff(typeof args.prompt === "string" ? args.prompt : "", handoffHow(chat, how)) });
+  tools.push({ ...LAST_SESSION_TOOL, call: lastSessionCall(cwd, chat.sessionId) });
   if (tools.length) h.mcp = { [PANEL_MCP_SERVER]: mcpServer({ name: PANEL_MCP_SERVER, version: "0.1.0" }, tools) };
   return h;
 }
