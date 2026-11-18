@@ -10,7 +10,8 @@
 // FAKE_PROMPTU_SLEEP_MS (prep waits this long first), FAKE_PROMPTU_FAIL
 // (`<command>:<exit>:<stderr line>`: that command fails so), FAKE_PROMPTU_PAGES
 // (how many pages prep plans, default 1; 0 with no chip row is `done`),
-// FAKE_PROMPTU_CHOOSE (1: prep opens the chip row first).
+// FAKE_PROMPTU_CHOOSE (1: prep opens the chip row first), FAKE_PROMPTU_REWRITE
+// (1: render rewrites, so `original` answers).
 
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -158,8 +159,21 @@ if (cmd === "patterns") {
     const assume = restMode === "assume" ? ["done", "goal"].filter((q) => !asked.includes(q)) : [];
     const footer = `— promptu ${run.pattern}@1${asked.length ? ` asked=${asked.map((q) => `${q}:${restMode === "recommended" ? "all" : "rec"}`).join(",")}` : ""}${assume.length ? ` assume=${assume.join(",")}` : ""}`;
     const prompt = `## Goal\n${run.rough}\n\n## Done when\nIt builds and the tests pass.${assume.length ? "\n\n## Constraints\n- Not answered; state your assumption before you start: …" : ""}\n\n${footer}`;
-    out({ promptu: 1, run: run.id, pattern: run.pattern, prompt, footer, sections: ["Goal", "Done when"] });
+    const rewritten = process.env.FAKE_PROMPTU_REWRITE === "1";
+    if (rewritten) {
+      run.rewrittenFrom = run.rough;
+      fs.writeFileSync(runFile, JSON.stringify(run));
+    }
+    out({ promptu: 1, run: run.id, pattern: run.pattern, prompt: rewritten ? `Rewritten: ${run.rough}\n\n${footer} rewritten=yes` : prompt, footer, sections: ["Goal", "Done when"], rewritten });
   }
+} else if (cmd === "original") {
+  // The read-back verb (contract §8.5): the log entry of a rewritten run, exit 2 for any other.
+  const run = fs.existsSync(runFile) ? JSON.parse(fs.readFileSync(runFile, "utf8")) : null;
+  if (!run || rest[0] !== run.id || run.rewrittenFrom === undefined) {
+    process.stderr.write(`promptu: no log entry for run \`${rest[0]}\`\n`);
+    process.exit(2);
+  }
+  out({ promptu: 1, run: run.id, original: run.rewrittenFrom, rewritten: true });
 } else if (cmd === "memory") {
   const cwd = process.cwd();
   const mem = path.join(dir, "memory");

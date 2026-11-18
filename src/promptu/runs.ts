@@ -54,6 +54,8 @@ export interface PromptuResult {
   fallbackSent?: boolean;
   /** For the footer's pattern, shown in the notice. */
   pattern?: string | null;
+  /** The prompt is Promptu's rewrite of the rough one: the card offers to restore the original (EMB-197). */
+  rewritten?: boolean;
 }
 
 /** The work item a Start work pass reads as its `desk` source (contract §7.8 `--desk`). */
@@ -146,6 +148,8 @@ export class PromptuRuns extends EventEmitter {
   /** A run's result and when it ended (ms), until a page takes it. */
   private results = new Map<string, { r: PromptuResult; at: number }>();
   private seq = 0;
+  /** The run and folder of each chat's last rewrite, for `restore`: the page never names a run. */
+  private rewrites = new Map<string, { run: string; cwd: string }>();
 
   constructor(
     private cli: PromptuCli,
@@ -225,6 +229,7 @@ export class PromptuRuns extends EventEmitter {
 
   /** Starts a run on a rough prompt; a run already under way for the chat is dropped first. */
   async begin(sid: string, o: BeginOpts): Promise<void> {
+    this.rewrites.delete(sid);
     const old = this.active.get(sid);
     if (old) {
       old.ac.abort();
@@ -273,7 +278,18 @@ export class PromptuRuns extends EventEmitter {
     const r = await this.cli.render(run, input, rest, a.cwd, a.ac.signal);
     if (this.active.get(sid) !== a) return;
     if (!r.ok || !r.value?.prompt) return this.end(sid, a, { error: r.error ?? "promptu render wrote no prompt" });
-    this.end(sid, a, { prompt: r.value.prompt, pattern: r.value.pattern });
+    if (r.value.rewritten === true && run) this.rewrites.set(sid, { run, cwd: a.cwd });
+    else this.rewrites.delete(sid);
+    this.end(sid, a, { prompt: r.value.prompt, pattern: r.value.pattern, ...(r.value.rewritten === true ? { rewritten: true } : {}) });
+  }
+
+  /** The original of the chat's last rewritten run, read through `promptu original`: its text, or one line why not. */
+  async restore(sid: string): Promise<{ text: string } | { error: string }> {
+    const w = this.rewrites.get(sid);
+    if (!w) return { error: "this chat has no rewritten prompt to restore" };
+    const r = await this.cli.original(w.run, w.cwd);
+    if (!r.ok || typeof r.value !== "string") return { error: r.error ?? "promptu original printed nothing" };
+    return { text: r.value };
   }
 
   /** A page answered (the chip row's pick as `pattern`): `next`, then the next page or the prompt. */
@@ -355,6 +371,7 @@ export class PromptuRuns extends EventEmitter {
     const a = this.active.get(sid);
     this.active.delete(sid);
     this.results.delete(sid);
+    this.rewrites.delete(sid);
     if (a) {
       a.ac.abort();
       this.log(`[${sid.slice(0, 8)}] promptu: dropped with its chat`);
@@ -366,6 +383,7 @@ export class PromptuRuns extends EventEmitter {
     for (const a of this.active.values()) a.ac.abort();
     this.active.clear();
     this.results.clear();
+    this.rewrites.clear();
     this.removeAllListeners();
   }
 }

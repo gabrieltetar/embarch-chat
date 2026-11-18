@@ -64,6 +64,8 @@ export interface RenderOut {
   pattern: string | null;
   prompt: string;
   footer: string;
+  /** True when the prompt is the rewrite, not the structured render (contract §8.3, decision 42). */
+  rewritten?: boolean;
 }
 
 /** One task pattern, for the card's picker (`promptu patterns --json`). */
@@ -78,6 +80,11 @@ export interface PatternInfo {
 export interface AnswerInput {
   pattern?: string;
   answers?: Record<string, string | string[] | { other: string } | { labels: string[]; other?: string }>;
+}
+
+/** `promptu original <run> --json`: the run's log entry, as far as the card reads it (contract §8.5). */
+export interface OriginalOut {
+  original: string;
 }
 
 export type Rest = "recommended" | "assume";
@@ -99,7 +106,7 @@ export interface CliSettings {
 }
 
 /** How long each command may take: `prep` runs the Sonnet pass (15 s by its own default) and gathers first. */
-export const TIMEOUTS = { prep: 40_000, next: 10_000, render: 10_000, patterns: 10_000, memory: 20_000 };
+export const TIMEOUTS = { prep: 40_000, next: 10_000, render: 10_000, original: 10_000, patterns: 10_000, memory: 20_000 };
 
 /** The first line worth showing of a command's stderr. */
 function firstLine(s: string): string {
@@ -227,6 +234,14 @@ export class PromptuCli {
 
   render(run: string, input: AnswerInput, rest: Rest | null, cwd: string, signal?: AbortSignal): Promise<CliResult<RenderOut>> {
     return this.run<RenderOut>(["render", run, ...(rest ? ["--rest", rest] : [])], { cwd, stdin: JSON.stringify(input), timeoutMs: TIMEOUTS.render, signal });
+  }
+
+  /** The rough prompt the owner typed for a run, verbatim, read through `promptu original --json` (never the log files). */
+  async original(run: string, cwd: string): Promise<CliResult<string>> {
+    const r = await this.run<OriginalOut>(["original", run, "--json"], { cwd, timeoutMs: TIMEOUTS.original });
+    if (!r.ok) return { ok: false, error: r.error, ms: r.ms };
+    if (typeof r.value?.original !== "string") return { ok: false, error: "promptu original gave no prompt", ms: r.ms };
+    return { ok: true, value: r.value.original, ms: r.ms };
   }
 
   async patterns(cwd: string): Promise<CliResult<PatternInfo[]>> {

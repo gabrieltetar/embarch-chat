@@ -168,6 +168,27 @@ test("Quick mode asks nothing: prep --rec is done, and render writes the prompt"
   assert.ok(s.views.every((v) => v === null || (v.quick && v.phase === "working")), "no page was shown");
 });
 
+test("a rewritten run is marked, and restore reads its original through `promptu original`; a run that was not rewritten has none (EMB-197)", async () => {
+  const s = setup({ FAKE_PROMPTU_REWRITE: "1" });
+  await s.runs.begin(SID, { ...BEGIN, cwd: ROOT, quick: true });
+  const r = s.runs.take(SID);
+  assert.equal(r.rewritten, true);
+  assert.notEqual(r.prompt, BEGIN.rough);
+  assert.deepEqual(await s.runs.restore(SID), { text: BEGIN.rough }, "the original, verbatim");
+  const orig = s.calls().at(-1);
+  assert.equal(orig.cmd, "original");
+  assert.deepEqual(orig.args, [orig.args[0], "--json"]);
+  const plain = setup();
+  await plain.runs.begin(SID, { ...BEGIN, cwd: ROOT, quick: true });
+  assert.equal(plain.runs.take(SID).rewritten, undefined, "not rewritten: nothing to restore");
+  assert.match((await plain.runs.restore(SID)).error, /no rewritten prompt/);
+  assert.ok(!plain.calls().some((c) => c.cmd === "original"), "promptu is not asked");
+  // A failing read-back is one line.
+  const bad = setup({ FAKE_PROMPTU_REWRITE: "1", FAKE_PROMPTU_FAIL: "original:2:no log entry" });
+  await bad.runs.begin(SID, { ...BEGIN, cwd: ROOT, quick: true });
+  assert.equal((await bad.runs.restore(SID)).error, "promptu original failed (exit 2): no log entry");
+});
+
 test("a failure is one line and no prompt; Start work's starter comes back instead (96)", async () => {
   const s = setup({ FAKE_PROMPTU_FAIL: "render:1:the run could not be read" });
   await s.runs.begin(SID, { ...BEGIN, cwd: ROOT, origin: "start", start: true, fallback: "Read ABC-7 — the old starter" });

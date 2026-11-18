@@ -433,3 +433,16 @@ export function PromptuDialog({ view }: { view: PromptuView }) {
   const key = `${view.seq}:${step.run}:${shown.choose ? "_pattern" : shown.page.ids.join(",")}:${step.pages.length}`;
   return <Page key={key} view={view} step={step} page={shown.page} choose={shown.choose} />;
 }
+
+/**
+ * The card's restore action (EMB-197): while the draft holds Promptu's
+ * rewrite of the owner's prompt, one click puts the original back, asking
+ * nothing. The host reads it through `promptu original`.
+ */
+export function RestoreOriginal({ onRestore }: { onRestore: () => void }) {
+  return (
+    <button class="promptu-restore" title="Replace the draft with the prompt as you typed it, before Promptu rewrote it" onClick={onRestore}>
+      Restore my original prompt
+    </button>
+  );
+}

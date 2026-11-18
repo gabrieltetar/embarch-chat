@@ -61,6 +61,7 @@ import type { MemoryOut } from "../../src/promptu/cli";
 import type { PromptuResult, PromptuView } from "../../src/promptu/runs";
 import type { PromptuState } from "../../src/promptu/service";
 import { hasFooter } from "../../src/promptu/text";
+import { RestoreOriginal } from "./promptu";
 import { MemoryPanel, PromptuCard, RailEntry, UsageCard, usageSummary, useUsageNow } from "./rail";
 import type { Usage } from "../../src/usage";
 import type { MemoryPass } from "../../src/memoryPass";
@@ -215,6 +216,11 @@ export function promptuLanded(r: PromptuResult): void {
   window.dispatchEvent(new CustomEvent("embarch-promptu", { detail: r.sid }));
 }
 
+/** The original prompt of a rewritten run, or one line why not: the card's restore action (EMB-197). */
+export function promptuOriginal(m: { sid: string; text?: string; error?: string }): void {
+  window.dispatchEvent(new CustomEvent("embarch-promptu-original", { detail: m }));
+}
+
 /**
  * The owner is typing (decision 55), by Claude Code's own rule: the draft
  * changed under the owner's hands in the last 1.5 s and is not blank, so
@@ -282,6 +288,8 @@ export function Composer(p: Props) {
   imagesNow.current = images;
   /** One line about the last paste or send: what was stripped, a clipboard that held no usable image. */
   const [notice, setNotice] = useState<string | null>(null);
+  /** The draft holds Promptu's rewrite of the owner's prompt, so the card offers the original back (EMB-197): the prompt it landed, to tell when it was sent or cleared. */
+  const [rewrite, setRewrite] = useState<string | null>(null);
   const ta = useRef<HTMLTextAreaElement>(null);
   const overlay = useRef<HTMLDivElement>(null);
   /** The overlay's twin, out of sight: what each card's preview would take (86). */
@@ -398,6 +406,7 @@ export function Composer(p: Props) {
       delete landed[sid];
       setAsking(false);
       passed[sid] = true;
+      setRewrite(r.prompt && r.rewritten ? r.prompt : null);
       if (r.prompt) {
         edit(r.prompt);
         setNotice(`Promptu wrote this prompt${r.pattern ? ` (${r.pattern})` : ""}: read it, then Enter sends it — Ctrl+Z puts yours back.`);
@@ -420,7 +429,21 @@ export function Composer(p: Props) {
     const on = (e: Event) => (e as CustomEvent<string>).detail === sid && take();
     take();
     window.addEventListener("embarch-promptu", on);
-    return () => window.removeEventListener("embarch-promptu", on);
+    // The restore action's answer: the original replaces the draft, verbatim, as one undoable edit.
+    const onOriginal = (e: Event) => {
+      const m = (e as CustomEvent<{ sid: string; text?: string; error?: string }>).detail;
+      if (m.sid !== sid) return;
+      if (typeof m.text === "string") {
+        edit(m.text);
+        setRewrite(null);
+        setNotice("Your original prompt is back in the draft — Ctrl+Z returns Promptu's.");
+      } else setNotice(`Promptu: ${m.error ?? "the original could not be read"} — the draft is as it was.`);
+    };
+    window.addEventListener("embarch-promptu-original", onOriginal);
+    return () => {
+      window.removeEventListener("embarch-promptu", on);
+      window.removeEventListener("embarch-promptu-original", onOriginal);
+    };
   }, [sid]);
 
   // The host shows the dialog: the pass is its now. A host that never answers
@@ -743,6 +766,7 @@ export function Composer(p: Props) {
     s.pastes = [];
     setImages([]);
     setNotice(null);
+    setRewrite(null);
     clearText();
     doneTyping();
     setPop(null);
@@ -771,6 +795,7 @@ export function Composer(p: Props) {
     setPop(null);
     setGhost(null);
     setNotice(null);
+    setRewrite(null);
   };
 
   /** `/btw <question>` (57): asked beside the chat; the draft clears, images and pastes stay for the next message. */
@@ -798,6 +823,7 @@ export function Composer(p: Props) {
     setMenu(null);
     setRailPop(null);
     setNotice(null);
+    setRewrite(null);
     doneTyping();
     delete forcedPattern[sid];
     setForced(null);
@@ -1170,6 +1196,7 @@ export function Composer(p: Props) {
         </div>
       )}
       {notice && <div class="paste-notice muted">{notice}</div>}
+      {rewrite !== null && text.trim() !== "" && <RestoreOriginal onRestore={() => post({ t: "promptu", op: "original" })} />}
       {(images.length > 0 || edChip || terminals.length > 0) && (
         <div class="attachments">
           {terminals.map((term) => (

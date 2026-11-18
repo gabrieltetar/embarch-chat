@@ -113,6 +113,8 @@ export type HostToChat =
   | { t: "promptu"; sid: string; view: PromptuView | null }
   /** How a chat's Promptu run ended: the prompt for the draft, or one line and the draft as it was (96). */
   | { t: "promptuResult"; result: PromptuResult }
+  /** The original prompt of a chat's rewritten run, for the card's restore action (EMB-197); or one line why not. */
+  | { t: "promptuOriginal"; sid: string; text?: string; error?: string }
   /** The Memory menu's data (98): `promptu memory --json` for the chat's folder, or why there is none. */
   | { t: "promptuMemory"; data?: MemoryOut; error?: string }
   /** The Claude plan's usage, the newest any of the window's chats heard (99); null: no reading yet. */
@@ -239,6 +241,8 @@ export type ChatToHost =
   | { t: "promptu"; op: "answer"; seq: number; input: unknown }
   | { t: "promptu"; op: "finish"; seq: number; input: unknown; rest: "recommended" | "assume" }
   | { t: "promptu"; op: "cancel"; seq: number }
+  /** The card's restore action (EMB-197): the host reads the chat's last rewritten run's original, and answers `promptuOriginal`. */
+  | { t: "promptu"; op: "original" }
   /** The card's switches (95). */
   | { t: "promptuSettings"; enabled?: boolean; quick?: boolean }
   /** The Memory menu opened (98): its data, for the chat's folder. */

@@ -738,6 +738,9 @@ export class ChatHost implements vscode.Disposable {
       case "cancel":
         if (Number.isInteger(m.seq)) this.ctx.runs.cancel(sid, m.seq);
         return;
+      case "original":
+        this.post({ t: "promptuOriginal", sid, ...(await this.ctx.runs.restore(sid)) });
+        return;
     }
   }
 

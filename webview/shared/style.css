@@ -2770,3 +2770,8 @@ body.in-editor .rail-col {
   opacity: 0.6;
   cursor: default;
 }
+
+.promptu-restore {
+  margin: 2px 0 4px;
+  align-self: flex-start;
+}

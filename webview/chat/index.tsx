@@ -22,7 +22,7 @@ import type { Chip, PastPrompt } from "../../src/assistant/edits";
 import type { LibraryEntry } from "../../src/library/entries";
 import { duration, vscodeApi } from "../shared/vscode";
 import { CompactCard, PendingCards } from "./cards";
-import { Composer, EditorChip, promptuLanded, returnToDraft } from "./composer";
+import { Composer, EditorChip, promptuLanded, promptuOriginal, returnToDraft } from "./composer";
 import { PromptuDialog } from "./promptu";
 import type { PromptuView } from "../../src/promptu/runs";
 import type { PromptuState } from "../../src/promptu/service";
@@ -304,6 +304,9 @@ function App() {
           return;
         case "promptuResult":
           promptuLanded(m.result);
+          return;
+        case "promptuOriginal":
+          promptuOriginal(m);
           return;
         case "memoryPass":
           setMemoryPass(m.pass);

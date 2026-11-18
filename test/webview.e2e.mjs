@@ -4039,6 +4039,38 @@ await check("the prompt lands in the draft, not sent; Ctrl+Z puts the owner's ba
   }
 });
 
+await check("a rewritten prompt offers one click back to the original, which replaces the draft verbatim and asks nothing; a run that was not rewritten shows no action (EMB-197)", async () => {
+  try {
+    const sid = await fresh();
+    await send([PSTATE()]);
+    await type(ROUGH);
+    await type(ENTER);
+    const rewrite = `## Goal\nRewritten ${ROUGH}\n\n— promptu implement-issue@1 asked=done:rec rewritten=yes`;
+    await send([{ t: "promptu", sid, view: null }, { t: "promptuResult", result: { sid, seq: 8, origin: "enter", rough: ROUGH, prompt: rewrite, pattern: "implement-issue", rewritten: true } }]);
+    assert.equal(await value(), rewrite);
+    assert.deepEqual(await text(".promptu-restore"), ["Restore my original prompt"]);
+    await clearPosts();
+    await exec("document.querySelector('.promptu-restore').click()");
+    await settle();
+    assert.deepEqual(await promptuPosts(), [{ t: "promptu", op: "original" }], "one message, no question");
+    const original = "add a loader watchdog\n  keep my  spacing";
+    await send([{ t: "promptuOriginal", sid, text: original }]);
+    assert.equal(await value(), original, "verbatim");
+    assert.equal((await text(".promptu-restore")).length, 0, "restored: the action is gone");
+    await type(CTRL_Z);
+    assert.equal(await value(), rewrite, "Ctrl+Z puts the rewrite back");
+    // A run that was not rewritten (a pasted brief, offline, rewrite off): no action.
+    const sid2 = await fresh();
+    await send([PSTATE()]);
+    await type(ROUGH);
+    await type(ENTER);
+    await send([{ t: "promptu", sid: sid2, view: null }, { t: "promptuResult", result: { sid: sid2, seq: 9, origin: "enter", rough: ROUGH, prompt: `## Goal\n${ROUGH}\n\n— promptu implement-issue@1`, pattern: "implement-issue" } }]);
+    assert.equal((await text(".promptu-restore")).length, 0, "no action");
+  } finally {
+    await send([PROMPTU_OFF]);
+  }
+});
+
 await check("a failure is one line and the draft stays as typed, Enter then sends; Esc while it reads cancels; Quick mode shows no dialog; Start work's starter fills an empty draft when there is no prompt (96)", async () => {
   try {
     let sid = await fresh();
