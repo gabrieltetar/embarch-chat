@@ -125,3 +125,17 @@ export function resolveChatLogin(file: string, sessionId: string, from: string |
   });
   return login;
 }
+
+export const RELOAD_LABEL = "Reload Window";
+
+/**
+ * What a pick tells the owner (decision 106). Claude Code's extension host
+ * caches `claude auth status` and offers no command to drop it, so a changed
+ * pick leaves its account dialog on the login the window opened with until
+ * the window reloads, while new chats already run on the pick. Null when the
+ * pick did not change: nothing is stale.
+ */
+export function pickNotice(before: string | null, after: string): string | null {
+  if (before === after) return null;
+  return `Login for this window is now ${after}. New chats and Claude Code chats run on it at once, but Claude Code's "Account & usage" dialog keeps naming the previous login until the window reloads.`;
+}

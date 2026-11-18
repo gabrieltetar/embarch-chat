@@ -163,3 +163,12 @@ test("the item names the account in the login's folder, and warns while two labe
   item = core.loginItem("spare", { work, spare: null });
   assert.equal(item.text, "$(account) spare · not logged in");
 });
+
+test("a pick that changes the login says Claude Code's account dialog needs a reload; the same pick says nothing", () => {
+  const n = core.pickNotice("work", "personal");
+  assert.match(n, /personal/);
+  assert.match(n, /Account & usage/);
+  assert.match(n, /reloads/);
+  assert.equal(core.pickNotice("work", "work"), null);
+  assert.equal(core.RELOAD_LABEL, "Reload Window");
+});

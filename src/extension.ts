@@ -38,7 +38,7 @@ import { CHAT_VIEW, ChatPanels, ChatViewProvider, THREADS_VIEW, ThreadsViewProvi
 import { claudeVersion, versionWarning } from "./wire/version";
 import { chatEnv } from "./wire/process";
 import { DEFAULT_LOGIN, DeskConfig, FolderRule, LoginConfig, currentLogin, loginEnv, matchFolderRule, ruleDesk } from "./logins";
-import { LOGIN_STATE_PATH, mirrorWindow, resolveChatLogin, updateLoginState } from "./loginState";
+import { LOGIN_STATE_PATH, RELOAD_LABEL, mirrorWindow, pickNotice, resolveChatLogin, updateLoginState } from "./loginState";
 import { ACCOUNT_POLL_MS, accountFile, credentialsFile, loginItem, readAccount } from "./loginAccount";
 import { haikuEnv } from "./assistant/haiku";
 import { LoginGate, warmUp } from "./loginGate";
@@ -1048,10 +1048,14 @@ export function activate(context: vscode.ExtensionContext): void {
       });
       const picked = await vscode.window.showQuickPick(picks, { placeHolder: "Login for new chats and Claude Code panels in this window" });
       if (!picked) return;
+      const before = windowLogin();
       pickedLogin = picked.name;
       await context.workspaceState.update(LOGIN_STATE_KEY, pickedLogin);
       mirrorLogin();
       refreshLoginStatus();
+      // Claude Code caches the account and has no command to re-read it: offer the reload, never take it.
+      const notice = pickNotice(before, picked.name);
+      if (notice) void vscode.window.showInformationMessage(notice, RELOAD_LABEL, "Later").then((c) => c === RELOAD_LABEL && vscode.commands.executeCommand("workbench.action.reloadWindow"));
     }),
     vscode.commands.registerCommand("embarchChat.openInEditor", () => {
       if (manager.current) openInEditor(manager.current);
