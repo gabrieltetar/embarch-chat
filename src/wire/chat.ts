@@ -250,6 +250,11 @@ export class Chat extends EventEmitter implements HandoffPort {
     return this.opts.sessionId;
   }
 
+  /** The chat's own login's `projects/` folder (decision 101), where `last_session` reads. */
+  get projectsRoot(): string {
+    return projectsRoot(this.opts.env ?? chatEnv());
+  }
+
   get running(): boolean {
     return !!this.proc && !this.proc.exited;
   }

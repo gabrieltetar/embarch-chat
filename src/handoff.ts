@@ -17,6 +17,8 @@ export function handoffSetting(v: unknown): HandoffSetting {
 export interface HandoffPort {
   /** The chat's session id, so `last_session` never returns it. */
   readonly sessionId?: string;
+  /** The chat's own login's `projects/` folder, so `last_session` reads that login, not the host's (101). */
+  readonly projectsRoot?: string;
   handoff(prompt: string, how: "card" | "immediate"): Promise<string>;
   /** The chat's own switch in the rail's Limits menu (109): on, no card. Read at each call, so a switch flipped mid-session holds. */
   readonly autoHandoff?: boolean;

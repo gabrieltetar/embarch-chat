@@ -22,7 +22,7 @@ export function hostHooks(log: (s: string) => void, cwd: string, chat: HandoffPo
   const how = handoffSetting(c.get<string>("handoff", "card"));
   // The chat's own switch (109) picks card or immediate at each call; the setting's `off` still declares no tool.
   if (how !== "off") tools.push({ ...HANDOFF_TOOL, call: (args) => chat.handoff(typeof args.prompt === "string" ? args.prompt : "", handoffHow(chat, how)) });
-  tools.push({ ...LAST_SESSION_TOOL, call: lastSessionCall(cwd, chat.sessionId) });
+  tools.push({ ...LAST_SESSION_TOOL, call: lastSessionCall(cwd, chat.sessionId, chat.projectsRoot) });
   if (tools.length) h.mcp = { [PANEL_MCP_SERVER]: mcpServer({ name: PANEL_MCP_SERVER, version: "0.1.0" }, tools) };
   return h;
 }

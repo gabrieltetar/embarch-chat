@@ -93,3 +93,16 @@ test("the MCP tool answers for the chat's folder, and never with the chat's own 
   assert.match(text, /hi there/);
   assert.doesNotMatch(text, /live/);
 });
+
+test("a chat on a configDir login reads that login's projects/ folder, not the host's", async () => {
+  const login = tmp(), host = tmp(), cwd = tmp();
+  const chat = new core.Chat({ sessionId: NEW, cwd, claudePath: "unused", existing: false, idleMs: 60000, env: { ...process.env, CLAUDE_CONFIG_DIR: login } });
+  assert.equal(chat.projectsRoot, path.join(login, "projects"));
+  write(chat.projectsRoot, cwd, OLD, [user("on the login"), asst({ type: "text", text: "login answer" })], 3_600_000);
+  write(path.join(host, "projects"), cwd, "33333333-3333-4333-8333-333333333333", [user("on the host"), asst({ type: "text", text: "host answer" })], 3_600_000);
+  const server = core.mcpServer({ name: "p", version: "0" }, [{ ...core.LAST_SESSION_TOOL, call: core.lastSessionCall(cwd, chat.sessionId, chat.projectsRoot) }]);
+  const r = await server({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "last_session", arguments: {} } });
+  const text = r.result.content[0].text;
+  assert.match(text, /login answer/);
+  assert.doesNotMatch(text, /host answer/);
+});
