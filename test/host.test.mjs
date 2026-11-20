@@ -299,6 +299,8 @@ test("an editor tab shows the same chat", { skip }, async () => {
 
 test("a terminal session in this folder lists read-only, and Jump asks Claude Code for it", { skip }, async () => {
   const sid = "7e7e7e7e-0000-4000-8000-00000000abcd";
+  // A terminal runs it: `claude agents` lists it, with no terminal of this window's in its process's parents.
+  process.env.FAKE_CLAUDE_AGENTS = JSON.stringify([{ sessionId: sid, pid: 4747, kind: "interactive" }]);
   await client.call("POST", "/hook", { hook_event_name: "SessionStart", session_id: sid, cwd: folder });
   await client.call("POST", "/hook", { hook_event_name: "Notification", session_id: sid, cwd: folder, notification_type: "permission_prompt", message: "Claude needs your permission to use Bash" });
   await mock.state.commands.get("embarchChat.refresh")();
@@ -318,6 +320,43 @@ test("a terminal session in this folder lists read-only, and Jump asks Claude Co
   chatView.webview.fromPage({ t: "send", text: "should not run" });
   await new Promise((r) => setTimeout(r, 200));
   assert.ok(!chatView.webview.posted.some((m) => m.t === "event" && m.e.type === "_sent" && m.e.text === "should not run"), "a live foreign thread takes no input here");
+  delete process.env.FAKE_CLAUDE_AGENTS;
+});
+
+test("a chat of this panel's the desk still calls busy, which nothing runs — its window closed mid-turn — opens to resume, and Jump never asks Claude Code for it (31)", { skip }, async () => {
+  const sid = "7e7e7e7e-0000-4000-8000-00000000c10e";
+  // The closed window's chat: started, marked as this panel's, mid-turn, and no SessionEnd ever came.
+  await client.call("POST", "/hook", { hook_event_name: "SessionStart", session_id: sid, cwd: folder });
+  assert.ok(await client.markClient(sid), "the desk keeps the mark");
+  await client.call("POST", "/hook", { hook_event_name: "UserPromptSubmit", session_id: sid, cwd: folder, prompt: "go" });
+  process.env.FAKE_CLAUDE_AGENTS = "[]";
+  await mock.state.commands.get("embarchChat.refresh")();
+  const g = await waitFor(() => lastGroups()?.groups.find((x) => x.threads.some((t) => t.sessionId === sid)), 5000, "the closed window's chat in the list");
+  const t = g.threads.find((x) => x.sessionId === sid);
+  assert.equal(t.live, true, "the desk still calls it live");
+  assert.equal(t.client, "embarch-chat");
+  const external = mock.state.external.length;
+  threadsView.webview.fromPage({ t: "jump", sid });
+  const snap = await waitFor(() => {
+    const s = lastSnapshot();
+    return s?.state.sessionId === sid && s.view.resumable && s;
+  }, 5000, "Jump to open it here, to resume");
+  assert.equal(snap.view.readOnly, false, "no read-only banner: nothing runs it");
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal(mock.state.external.length, external, "Claude Code's panel is not asked for it");
+
+  // Another window's EmbArch Chat runs it now: read-only here, and Jump says so rather than asking Claude Code.
+  process.env.FAKE_CLAUDE_AGENTS = JSON.stringify([{ sessionId: sid, pid: 4848, kind: "sdk" }]);
+  threadsView.webview.fromPage({ t: "open", sid });
+  await waitFor(() => {
+    const s = lastSnapshot();
+    return s?.state.sessionId === sid && s.view.readOnly && s;
+  }, 5000, "read-only once something runs it");
+  const said = mock.state.messages.length;
+  chatView.webview.fromPage({ t: "jump" });
+  await waitFor(() => mock.state.messages.slice(said).some(([k, m]) => k === "info" && /Another window's EmbArch Chat runs this chat/.test(m)), 5000, "Jump to say where it runs");
+  assert.equal(mock.state.external.length, external, "still not Claude Code's panel");
+  delete process.env.FAKE_CLAUDE_AGENTS;
 });
 
 // ------------------------------------------------------------ the assistant and the library

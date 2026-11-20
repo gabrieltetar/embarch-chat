@@ -342,6 +342,7 @@ export function activate(context: vscode.ExtensionContext): void {
     uiUrl: () => serverUrl(),
     warning: () => warning,
     openInEditor: (sid) => openInEditor(sid),
+    jump: (sid) => void jumpTo(sid),
     newChat: (itemId) => void newChat(itemId),
     assistant: haiku,
     assistantOn: () => cfg().assistant,
@@ -506,8 +507,10 @@ export function activate(context: vscode.ExtensionContext): void {
    * Whether a thread may be taken over here (decisions 5, 31): nothing runs
    * it now. The desk's "ended", or a transcript with no desk at all, is not
    * enough — a terminal may run it while the desk is down or restarting —
-   * so `claude agents` is asked; when it cannot say, a transcript written in
-   * the last few minutes while the desk is down counts as running.
+   * nor is its "busy": a chat whose window closed mid-turn stays live there
+   * for half an hour. So `claude agents` is asked; when it cannot say, the
+   * desk's word stands, and with the desk down a transcript written in the
+   * last few minutes counts as running.
    */
   async function freeToResume(rec: ChatRecord): Promise<boolean> {
     const sid = rec.chat.sessionId;
@@ -516,18 +519,23 @@ export function activate(context: vscode.ExtensionContext): void {
       if (pid !== null) log(`[${sid.slice(0, 8)}] runs elsewhere (pid ${pid}): read-only here`);
       return pid === null;
     }
+    if (!desk.error) return !desk.thread(sid)?.thread.live;
     const file = rec.transcript?.file;
     const recent = !!file && Date.now() - (fs.statSync(file, { throwIfNoEntry: false })?.mtimeMs ?? 0) < RECENT_MS;
-    return !(desk.error && recent);
+    return !recent;
   }
 
-  /** A viewer offered as resumable stays so only when nothing runs it (checked in the background). */
+  /**
+   * A viewer of a thread in this window's folder is resumable exactly when
+   * nothing runs it (31), checked in the background: the desk's word that
+   * opened it read-only or resumable is a first guess, either way.
+   */
   function checkResumable(sid: string): void {
     const rec = manager.get(sid);
-    if (!rec?.viewer || !rec.resumable) return;
+    if (!rec?.viewer || !desk.isWindowFolder(desk.thread(sid)?.thread.cwd)) return;
     void freeToResume(rec).then((free) => {
-      if (!free && rec.viewer && rec.resumable) {
-        rec.resumable = false;
+      if (rec.viewer && rec.resumable !== free) {
+        rec.resumable = free;
         manager.emit("snapshot", sid);
       }
     });
@@ -552,8 +560,8 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!rec) {
       const v = viewerOf(sid);
       manager.openViewer(sid, v.cwd, v.itemId, v.itemTitle, v.resumable);
-      checkResumable(sid);
     } else if (rec.viewer) manager.reloadViewer(sid);
+    checkResumable(sid);
     const prev = manager.current;
     await show(sid);
     // A read-only view nothing shows any more is dropped; the transcript stays.
@@ -571,9 +579,10 @@ export function activate(context: vscode.ExtensionContext): void {
     refreshTabs();
   }
 
+  /** Jump, from the list or a read-only chat (31): a thread nothing runs opens here, to resume. */
   async function jumpTo(sid: string): Promise<void> {
     const t = desk.thread(sid)?.thread;
-    if (t) await jump(t, desk.isWindowFolder(t.cwd), client, cfg().claudePath, log);
+    if (t) await jump(t, desk.isWindowFolder(t.cwd), client, cfg().claudePath, log, () => void open(sid));
   }
 
   // Live foreign threads on screen follow their transcripts.

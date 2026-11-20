@@ -16,7 +16,6 @@ import { githubRepo } from "../githubRepo";
 import { DeskError } from "../desk/client";
 import type { PrRef } from "../desk/client";
 import { deskReferences, prLine } from "../assistant/references";
-import { jump } from "../jump";
 import { openAt, openFileLink } from "../openFile";
 import { mentionItems, mentionOf } from "../mentions";
 import type { WireMessage } from "../wire/types";
@@ -64,6 +63,8 @@ export interface HostCtx {
   uiUrl: () => string;
   warning: () => string | null;
   openInEditor: (sid: string) => void;
+  /** Jump (31): where the thread runs, or here to resume when nothing runs it. */
+  jump: (sid: string) => void;
   newChat: (itemId?: string) => void;
   /** The Haiku assistant (decisions/assistant.md in embarch-doc/embarch-chat), on or off by setting. */
   assistant: HaikuAssistant;
@@ -681,11 +682,8 @@ export class ChatHost implements vscode.Disposable {
         this.post({ t: "mentions", q: m.q, items });
         return;
       }
-      case "jump": {
-        const t = this.ctx.desk.thread(chat.sessionId)?.thread;
-        if (t) await jump(t, this.ctx.desk.isWindowFolder(t.cwd), this.ctx.desk.client, this.ctx.claudePath(), this.ctx.log);
-        return;
-      }
+      case "jump":
+        return this.ctx.jump(chat.sessionId);
       case "openInEditor":
         return this.ctx.openInEditor(chat.sessionId);
       case "states": {

@@ -2,8 +2,11 @@
 // not run (decision 31). Another window's folder is opened (VS Code focuses
 // the window that has it); a chat of this panel's in that window also gets a
 // focus entry in the desk's mailbox, which that window takes and opens. In
-// this window, a terminal running it is shown; failing that, Claude Code's
-// own panel is asked for the session.
+// this window, a thread nothing runs is opened here, to resume (the desk can
+// call a chat whose window closed mid-turn busy for half an hour); a
+// terminal running it is shown; failing that, Claude Code's own panel is
+// asked for the session — never for a chat of this panel's, which that
+// panel cannot show.
 
 import * as cp from "child_process";
 import * as fs from "fs";
@@ -54,7 +57,7 @@ async function terminalRunning(pid: number): Promise<vscode.Terminal | null> {
   return null;
 }
 
-export async function jump(t: Thread, inThisWindow: boolean, desk: DeskClient, claudePath: string, log: (s: string) => void): Promise<void> {
+export async function jump(t: Thread, inThisWindow: boolean, desk: DeskClient, claudePath: string, log: (s: string) => void, openHere: () => void): Promise<void> {
   if (!inThisWindow && t.cwd) {
     if (t.client === "embarch-chat") {
       await desk.postFocus(t.sessionId, t.cwd).catch((e) => log(`jump: focus entry: ${(e as Error).message}`));
@@ -64,12 +67,20 @@ export async function jump(t: Thread, inThisWindow: boolean, desk: DeskClient, c
     return;
   }
   const pid = await agentPid(claudePath, t.sessionId);
+  if (pid === null) return openHere();
   if (pid) {
     const term = await terminalRunning(pid);
     if (term) {
       term.show();
       return;
     }
+  }
+  if (t.client === "embarch-chat") {
+    log(`[${t.sessionId.slice(0, 8)}] jump: ${pid !== undefined ? `another window's EmbArch Chat runs it (pid ${pid || "unknown"})` : "claude agents could not say what runs it"}`);
+    void vscode.window.showInformationMessage(
+      pid !== undefined ? "Another window's EmbArch Chat runs this chat: bring that window up to work in it." : "Could not tell what runs this chat: `claude agents` did not answer.",
+    );
+    return;
   }
   const uri = t.sessionUri ?? `vscode://anthropic.claude-code/open?session=${encodeURIComponent(t.sessionId)}`;
   await vscode.env.openExternal(vscode.Uri.parse(uri));
