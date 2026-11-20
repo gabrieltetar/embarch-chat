@@ -97,6 +97,8 @@ export const RERUN_NOTE = "Continuing the step that was interrupted when the win
 export const NO_REPLY_NOTE = "No reply was recorded for this message before the session was reloaded.";
 /** A step a reload cut off is continued only on the owner's word (63): the note that offers it, with its button. */
 export const RERUN_OFFER_NOTE = "The window reloaded while Claude was working: the interrupted step was not continued.";
+/** A step a real close cut off is not offered (111): the chat says so, and no reply follows. */
+export const CLOSED_MID_TURN_NOTE = "The window closed while Claude was working: the interrupted step was not continued, and no reply follows.";
 /** How old a step the CLI reruns, as Claude Code sets it (an hour). */
 export const RERUN_MAX_AGE_MS = 3_600_000;
 /** A turn ended on the CLI's refresh lock (105): what the chat does next, then how it went. */

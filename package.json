@@ -385,7 +385,7 @@
             "type": "boolean",
             "default": true,
             "scope": "machine",
-            "description": "After the window reloads, a chat that was mid-turn comes back with a \"Continue the interrupted step\" button, which reruns the step the reload cut off as Claude Code's own panel does (decision 63); nothing reruns until it is clicked, since closing and reopening the window within 90 s looks the same as a reload. Off, the chat just comes back, saying no reply follows. Either way this window's chats come back after a reload, never after a close, in the mode they ran in, with any message Claude had not taken. User or Remote settings only — a workspace cannot set it."
+            "description": "After the window reloads, a chat that was mid-turn comes back with a \"Continue the interrupted step\" button, which reruns the step the reload cut off as Claude Code's own panel does (decision 63); nothing reruns until it is clicked, since closing and reopening the window within 90 s looks the same as a reload. Off, the chat just comes back, saying no reply follows. Either way this window's chats come back after a reload, and after a close (decision 111), in the mode they ran in, with any message Claude had not taken; after a close no step is offered and nothing runs until you write. User or Remote settings only — a workspace cannot set it."
           },
           "embarchChat.diagnosticsTool": {
             "type": "boolean",

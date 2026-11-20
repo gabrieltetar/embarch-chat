@@ -967,7 +967,7 @@ async function reload(before = () => {}) {
   chatView.webview.fromPage({ t: "ready" });
 }
 
-test("a reload brings the window's chats back in their own mode; one cut off mid-turn continues its step only on Continue, labelled; after a close nothing comes back (decision 63)", { skip }, async () => {
+test("a reload brings the window's chats back in their own mode; one cut off mid-turn continues its step only on Continue, labelled; a close brings them back too, with nothing started (decisions 63, 111)", { skip }, async () => {
   process.env.FAKE_CLAUDE_TRANSCRIPT = "prompt";
   try {
     const sid = await startUntracked("deny");
@@ -1010,17 +1010,23 @@ test("a reload brings the window's chats back in their own mode; one cut off mid
     chatView.webview.fromPage({ t: "continueStep" });
     await new Promise((r) => setTimeout(r, 300));
     assert.equal(calls().slice(spawnsBefore).filter((c) => c.argv.includes("--input-format")).length, 1);
-    // A close, and a window opened later: nothing comes back (decision 5).
+    // A close, and a window opened later: the chat comes back the window's own, and nothing starts (decision 111).
+    const spawnsAtClose = calls().length;
     await reload(() => {
       const k = "embarchChat.openChats";
       const saved = context.workspaceState.get(k);
       assert.ok(saved?.chats.some((c) => c.sid === sid), "written down at deactivate");
       context.workspaceState.update(k, { ...saved, at: Date.now() - 5 * 60_000 });
     });
+    const reopened = await waitFor(() => {
+      const s = lastSnapshot();
+      return s?.state.sessionId === sid && s.view.ours && s;
+    }, 15000, "the chat back after a close, the window's own");
+    assert.ok(reopened.state.timeline.length > 0, "with its history");
+    assert.equal(reopened.state.mode, "default", "in its own mode");
+    assert.ok(mock.state.output.some((l) => /window reopened \d+ s after it closed: \d+ chat\(s\) back/.test(l)));
     await new Promise((r) => setTimeout(r, 500));
-    assert.ok(!chatView.webview.posted.some((m) => m.t === "snapshot" && m.state.sessionId === sid), "not back after a close");
-    assert.ok(mock.state.output.some((l) => /not brought back: it closed \d+ s ago/.test(l)));
-    assert.equal(context.workspaceState.get("embarchChat.openChats"), undefined, "and forgotten");
+    assert.ok(!calls().slice(spawnsAtClose).some((c) => c.argv.includes("--input-format")), "no process until the owner writes");
   } finally {
     delete process.env.FAKE_CLAUDE_TRANSCRIPT;
   }
@@ -1047,6 +1053,37 @@ test("with continueAfterReload off, a chat cut off mid-turn comes back saying no
   } finally {
     delete process.env.FAKE_CLAUDE_TRANSCRIPT;
     delete mock.state.config["embarchChat.continueAfterReload"];
+  }
+});
+
+test("a chat a close cut off mid-turn comes back saying no reply follows, with no step offered, nothing running, and a message that waited in the draft (decision 111)", { skip }, async () => {
+  process.env.FAKE_CLAUDE_TRANSCRIPT = "prompt";
+  try {
+    const sid = await startUntracked("askqueued");
+    const n = chatView.webview.posted.length;
+    chatView.webview.fromPage({ t: "send", text: "Use the AskUserQuestion tool to ask me whether I prefer tea or coffee." });
+    await waitFor(() => chatView.webview.posted.slice(n).some((m) => m.t === "event" && m.e.type === "control_request"), 5000, "mid-turn");
+    chatView.webview.fromPage({ t: "send", text: "Also end your reply with the word: kiwi" });
+    await waitFor(() => transcriptHas(sid, "kiwi"), 5000, "the message in the CLI's queue");
+    const spawnsBefore = calls().length;
+    // The window closes, and opens again ten minutes later.
+    await reload(() => {
+      const k = "embarchChat.openChats";
+      const saved = context.workspaceState.get(k);
+      assert.ok(saved?.chats.some((c) => c.sid === sid && c.running), "written down mid-turn");
+      context.workspaceState.update(k, { ...saved, at: Date.now() - 10 * 60_000 });
+    });
+    await waitFor(() => chatView.webview.posted.find((m) => m.t === "event" && m.e.type === "_note" && m.e.text === core.CLOSED_MID_TURN_NOTE), 15000, "the closed-mid-turn note");
+    assert.equal(lastSnapshot().state.sessionId, sid);
+    assert.ok(lastSnapshot().view.ours, "the window's own, to write to");
+    const draft = await waitFor(() => posted((m) => m.t === "draft" && m.sid === sid), 3000, "the waiting message in the draft");
+    assert.equal(draft.text, "Also end your reply with the word: kiwi");
+    assert.ok(posted((m) => m.t === "event" && m.e.type === "_note" && /^A message Claude had not taken when the window closed is back in the draft/.test(m.e.text)), "a line says so");
+    await new Promise((r) => setTimeout(r, 300));
+    assert.ok(!chatView.webview.posted.some((m) => m.t === "event" && m.e.type === "_note" && m.e.offer === "rerun"), "no step offered after a close");
+    assert.ok(!calls().slice(spawnsBefore).some((c) => c.argv.includes("--input-format")), "no process started");
+  } finally {
+    delete process.env.FAKE_CLAUDE_TRANSCRIPT;
   }
 });
 

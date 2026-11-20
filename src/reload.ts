@@ -1,14 +1,16 @@
-// After a window reload the chats this window had on screen — the
-// sidebar's and its tabs — come back, and one stopped mid-turn can go on
-// (decision 63, which amends decision 5 for a reload only): Claude Code's
-// `continueAfterReload`. `reinstall.sh` and VS Code server updates reload
-// the window, and a reload kills a running flash or study turn. The
-// window's other chats stay in the list as past chats, as after a close.
+// When the window comes back the chats it had on screen — the sidebar's
+// and its tabs — come back too, after a reload (decision 63) and after a
+// real close (111); after a reload one stopped mid-turn can go on: Claude
+// Code's `continueAfterReload`. `reinstall.sh` and VS Code server updates
+// reload the window, and a reload kills a running flash or study turn. The
+// window's other chats stay in the list as past chats.
 //
 // VS Code cannot tell a reload from a close, so a reload is a window that
 // comes back within a minute and a half of the last time it wrote its
-// chats down — on every change, and every 15 s while it has any. After a
-// real close, a later window brings nothing back (decision 5).
+// chats down — on every change, and every 15 s while it has any. A window
+// back later was closed: its chats come back as after a reload, with no
+// process started (41) and no step offered — a close is how a flash or a
+// study is stopped — and one cut off mid-turn says no reply follows.
 //
 // A chat that was mid-turn — Claude working, or waiting on the owner —
 // comes back in the mode it ran in, with the step the reload cut off and a
@@ -38,7 +40,7 @@ import * as fs from "fs";
 import * as vscode from "vscode";
 import type { ChatManager, ChatRecord } from "./chats";
 import { agentPid } from "./jump";
-import { NO_REPLY_NOTE, RERUN_MAX_AGE_MS, Untaken } from "./wire/chat";
+import { CLOSED_MID_TURN_NOTE, NO_REPLY_NOTE, RERUN_MAX_AGE_MS, Untaken } from "./wire/chat";
 import type { LimitPrefs, LimitWait } from "./afterLimit";
 import { MODES, findTranscript, holdsMessage, transcriptMode } from "./wire/transcript";
 import { historyUpTo } from "./wire/history";
@@ -221,19 +223,15 @@ export interface RestoreCtx {
   openTab: (sid: string) => void;
 }
 
-/** Brings back what the window had open before a reload; nothing after a close. */
+/** Brings back what the window had open before a reload (63) or a close (111). */
 export async function restoreAfterReload(o: RestoreCtx): Promise<void> {
   const saved = o.state.get<Saved>(KEY);
   if (!saved?.chats?.length) return;
   const age = Date.now() - saved.at;
-  if (age > RELOAD_WINDOW_MS) {
-    o.log(`${saved.chats.length} chat(s) of the last window not brought back: it closed ${Math.round(age / 1000)} s ago, not a reload (decision 5)`);
-    await o.state.update(KEY, undefined);
-    return;
-  }
+  const closed = age > RELOAD_WINDOW_MS;
   // On screen, mid-turn, or holding the owner's words: each one's transcript is read now, so not every chat the window ever had.
   const back = saved.chats.filter((c) => c.running || c.tab || c.sid === saved.current || c.untaken?.length || c.draft);
-  o.log(`window reloaded: ${back.length} chat(s) back`);
+  o.log(closed ? `window reopened ${Math.round(age / 1000)} s after it closed: ${back.length} chat(s) back, no step continued (decision 111)` : `window reloaded: ${back.length} chat(s) back`);
   // Written down as they were until each is back: the first record made rewrites the key.
   for (const c of back) o.memory.bringingBack(c);
   for (const c of back) {
@@ -271,27 +269,29 @@ export async function restoreAfterReload(o: RestoreCtx): Promise<void> {
     if (fresh && c.limits) rec.chat.restoreLimits(c.limits);
     o.memory.noteRerun(c.sid, c.reruns);
     if (c.tab) o.openTab(c.sid);
-    void bringBack(o, c, fresh).finally(() => o.memory.settled(c.sid));
+    void bringBack(o, c, fresh, closed).finally(() => o.memory.settled(c.sid));
   }
   if (saved.current && o.manager.get(saved.current)) o.show(saved.current);
 }
 
-async function bringBack(o: RestoreCtx, c: SavedChat, fresh: boolean): Promise<void> {
+async function bringBack(o: RestoreCtx, c: SavedChat, fresh: boolean, closed: boolean): Promise<void> {
   const tag = `[${c.sid.slice(0, 8)}]`;
+  const how = closed ? "closed" : "reloaded";
   const t0 = Date.now();
   for (;;) {
     const pid = await agentPid(o.claudePath(), c.sid);
     if (!pid) break;
-    if (Date.now() - t0 > RELEASE_WAIT_MS) {
-      o.log(`${tag} still runs elsewhere (pid ${pid}) after the reload: read-only here`);
-      keepWords(o, c, untakenOf(o.manager.get(c.sid), c));
+    // A close's own process is long gone: whatever runs it now is another, so it is read-only at once.
+    if (closed || Date.now() - t0 > RELEASE_WAIT_MS) {
+      o.log(`${tag} still runs elsewhere (pid ${pid}) after the window ${how}: read-only here`);
+      keepWords(o, c, untakenOf(o.manager.get(c.sid), c), how);
       return;
     }
     await new Promise((r) => setTimeout(r, 1000));
   }
   const rec = o.manager.adopt(c.sid);
   if (!rec) {
-    keepWords(o, c, untakenOf(o.manager.get(c.sid), c));
+    keepWords(o, c, untakenOf(o.manager.get(c.sid), c), how);
     return;
   }
   rec.itemId = c.itemId ?? rec.itemId;
@@ -300,18 +300,24 @@ async function bringBack(o: RestoreCtx, c: SavedChat, fresh: boolean): Promise<v
   if (c.limits && !fresh) rec.chat.restoreLimits(c.limits);
   const words = untakenOf(rec, c);
   // Nothing on record to continue: a new chat's words go back to the draft, and nothing runs.
-  if (!c.running || fresh) return toDraft(o, rec, words);
+  if (!c.running || fresh) return toDraft(o, rec, words, how);
+  // A close may have been meant to stop the step: none is offered (111).
+  if (closed) {
+    o.log(`${tag} the step the close interrupted is not offered (decision 111)`);
+    rec.chat.note(CLOSED_MID_TURN_NOTE);
+    return toDraft(o, rec, words, how);
+  }
   const why = !o.enabled() ? "continueAfterReload is off" : c.reruns >= MAX_RERUNS ? `rerun ${c.reruns} times already` : stepAge(c.sid, c.cwd) >= RERUN_MAX_AGE_MS ? "the step is over an hour old" : null;
   if (why) {
     o.log(`${tag} the interrupted step is not continued: ${why}`);
     rec.chat.note(NO_REPLY_NOTE);
-    return toDraft(o, rec, words);
+    return toDraft(o, rec, words, how);
   }
   o.log(`${tag} the step the reload interrupted waits for the owner's word`);
   rec.chat.offerRerun();
   // The CLI takes them after the step it reruns: they wait for Continue, as they waited for the step.
   // A held rest's compaction will not come now, and images were not written down: those go to the draft.
-  if (words.some((w) => w.held || w.images)) toDraft(o, rec, words);
+  if (words.some((w) => w.held || w.images)) toDraft(o, rec, words, how);
   else if (words.length) rec.chat.restoreQueued(words);
 }
 
@@ -331,18 +337,18 @@ function untakenOf(rec: ChatRecord | undefined, c: SavedChat): Untaken[] {
 }
 
 /** Back into the draft, with a line that says so, as after a crash. */
-function toDraft(o: RestoreCtx, rec: ChatRecord, words: Untaken[]): void {
+function toDraft(o: RestoreCtx, rec: ChatRecord, words: Untaken[], how: "reloaded" | "closed"): void {
   if (!words.length) return;
   o.manager.setDraft(rec.chat.sessionId, words.map((w) => w.text).join("\n\n"));
   const n = words.length;
   const images = words.some((w) => w.images) ? "; paste the images again" : "";
-  rec.chat.note(`${n === 1 ? "A message" : `${n} messages`} Claude had not taken when the window reloaded ${n === 1 ? "is" : "are"} back in the draft${images}.`);
-  o.log(`[${rec.chat.sessionId.slice(0, 8)}] ${n} message(s) not taken before the reload: back in the draft`);
+  rec.chat.note(`${n === 1 ? "A message" : `${n} messages`} Claude had not taken when the window ${how} ${n === 1 ? "is" : "are"} back in the draft${images}.`);
+  o.log(`[${rec.chat.sessionId.slice(0, 8)}] ${n} message(s) not taken before the window ${how}: back in the draft`);
 }
 
 /** A chat that stays read-only here: the words stay with it, to copy (as a refused resume keeps them). */
-function keepWords(o: RestoreCtx, c: SavedChat, words: Untaken[]): void {
+function keepWords(o: RestoreCtx, c: SavedChat, words: Untaken[], how: "reloaded" | "closed"): void {
   const text = [c.draft ?? "", ...words.map((w) => w.text)].filter((t) => t.trim()).join("\n\n");
   if (!text) return;
-  o.manager.keepNote(c.sid, { type: "_note", text: "The window reloaded before Claude took your message, and this chat runs elsewhere now. Not sent:", tone: "error", kept: text });
+  o.manager.keepNote(c.sid, { type: "_note", text: `The window ${how} before Claude took your message, and this chat runs elsewhere now. Not sent:`, tone: "error", kept: text });
 }

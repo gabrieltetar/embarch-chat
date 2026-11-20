@@ -377,7 +377,7 @@ export function activate(context: vscode.ExtensionContext): void {
   });
   context.subscriptions.push(vscode.window.registerWebviewViewProvider(THREADS_VIEW, threads));
 
-  // A reload brings this window's chats back, and a step it cut off goes on at the owner's word (decision 63).
+  // A reload or a close brings this window's chats back (decisions 63, 111); a step a reload cut off goes on at the owner's word.
   reloadMemory = new ReloadMemory(context.workspaceState, manager, () => panels.sessions(), log);
   context.subscriptions.push(reloadMemory);
   void restoreAfterReload({
