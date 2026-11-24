@@ -11,7 +11,9 @@
 // (`<command>:<exit>:<stderr line>`: that command fails so), FAKE_PROMPTU_PAGES
 // (how many pages prep plans, default 1; 0 with no chip row is `done`),
 // FAKE_PROMPTU_CHOOSE (1: prep opens the chip row first), FAKE_PROMPTU_REWRITE
-// (1: render rewrites, so `original` answers).
+// (1: render rewrites, so `original` answers), FAKE_PROMPTU_WEEK (`week status`:
+// `none` is an old promptu with no such verb, exit 2; `waiting`, `missed`,
+// `running` or `quiet` shapes the answer; default `waiting`).
 
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -108,7 +110,26 @@ function describe(run) {
   };
 }
 
-if (cmd === "patterns") {
+if (cmd === "week" && rest[0] === "status") {
+  const mode = process.env.FAKE_PROMPTU_WEEK ?? "waiting";
+  if (mode === "none") {
+    process.stderr.write("error: unrecognized subcommand 'week'\n");
+    process.exit(2);
+  }
+  out({
+    promptu: 1,
+    schedule: "wed 08:00",
+    timer: { installed: true, installed_at: "2026-11-01T09:00:00-06:00" },
+    last: { week: "2026-W47", started: "2026-11-25T08:00:02-06:00", finished: "2026-11-25T08:03:00-06:00", status: "ok", error: null },
+    running: mode === "running",
+    next: "2026-12-02T08:00:00-06:00",
+    missed: mode === "missed",
+    missed_since: mode === "missed" ? "2026-11-25T08:00:00-06:00" : null,
+    open: mode === "waiting" ? 23 : 0,
+    sheet: mode === "waiting" ? { week: "2026-W48", generated: "2026-11-25T08:03:00-06:00" } : null,
+    warnings: [],
+  });
+} else if (cmd === "patterns") {
   out({
     promptu: 1,
     patterns: [

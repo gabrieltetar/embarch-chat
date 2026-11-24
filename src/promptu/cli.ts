@@ -87,6 +87,20 @@ export interface OriginalOut {
   original: string;
 }
 
+/** `promptu week status --json` (contract §14.4), as far as the card reads it. */
+export interface WeekStatus {
+  promptu: number;
+  schedule?: string;
+  last: { week: string; started?: string | null; finished?: string | null; status: string; error?: string | null } | null;
+  running: boolean;
+  next: string | null;
+  missed: boolean;
+  missed_since?: string | null;
+  open: number;
+  sheet: { week: string; generated?: string } | null;
+  warnings?: string[];
+}
+
 export type Rest = "recommended" | "assume";
 
 export interface CliResult<T> {
@@ -94,6 +108,8 @@ export interface CliResult<T> {
   value?: T;
   /** One line: what went wrong. */
   error?: string;
+  /** The exit code, when the command ran and exited non-zero. */
+  exit?: number;
   ms: number;
 }
 
@@ -106,7 +122,7 @@ export interface CliSettings {
 }
 
 /** How long each command may take: `prep` runs the Sonnet pass (15 s by its own default) and gathers first. */
-export const TIMEOUTS = { prep: 40_000, next: 10_000, render: 10_000, original: 10_000, patterns: 10_000, memory: 20_000 };
+export const TIMEOUTS = { prep: 40_000, next: 10_000, render: 10_000, original: 10_000, patterns: 10_000, memory: 20_000, weekStatus: 10_000 };
 
 /** The first line worth showing of a command's stderr. */
 function firstLine(s: string): string {
@@ -201,7 +217,7 @@ export class PromptuCli {
       child.stderr!.setEncoding("utf8");
       child.stderr!.on("data", (d: string) => (err = (err + d).slice(-4000)));
       child.on("close", (code) => {
-        if (code !== 0) return finish({ ok: false, error: `${what} failed (exit ${code ?? "killed"})${firstLine(err) ? `: ${firstLine(err)}` : ""}` });
+        if (code !== 0) return finish({ ok: false, exit: code ?? undefined, error: `${what} failed (exit ${code ?? "killed"})${firstLine(err) ? `: ${firstLine(err)}` : ""}` });
         try {
           finish({ ok: true, value: JSON.parse(out) as T });
         } catch {
@@ -249,6 +265,19 @@ export class PromptuCli {
     if (!r.ok) return { ok: false, error: r.error, ms: r.ms };
     const list = Array.isArray(r.value?.patterns) ? (r.value!.patterns as PatternInfo[]) : [];
     return { ok: true, value: list.filter((p) => p && typeof p.name === "string").map((p) => ({ name: p.name, version: Number(p.version) || 0, summary: String(p.summary ?? ""), desk: p.desk ?? null })), ms: r.ms };
+  }
+
+  /**
+   * The weekly pass's state, from Promptu's own `week status --json`; the chat
+   * never reads its timer or files (95). A `promptu` without the verb exits 2
+   * (a usage error; the verb itself exits 0 always), which is `unsupported`.
+   */
+  async weekStatus(cwd: string): Promise<CliResult<WeekStatus> & { unsupported?: boolean }> {
+    const r = await this.run<WeekStatus>(["week", "status", "--json"], { cwd, timeoutMs: TIMEOUTS.weekStatus });
+    if (!r.ok) return { ...r, unsupported: r.exit === 2 };
+    const v = r.value;
+    if (!v || typeof v !== "object" || typeof v.running !== "boolean") return { ok: false, error: "promptu week status gave an unreadable answer", ms: r.ms };
+    return r;
   }
 
   memory(cwd: string): Promise<CliResult<MemoryOut>> {

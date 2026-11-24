@@ -62,7 +62,7 @@ import type { PromptuResult, PromptuView } from "../../src/promptu/runs";
 import type { PromptuState } from "../../src/promptu/service";
 import { hasFooter } from "../../src/promptu/text";
 import { RestoreOriginal } from "./promptu";
-import { MemoryPanel, PromptuCard, RailEntry, UsageCard, usageSummary, useUsageNow } from "./rail";
+import { MemoryPanel, PromptuCard, RailEntry, UsageCard, weekMarked, usageSummary, useUsageNow } from "./rail";
 import type { Usage } from "../../src/usage";
 import type { MemoryPass } from "../../src/memoryPass";
 import { usageLevel } from "../../src/usage";
@@ -1335,11 +1335,11 @@ export function Composer(p: Props) {
               <RailEntry
                 icon="promptu"
                 label="Promptu"
-                cls="promptu"
+                cls={`promptu ${weekMarked(p.promptu?.week) && promptuOn ? "waits" : ""}`}
                 lit={lit}
                 spin={asking || promptuBusy}
                 // An indicator, not a switch (95): its name says whether the next Enter runs it (review F8).
-                ariaLabel={lit ? "Promptu — runs on next Enter" : "Promptu"}
+                ariaLabel={lit ? "Promptu — runs on next Enter" : weekMarked(p.promptu?.week) && promptuOn ? "Promptu — the weekly pass needs a look" : "Promptu"}
                 expanded={railPop === "promptu"}
                 btnRef={promptuBtn}
                 title={

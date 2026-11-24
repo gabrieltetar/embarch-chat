@@ -10,7 +10,7 @@ import type { ComponentChildren, Ref } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { MemoryEntry, MemoryOut, MemoryUse, PatternInfo } from "../../src/promptu/cli";
 import type { MemoryPass } from "../../src/memoryPass";
-import type { PromptuState } from "../../src/promptu/service";
+import type { PromptuState, PromptuWeek } from "../../src/promptu/service";
 import type { Usage, UsageWindow } from "../../src/usage";
 import { LIMIT_NAMES, MODEL_LIMITS, USAGE_AMBER, USAGE_RED, expired, iconHit, limitHit, nextReset, resetsIn } from "../../src/usage";
 import { useNow } from "./clock";
@@ -122,6 +122,26 @@ export function RailPop(p: { cls: string; label: string; focusIn: boolean; onClo
   );
 }
 
+const dayOf = (iso: string | null | undefined): string => (iso ? iso.slice(0, 10) : "");
+const whenOf = (iso: string | null | undefined): string => (iso ? `${iso.slice(0, 10)} ${iso.slice(11, 16)}`.trim() : "");
+
+/** The icon's marker (95): a sheet waits, or a run was missed. */
+export function weekMarked(w: PromptuWeek | null | undefined): boolean {
+  return !!w && !("error" in w) && ((w.open > 0 && !!w.sheetWeek) || w.missed);
+}
+
+/** The weekly pass in one line (95): last run, next run, a run in progress, a missed one, a waiting sheet with its open count; an error from the binary, one line. */
+export function weekLine(w: PromptuWeek): string {
+  if ("error" in w) return `Weekly pass: ${w.error}`;
+  const parts: string[] = [];
+  if (w.running) parts.push("running now");
+  else parts.push(w.last ? `last run ${dayOf(w.last.at) || w.last.week}${w.last.status === "ok" ? "" : ` (${w.last.status})`}` : "no run yet");
+  if (w.missed) parts.push(`missed since ${whenOf(w.missedSince)}`);
+  if (w.next) parts.push(`next ${whenOf(w.next)}`);
+  if (w.sheetWeek && w.open > 0) parts.push(`${w.open} open on the ${w.sheetWeek} sheet`);
+  return `Weekly pass: ${parts.join(" · ")}`;
+}
+
 /**
  * Promptu's card (95), on hover over its icon: on or off, what it does, a
  * pattern for the next prompt, Quick mode — nothing else. The icon itself
@@ -149,6 +169,7 @@ export function PromptuCard(p: {
       </label>
       <div class="muted promptu-what">At the start of a task, Enter turns your prompt into a better one: Promptu asks only what is missing, then writes it into the draft. Nothing is sent until you press Enter again.</div>
       {off && s.why && <div class="warn">{s.why}</div>}
+      {!off && s.week && <div class={`promptu-week ${"error" in s.week ? "warn" : "muted"}`}>{weekLine(s.week)}</div>}
       <label class="promptu-row">
         <span>Pattern for the next prompt</span>
         <select disabled={off || !s.enabled} value={p.forced ?? ""} onChange={(e) => p.onForce((e.target as HTMLSelectElement).value || null)}>

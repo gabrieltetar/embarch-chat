@@ -3801,6 +3801,40 @@ await check("Promptu's icon lights when the next Enter runs the pass: at a task 
   }
 });
 
+await check("the card's weekly line shows last run, next run, a run in progress and the waiting sheet, one line on an error; the icon is marked for a waiting sheet or a missed run and not otherwise; no line, no mark without the verb (95)", async () => {
+  const WEEK = { last: { week: "2026-W47", at: "2026-11-25T08:03:00-06:00", status: "ok" }, next: "2026-12-02T08:00:00-06:00", running: false, missed: false, missedSince: null, open: 23, sheetWeek: "2026-W48" };
+  const marked = () => exec("return document.querySelector('.rail .rail-entry.promptu').classList.contains('waits')");
+  const line = async () => {
+    await exec("document.querySelector('.composer textarea').focus()");
+    await hover(".rail .rail-entry.promptu");
+    const t = await text(".promptu-card .promptu-week");
+    await mouseAway();
+    await sleep(500);
+    return t;
+  };
+  try {
+    await fresh();
+    await send([PSTATE({ week: WEEK })]);
+    assert.equal(await marked(), true, "a sheet waits");
+    assert.deepEqual(await line(), ["Weekly pass: last run 2026-11-25 · next 2026-12-02 08:00 · 23 open on the 2026-W48 sheet"]);
+    await send([PSTATE({ week: { ...WEEK, open: 0, sheetWeek: null } })]);
+    assert.equal(await marked(), false, "nothing waits");
+    await send([PSTATE({ week: { ...WEEK, open: 0, sheetWeek: null, missed: true, missedSince: "2026-11-25T08:00:00-06:00" } })]);
+    assert.equal(await marked(), true, "a missed run");
+    assert.match((await line())[0], /missed since 2026-11-25 08:00/);
+    await send([PSTATE({ week: { ...WEEK, running: true } })]);
+    assert.match((await line())[0], /running now/);
+    await send([PSTATE({ week: { error: "promptu week status failed (exit 1): boom" } })]);
+    assert.equal(await marked(), false, "an error is a line, not a mark");
+    assert.deepEqual(await line(), ["Weekly pass: promptu week status failed (exit 1): boom"]);
+    await send([PSTATE({ week: null })]);
+    assert.equal(await marked(), false, "no verb: no mark");
+    assert.deepEqual(await line(), [], "no verb: no line");
+  } finally {
+    await send([PROMPTU_OFF]);
+  }
+});
+
 await check("Enter at a task start runs Promptu instead of sending; its dialog over the chat asks the page, recommendations picked, Other for free text; Enter answers it (96)", async () => {
   try {
     const sid = await fresh();

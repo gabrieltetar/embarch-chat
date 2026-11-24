@@ -2555,6 +2555,19 @@ body.in-editor .rail-col {
   border-radius: 50%;
   background: var(--waiting);
 }
+.rail-entry.promptu.waits .rail-icon::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  right: -1px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--waiting);
+}
+.promptu-week {
+  margin: 4px 0;
+}
 .mem-title {
   flex: 1 1 12em;
   min-width: 0;

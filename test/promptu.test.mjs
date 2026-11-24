@@ -424,6 +424,52 @@ test("the card: on by default, Quick mode off, switched in the extension's own s
   assert.match(g.why, /not installed/);
 });
 
+test("the weekly pass: week status read through the binary, again with the card's other data; an old promptu hides the line; a failure is one line", async () => {
+  const store = { get: (_k, d) => d, update: async () => {} };
+  const wait = (svc) => new Promise((r) => svc.once("state", r));
+  const s = setup();
+  const svc = new core.PromptuService(s.cli, store, () => {});
+  assert.equal(svc.state(ROOT).week, null, "not read yet: no line");
+  await wait(svc);
+  await wait(svc);
+  assert.deepEqual(svc.state(ROOT).week, {
+    last: { week: "2026-W47", at: "2026-11-25T08:03:00-06:00", status: "ok" },
+    next: "2026-12-02T08:00:00-06:00",
+    running: false,
+    missed: false,
+    missedSince: null,
+    open: 23,
+    sheetWeek: "2026-W48",
+  });
+  assert.deepEqual(s.calls().find((c) => c.cmd === "week").args, ["status", "--json"]);
+  svc.state(ROOT);
+  assert.equal(s.calls().filter((c) => c.cmd === "week").length, 1, "cached");
+
+  const old = setup({ FAKE_PROMPTU_WEEK: "none" });
+  const r = await old.cli.weekStatus(ROOT);
+  assert.deepEqual([r.ok, r.unsupported], [false, true]);
+  const osvc = new core.PromptuService(old.cli, store, () => {});
+  osvc.state(ROOT);
+  await wait(osvc);
+  await wait(osvc);
+  assert.equal(osvc.state(ROOT).week, null, "no verb: hidden");
+
+  const bad = setup({ FAKE_PROMPTU_FAIL: "week:1:the state folder is unreadable" });
+  const bsvc = new core.PromptuService(bad.cli, store, () => {});
+  bsvc.state(ROOT);
+  await wait(bsvc);
+  await wait(bsvc);
+  assert.deepEqual(bsvc.state(ROOT).week, { error: "promptu week failed (exit 1): the state folder is unreadable" });
+
+  const missed = setup({ FAKE_PROMPTU_WEEK: "missed" });
+  const msvc = new core.PromptuService(missed.cli, store, () => {});
+  msvc.state(ROOT);
+  await wait(msvc);
+  await wait(msvc);
+  const m = msvc.state(ROOT).week;
+  assert.deepEqual([m.missed, m.missedSince, m.open, m.sheetWeek], [true, "2026-11-25T08:00:00-06:00", 0, null]);
+});
+
 test("the bench tools are there when the chat's CLI lists embarch-api, else when its binary is on PATH", () => {
   assert.equal(core.embarchApiPresent([{ name: "embarch-api", status: "connected" }], () => false), true);
   assert.equal(core.embarchApiPresent([{ name: "embarch-api", status: "failed" }], () => true), false, "the CLI's word wins");
