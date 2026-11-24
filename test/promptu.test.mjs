@@ -405,10 +405,20 @@ test("the card: on by default, Quick mode off, switched in the extension's own s
   const store = { get: (k, d) => (k in data ? data[k] : d), update: async (k, v) => void (data[k] = v) };
   const s = setup();
   const svc = new core.PromptuService(s.cli, store, () => {});
-  const changed = new Promise((r) => svc.once("state", r));
+  // Patterns and the week status load side by side and each emits `state`: wait for the one that carries the patterns.
+  const loaded = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("no state event carried the patterns")), 5000);
+    const onState = () => {
+      if (svc.state(ROOT).patterns.length === 0) return;
+      clearTimeout(timer);
+      svc.off("state", onState);
+      resolve();
+    };
+    svc.on("state", onState);
+  });
   const st = svc.state(ROOT);
   assert.deepEqual([st.available, st.enabled, st.quick, st.why], [true, true, false, null]);
-  await changed;
+  await loaded;
   assert.deepEqual(
     svc.state(ROOT).patterns.map((p) => p.name),
     ["debug-failure", "handoff", "implement-issue"],
