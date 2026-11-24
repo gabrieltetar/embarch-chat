@@ -33,8 +33,10 @@ fs.appendFileSync(
   JSON.stringify({ cmd, args: rest, stdin, cwd: process.cwd(), desk: deskFile && fs.existsSync(deskFile) ? JSON.parse(fs.readFileSync(deskFile, "utf8")) : null, deskMode: deskFile && fs.existsSync(deskFile) ? (fs.statSync(deskFile).mode & 0o777).toString(8) : null }) + "\n",
 );
 
+const weekRun = cmd === "week" && rest[0] === "run";
+const lock = path.join(dir, "week.lock");
 const fail = (process.env.FAKE_PROMPTU_FAIL ?? "").split(":");
-if (fail[0] === cmd) {
+if (fail[0] === (weekRun ? "week-run" : cmd)) {
   process.stderr.write(`promptu: ${fail.slice(2).join(":") || "it failed"}\n`);
   process.exit(Number(fail[1]) || 1);
 }
@@ -110,7 +112,17 @@ function describe(run) {
   };
 }
 
-if (cmd === "week" && rest[0] === "status") {
+if (weekRun) {
+  // `week run` (contract §14.4): the lock is what `week status` reports as running; exit 4 when it is held.
+  if (fs.existsSync(lock)) {
+    process.stderr.write("promptu: another week run is in progress\n");
+    process.exit(4);
+  }
+  fs.writeFileSync(lock, "1");
+  await new Promise((r) => setTimeout(r, Number(process.env.FAKE_PROMPTU_WEEKRUN_MS ?? 0)));
+  fs.rmSync(lock);
+  out({ promptu: 1, week: "2026-W48", events: { run: 3 }, lines: 2 });
+} else if (cmd === "week" && rest[0] === "status") {
   const mode = process.env.FAKE_PROMPTU_WEEK ?? "waiting";
   if (mode === "none") {
     process.stderr.write("error: unrecognized subcommand 'week'\n");
@@ -121,7 +133,7 @@ if (cmd === "week" && rest[0] === "status") {
     schedule: "wed 08:00",
     timer: { installed: true, installed_at: "2026-11-01T09:00:00-06:00" },
     last: { week: "2026-W47", started: "2026-11-25T08:00:02-06:00", finished: "2026-11-25T08:03:00-06:00", status: "ok", error: null },
-    running: mode === "running",
+    running: mode === "running" || fs.existsSync(lock),
     next: "2026-12-02T08:00:00-06:00",
     missed: mode === "missed",
     missed_since: mode === "missed" ? "2026-11-25T08:00:00-06:00" : null,

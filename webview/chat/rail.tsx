@@ -143,6 +143,34 @@ export function weekLine(w: PromptuWeek): string {
 }
 
 /**
+ * The weekly line (95) and what a click on it does: with a sheet waiting it
+ * opens a new chat with the review skill typed, unsent; otherwise it runs the
+ * pass, unless one is going, when it only says so. A failed run adds one line.
+ */
+export function WeekLine(p: { week: PromptuWeek; runError: string | null }) {
+  const w = p.week;
+  const bad = "error" in w;
+  const sheet = !bad && w.open > 0 && !!w.sheetWeek;
+  const running = !bad && w.running;
+  const act = bad ? null : sheet ? "open" : running ? null : "run";
+  const title = sheet ? "Open the sheet in a new chat: the review skill is typed, nothing is sent" : running ? "A weekly pass is running" : "Run the weekly pass now";
+  return (
+    <>
+      {act ? (
+        <button class="promptu-week promptu-week-act muted" title={title} onClick={() => post({ t: "promptuWeek", op: act })}>
+          {weekLine(w)}
+        </button>
+      ) : (
+        <div class={`promptu-week ${bad ? "warn" : "muted"}`} title={bad ? undefined : title}>
+          {weekLine(w)}
+        </div>
+      )}
+      {p.runError && <div class="warn promptu-week-error">{p.runError}</div>}
+    </>
+  );
+}
+
+/**
  * Promptu's card (95), on hover over its icon: on or off, what it does, a
  * pattern for the next prompt, Quick mode — nothing else. The icon itself
  * is not a switch: it lights when the next Enter runs the pass.
@@ -169,7 +197,7 @@ export function PromptuCard(p: {
       </label>
       <div class="muted promptu-what">At the start of a task, Enter turns your prompt into a better one: Promptu asks only what is missing, then writes it into the draft. Nothing is sent until you press Enter again.</div>
       {off && s.why && <div class="warn">{s.why}</div>}
-      {!off && s.week && <div class={`promptu-week ${"error" in s.week ? "warn" : "muted"}`}>{weekLine(s.week)}</div>}
+      {!off && s.week && <WeekLine week={s.week} runError={s.weekRunError} />}
       <label class="promptu-row">
         <span>Pattern for the next prompt</span>
         <select disabled={off || !s.enabled} value={p.forced ?? ""} onChange={(e) => p.onForce((e.target as HTMLSelectElement).value || null)}>

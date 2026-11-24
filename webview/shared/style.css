@@ -2568,6 +2568,20 @@ body.in-editor .rail-col {
 .promptu-week {
   margin: 4px 0;
 }
+.promptu-week-act {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.promptu-week-act:hover,
+.promptu-week-act:focus-visible {
+  text-decoration: underline;
+}
 .mem-title {
   flex: 1 1 12em;
   min-width: 0;

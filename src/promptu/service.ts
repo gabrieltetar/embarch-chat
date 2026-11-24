@@ -38,6 +38,8 @@ export interface PromptuState {
   patterns: PatternInfo[];
   /** The weekly pass's line; null: none to show (no `week status` verb, or not read yet) (95). */
   week: PromptuWeek | null;
+  /** A pass the card started that failed: one line, until the next click or the next success (95). */
+  weekRunError: string | null;
   /** One line when it is not available: why. */
   why: string | null;
 }
@@ -67,6 +69,8 @@ export class PromptuService extends EventEmitter {
   private fetching = false;
   private week: { bin: string | null; at: number; value: PromptuWeek | null } = { bin: null, at: 0, value: null };
   private fetchingWeek = false;
+  private runningWeek = false;
+  private weekRunError: string | null = null;
 
   constructor(
     readonly cli: PromptuCli,
@@ -85,9 +89,48 @@ export class PromptuService extends EventEmitter {
       enabled: this.store.get<boolean>(ENABLED_KEY, true),
       quick: this.store.get<boolean>(QUICK_KEY, false),
       patterns: bin === this.patterns.bin ? this.patterns.list : [],
-      week: bin && bin === this.week.bin ? this.week.value : null,
+      week: this.weekShown(bin),
+      weekRunError: this.weekRunError,
       why: bin ? null : "promptu is not installed here: put it on PATH, or set embarchChat.promptuPath",
     };
+  }
+
+  /** The week's line, a pass this window started counted as running before `week status` has caught up. */
+  private weekShown(bin: string | null): PromptuWeek | null {
+    const v = bin && bin === this.week.bin ? this.week.value : null;
+    if (this.runningWeek && v && !("error" in v)) return { ...v, running: true };
+    return v;
+  }
+
+  /** The card's weekly line has a sheet waiting: the click opens it rather than runs a pass (95). */
+  sheetWaiting(cwd: string): boolean {
+    const w = this.state(cwd).week;
+    return !!w && !("error" in w) && w.open > 0 && !!w.sheetWeek;
+  }
+
+  /**
+   * The card's click on the weekly line with no sheet waiting (95): one
+   * `promptu week run`, in the background. Nothing starts when one is going,
+   * this window's or the timer's (`week status` says `running`; exit 4 is the
+   * same answer from `week run` itself). A failure is one line on the card.
+   */
+  async runWeek(cwd: string): Promise<void> {
+    const bin = this.cli.located();
+    if (!bin || this.runningWeek) return;
+    const w = this.state(cwd).week;
+    if (!w || "error" in w || w.running || this.sheetWaiting(cwd)) return;
+    this.runningWeek = true;
+    this.weekRunError = null;
+    this.emit("state");
+    try {
+      const r = await this.cli.weekRun(cwd);
+      if (!r.ok && !r.busy) this.weekRunError = r.error ?? "promptu week run failed";
+      if (!r.ok) this.log(`promptu week run: ${r.error}`);
+    } finally {
+      this.runningWeek = false;
+    }
+    await this.loadWeek(bin, cwd);
+    this.emit("state");
   }
 
   /** On and found: Enter at a task start, and Start work, run the pass. */

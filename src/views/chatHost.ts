@@ -95,6 +95,8 @@ export interface HostCtx {
   memoryPass: () => MemoryPassConfig | null;
   /** A new chat in this folder whose first message is the pass's command (98). */
   startMemoryPass: (cwd: string, command: string) => void;
+  /** The card's weekly line with a sheet waiting (95): a new chat in the folder with the review skill typed, unsent. */
+  openWeekSheet: (cwd: string) => void;
   /** What each issue's chat shows when its issue is Done or Canceled (104). */
   endings: Endings;
   /** An ended chat's Close window (104): closes this VS Code window. */
@@ -482,6 +484,14 @@ export class ChatHost implements vscode.Disposable {
         return this.promptu(rec, m);
       case "promptuSettings":
         return this.ctx.promptu.set({ enabled: m.enabled, quick: m.quick });
+      case "promptuWeek": {
+        // The page names the click, never a command: a run, or the sheet, as the card's own state decides (95).
+        const cwd = rec.chat.opts.cwd || rec.chat.state.cwd || "";
+        if (this.ctx.promptu.sheetWaiting(cwd)) {
+          if (m.op === "open") this.ctx.openWeekSheet(cwd);
+        } else if (m.op === "run") void this.ctx.promptu.runWeek(cwd);
+        return;
+      }
       case "promptuMemory":
         this.pushMemoryPass();
         return this.memory(rec);

@@ -3835,6 +3835,41 @@ await check("the card's weekly line shows last run, next run, a run in progress 
   }
 });
 
+await check("a click on the card's weekly line asks to open the sheet when one waits, else to run the pass; nothing while one runs; a failed run adds one line (95)", async () => {
+  const WEEK = { last: { week: "2026-W47", at: "2026-11-25T08:03:00-06:00", status: "ok" }, next: "2026-12-02T08:00:00-06:00", running: false, missed: false, missedSince: null, open: 23, sheetWeek: "2026-W48" };
+  const weekPosts = async () => (await posts()).filter((p) => p.t === "promptuWeek");
+  const open = async (state) => {
+    await send([PSTATE(state)]);
+    await exec("document.querySelector('.composer textarea').focus()");
+    await hover(".rail .rail-entry.promptu");
+  };
+  const away = async () => {
+    await mouseAway();
+    await sleep(500);
+  };
+  try {
+    await fresh();
+    await open({ week: WEEK });
+    await click(".promptu-card button.promptu-week");
+    assert.deepEqual(await weekPosts(), [{ t: "promptuWeek", op: "open" }]);
+    await away();
+    await clearPosts();
+    await open({ week: { ...WEEK, open: 0, sheetWeek: null }, weekRunError: null });
+    await click(".promptu-card button.promptu-week");
+    assert.deepEqual(await weekPosts(), [{ t: "promptuWeek", op: "run" }]);
+    await away();
+    await open({ week: { ...WEEK, open: 0, sheetWeek: null, running: true }, weekRunError: null });
+    assert.deepEqual(await text(".promptu-card button.promptu-week"), [], "no button while a pass runs");
+    assert.match((await text(".promptu-card .promptu-week"))[0], /running now/);
+    await away();
+    await open({ week: { ...WEEK, open: 0, sheetWeek: null }, weekRunError: "promptu week failed (exit 1): the drafter timed out" });
+    assert.deepEqual(await text(".promptu-card .promptu-week-error"), ["promptu week failed (exit 1): the drafter timed out"]);
+    await away();
+  } finally {
+    await send([PROMPTU_OFF]);
+  }
+});
+
 await check("Enter at a task start runs Promptu instead of sending; its dialog over the chat asks the page, recommendations picked, Other for free text; Enter answers it (96)", async () => {
   try {
     const sid = await fresh();

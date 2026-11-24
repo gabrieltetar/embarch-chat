@@ -247,6 +247,8 @@ export type ChatToHost =
   | { t: "promptuSettings"; enabled?: boolean; quick?: boolean }
   /** The Memory menu opened (98): its data, for the chat's folder. */
   | { t: "promptuMemory" }
+  /** A click on the Promptu card's weekly line (95): the host decides from the card's state whether it runs the pass or opens the sheet. */
+  | { t: "promptuWeek"; op: "run" | "open" }
   /** The Memory menu's pass line clicked (98): a new chat in the folder with the configured command; the page names nothing. */
   | { t: "memoryPassStart" }
   /** A memory entry clicked: its file beside the chat (92, 98) — only one the menu was given. */

@@ -470,6 +470,58 @@ test("the weekly pass: week status read through the binary, again with the card'
   assert.deepEqual([m.missed, m.missedSince, m.open, m.sheetWeek], [true, "2026-11-25T08:00:00-06:00", 0, null]);
 });
 
+test("the card's weekly line runs the pass once: a click while it runs starts nothing, a timer's run is shown and not started again, a failure is one line, a waiting sheet is not run over", async () => {
+  const store = { get: (_k, d) => d, update: async () => {} };
+  const wait = (svc) => new Promise((r) => svc.once("state", r));
+  const calls = (s) => s.calls().filter((c) => c.cmd === "week" && c.args[0] === "run");
+  const ready = async (env) => {
+    const s = setup(env);
+    const svc = new core.PromptuService(s.cli, store, () => {});
+    svc.state(ROOT);
+    await wait(svc);
+    await wait(svc);
+    return { s, svc };
+  };
+
+  const { s, svc } = await ready({ FAKE_PROMPTU_WEEK: "quiet", FAKE_PROMPTU_WEEKRUN_MS: "400" });
+  assert.equal(svc.sheetWaiting(ROOT), false);
+  const first = svc.runWeek(ROOT);
+  const second = svc.runWeek(ROOT);
+  assert.equal(svc.state(ROOT).week.running, true, "shown as running at once");
+  await Promise.all([first, second]);
+  assert.deepEqual(calls(s).map((c) => c.args), [["run", "--json"]], "one run, started once");
+  assert.equal(svc.state(ROOT).week.running, false, "and the line reads the result");
+  assert.equal(svc.state(ROOT).weekRunError, null);
+  assert.ok(s.calls().filter((c) => c.args[0] === "status").length >= 2, "week status read again after the run");
+
+  // The timer's run is live: shown, and `week run` is not called.
+  const live = await ready({ FAKE_PROMPTU_WEEK: "running" });
+  await live.svc.runWeek(ROOT);
+  assert.equal(calls(live.s).length, 0);
+  assert.equal(live.svc.state(ROOT).weekRunError, null);
+
+  // A run that began after the last status read: exit 4 is the same answer, not a failure.
+  const race = await ready({ FAKE_PROMPTU_WEEK: "quiet" });
+  fs.writeFileSync(path.join(race.s.dir, "week.lock"), "1");
+  await race.svc.runWeek(ROOT);
+  assert.equal(race.svc.state(ROOT).weekRunError, null, "exit 4 is not an error");
+
+  // A failed run is one line.
+  const bad = await ready({ FAKE_PROMPTU_WEEK: "quiet", FAKE_PROMPTU_FAIL: "week-run:1:the drafter timed out" });
+  await bad.svc.runWeek(ROOT);
+  assert.equal(bad.svc.state(ROOT).weekRunError, "promptu week failed (exit 1): the drafter timed out");
+
+  // A sheet is waiting: the click opens it; the service runs nothing.
+  const waiting = await ready({ FAKE_PROMPTU_WEEK: "waiting" });
+  assert.equal(waiting.svc.sheetWaiting(ROOT), true);
+  await waiting.svc.runWeek(ROOT);
+  assert.equal(calls(waiting.s).length, 0);
+
+  assert.equal(core.REVIEW_SKILL, "/embarch-promptu:review");
+  assert.equal(core.TIMEOUTS.weekRun > 3_600_000, false, "longer than any pass the drafter allows is not needed");
+  assert.ok(core.TIMEOUTS.weekRun >= 3_600_000 / 2, "much longer than the other commands");
+});
+
 test("the bench tools are there when the chat's CLI lists embarch-api, else when its binary is on PATH", () => {
   assert.equal(core.embarchApiPresent([{ name: "embarch-api", status: "connected" }], () => false), true);
   assert.equal(core.embarchApiPresent([{ name: "embarch-api", status: "failed" }], () => true), false, "the CLI's word wins");

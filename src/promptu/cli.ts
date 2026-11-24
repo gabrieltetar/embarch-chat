@@ -121,8 +121,8 @@ export interface CliSettings {
   env?: NodeJS.ProcessEnv;
 }
 
-/** How long each command may take: `prep` runs the Sonnet pass (15 s by its own default) and gathers first. */
-export const TIMEOUTS = { prep: 40_000, next: 10_000, render: 10_000, original: 10_000, patterns: 10_000, memory: 20_000, weekStatus: 10_000 };
+/** How long each command may take: `prep` runs the Sonnet pass (15 s by its own default) and gathers first; `week run` packs and drafts a whole week (its own drafter limit is 15 min by default, 60 at most, contract §14.2). */
+export const TIMEOUTS = { prep: 40_000, next: 10_000, render: 10_000, original: 10_000, patterns: 10_000, memory: 20_000, weekStatus: 10_000, weekRun: 30 * 60_000 };
 
 /** The first line worth showing of a command's stderr. */
 function firstLine(s: string): string {
@@ -278,6 +278,15 @@ export class PromptuCli {
     const v = r.value;
     if (!v || typeof v !== "object" || typeof v.running !== "boolean") return { ok: false, error: "promptu week status gave an unreadable answer", ms: r.ms };
     return r;
+  }
+
+  /**
+   * One weekly pass now (`promptu week run --json`, contract §14.4). Exit 4 is
+   * another run in progress, with nothing written: `busy`, not a failure.
+   */
+  async weekRun(cwd: string): Promise<CliResult<unknown> & { busy?: boolean }> {
+    const r = await this.run<unknown>(["week", "run", "--json"], { cwd, timeoutMs: TIMEOUTS.weekRun });
+    return r.ok ? r : { ...r, busy: r.exit === 4 };
   }
 
   memory(cwd: string): Promise<CliResult<MemoryOut>> {

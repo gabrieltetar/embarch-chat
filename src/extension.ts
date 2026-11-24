@@ -29,7 +29,7 @@ import { HostCtx, assistInput, beginPromptu, headerFor } from "./views/chatHost"
 import { PromptuCli, findBinary } from "./promptu/cli";
 import { PromptuRuns } from "./promptu/runs";
 import { PromptuService, embarchApiPresent } from "./promptu/service";
-import { startRough } from "./promptu/text";
+import { REVIEW_SKILL, startRough } from "./promptu/text";
 import { UsageStore } from "./usageStore";
 import { DEFAULT_CONTINUE_TEXT, continueText } from "./afterLimit";
 import { handoffSetting } from "./handoff";
@@ -357,6 +357,7 @@ export function activate(context: vscode.ExtensionContext): void {
     runs,
     memoryPass: () => cfg().memoryPass,
     startMemoryPass: (cwd, command) => void startMemoryPass(cwd, command),
+    openWeekSheet: (cwd) => void openWeekSheet(cwd),
     promptuHave,
     usage,
   };
@@ -812,6 +813,14 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!dir) return;
     const rec = await startChat({ untracked: true }, dir, null);
     if (rec) rec.chat.send(command);
+  }
+
+  /** The card's weekly line with a sheet waiting (95): a new untracked chat, the review skill in its draft, nothing sent. */
+  async function openWeekSheet(cwd: string): Promise<void> {
+    const dir = windowCwd(cwd) ?? cwd;
+    if (!dir) return;
+    const rec = await startChat({ untracked: true }, dir, null);
+    if (rec) manager.setDraft(rec.chat.sessionId, REVIEW_SKILL);
   }
 
   /**

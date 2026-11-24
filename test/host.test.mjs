@@ -2046,6 +2046,34 @@ test("Enter at a task start: the page asks for the pass, Esc takes the rest as a
   }
 });
 
+test("a click on the card's weekly line with a sheet waiting opens a new chat with the review skill typed and unsent, and runs nothing (95)", { skip }, async () => {
+  mock.state.config["embarchChat.promptuPath"] = FAKE_PROMPTU;
+  try {
+    mock.state.quickPick = async (items) => items.find((i) => i.label.includes("Untracked"));
+    await mock.state.commands.get("embarchChat.newChat")();
+    const sid = await waitFor(() => {
+      const s = lastSnapshot();
+      return s && s.header?.untracked && !s.state.timeline.length && s.state.sessionId;
+    }, 5000, "a chat to click from");
+    chatView.webview.fromPage({ t: "promptuSettings", enabled: true });
+    await waitFor(() => [...chatView.webview.posted].reverse().find((m) => m.t === "promptuState")?.state.week?.sheetWeek, 5000, "the weekly line read");
+    const before = chatView.webview.posted.length;
+    const calls = promptuCalls().length;
+    chatView.webview.fromPage({ t: "promptuWeek", op: "open" });
+    const draft = await waitFor(() => chatView.webview.posted.slice(before).find((m) => m.t === "draft" && m.sid !== sid), 5000, "the new chat's draft");
+    assert.equal(draft.text, "/embarch-promptu:review");
+    assert.ok(!chatView.webview.posted.slice(before).some((m) => m.t === "event" && m.e.type === "_sent"), "nothing sent");
+    assert.ok(!promptuCalls().slice(calls).some((c) => c.args[0] === "run"), "no week run");
+    // A run asked of a card whose sheet waits starts nothing either.
+    chatView.webview.fromPage({ t: "promptuWeek", op: "run" });
+    await new Promise((r) => setTimeout(r, 200));
+    assert.ok(!promptuCalls().slice(calls).some((c) => c.args[0] === "run"), "no week run");
+  } finally {
+    mock.state.config["embarchChat.promptuPath"] = path.join(dir, "no-promptu");
+    mock.state.quickPick = async () => undefined;
+  }
+});
+
 test("the Memory menu: promptu memory --json for the chat's folder, and a click opens only a file it listed (98)", { skip }, async () => {
   mock.state.config["embarchChat.promptuPath"] = FAKE_PROMPTU;
   try {
