@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { execFileSync } from "node:child_process";
 
 const require = createRequire(import.meta.url);
 const core = require("../test-out/core.js");
@@ -42,4 +43,31 @@ test("a page cite opens the page's text, else the card; a board ref opens its li
   assert.deepEqual(core.citationTarget(info, { board: "A", ref: "U3-12" }), { file: path.join(info.root, "boards", "A", "nets.md"), line: 2 });
   assert.deepEqual(core.citationTarget(info, { board: "A", ref: "U7" }), { file: path.join(info.root, "boards", "A", "parts.md"), line: 2 });
   assert.equal(core.citationTarget(info, { doc: "nope@1", page: 1 }), null);
+});
+
+function worktreeBeside(withAtlas) {
+  const main = withAtlas ? scratchAtlas() : fs.mkdtempSync(path.join(ROOT, "repo-"));
+  const git = (...a) => execFileSync("git", ["-C", main, ...a], { stdio: "pipe" });
+  git("init", "-q");
+  git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x");
+  const wt = path.join(ROOT, path.basename(main) + "-wt");
+  git("worktree", "add", "-q", "-b", "wt", wt);
+  return { main, wt };
+}
+
+test("a chat in a linked worktree finds the main clone's atlas; its own wins", () => {
+  const { main, wt } = worktreeBeside(true);
+  fs.mkdirSync(path.join(wt, "src"), { recursive: true });
+  const info = core.atlasInfo(path.join(wt, "src"));
+  assert.equal(info.root, path.join(main, "embarch", "atlas"));
+  assert.deepEqual(info.docs, ["abc123@A"]);
+  assert.deepEqual(info.boards, ["A"]);
+  const own = path.join(wt, "embarch", "atlas", "boards", "B");
+  fs.mkdirSync(own, { recursive: true });
+  assert.equal(core.atlasRoot(wt), path.join(wt, "embarch", "atlas"));
+});
+
+test("a worktree of a main clone with no atlas gives null", () => {
+  const { wt } = worktreeBeside(false);
+  assert.equal(core.atlasRoot(wt), null);
 });

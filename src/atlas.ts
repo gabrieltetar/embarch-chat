@@ -15,12 +15,36 @@ export interface AtlasInfo {
 
 const cache = new Map<string, { at: number; info: AtlasInfo | null }>();
 
-/** The nearest `embarch/atlas` at or above `cwd`. */
+function hasAtlas(a: string): boolean {
+  return fs.existsSync(path.join(a, "docs")) || fs.existsSync(path.join(a, "boards"));
+}
+
+/** The main clone's top folder when `top` is a linked worktree (its `.git` file's gitdir, that folder's commondir), else null. */
+function mainCloneOf(top: string): string | null {
+  try {
+    const gitFile = path.join(top, ".git");
+    if (!fs.statSync(gitFile).isFile()) return null;
+    const m = /^gitdir:\s*(.+)$/m.exec(fs.readFileSync(gitFile, "utf8"));
+    if (!m) return null;
+    const gitdir = path.resolve(top, m[1].trim());
+    const common = path.resolve(gitdir, fs.readFileSync(path.join(gitdir, "commondir"), "utf8").trim());
+    return path.basename(common) === ".git" ? path.dirname(common) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The nearest `embarch/atlas` at or above `cwd`; failing that, the main clone's when `cwd` is in a linked worktree. */
 export function atlasRoot(cwd: string): string | null {
   let d = cwd;
   for (let i = 0; i < 12 && d && d !== path.dirname(d); i++, d = path.dirname(d)) {
     const a = path.join(d, "embarch", "atlas");
-    if (fs.existsSync(path.join(a, "docs")) || fs.existsSync(path.join(a, "boards"))) return a;
+    if (hasAtlas(a)) return a;
+    const main = mainCloneOf(d);
+    if (main) {
+      const ma = path.join(main, "embarch", "atlas");
+      return hasAtlas(ma) ? ma : null;
+    }
   }
   return null;
 }
