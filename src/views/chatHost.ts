@@ -17,7 +17,7 @@ import { DeskError } from "../desk/client";
 import type { PrRef } from "../desk/client";
 import { linkReferences } from "../assistant/references";
 import { deskSource, prLine } from "../assistant/refsDesk";
-import { AtlasRefs, atlasSource } from "../assistant/refsAtlas";
+import { AtlasRefs, atlasSource, dtSource, kconfigSource } from "../assistant/refsAtlas";
 import { GitRefs, gitSource } from "../assistant/refsGit";
 import { openAt, openFileLink } from "../openFile";
 import { mentionItems, mentionOf } from "../mentions";
@@ -159,7 +159,7 @@ export function assistInput(ctx: HostCtx, rec: ChatRecord, draft: string, opts: 
       ? (() => {
           const cwd = rec.chat.opts.cwd || st.cwd || "";
           const repo = githubRepo(cwd);
-          return { references: linkReferences([deskSource(index, { ownKey: h.issueKey, ownPrs: h.prs, repo }), gitSource(gitRefs.get(cwd), index, { repo }), atlasSource(atlasRefs.get(cwd), draft)], draft) };
+          return { references: linkReferences([deskSource(index, { ownKey: h.issueKey, ownPrs: h.prs, repo }), gitSource(gitRefs.get(cwd), index, { repo }), atlasSource(atlasRefs.get(cwd), draft), kconfigSource(atlasRefs.doc(cwd)), dtSource(atlasRefs.doc(cwd))], draft) };
         })()
       : {}),
   };

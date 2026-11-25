@@ -87,6 +87,28 @@ const KINDS: Record<string, KindInfo> = {
       why: "The repo has the worktree /home/me/repo-fan",
     },
   },
+  symbol: {
+    plural: ["Kconfig symbols"],
+    singular: ["a Kconfig symbol"],
+    example: {
+      line: 'CONFIG_SHELL_HISTORY ("Enable shell history")',
+      draft: "turn on the shell history option",
+      find: "the shell history option",
+      title: "Name CONFIG_SHELL_HISTORY",
+      why: "The atlas has that symbol",
+    },
+  },
+  node: {
+    plural: ["devicetree nodes"],
+    singular: ["a devicetree node"],
+    example: {
+      line: "&i2c1 (/soc/i2c@40004000, nordic,nrf-twim)",
+      draft: "the second I2C bus node needs a pull-up",
+      find: "the second I2C bus node",
+      title: "Name &i2c1",
+      why: "The atlas has that node",
+    },
+  },
   section: {
     plural: ["datasheet and spec sections"],
     singular: ["a datasheet or spec section"],
@@ -292,10 +314,15 @@ export function referenceText(ref: DeskRef, find: string): string {
   return ref.entry.text(find);
 }
 
+/** The line a reference card names by its id. */
+export function lineOf(refs: DeskRef[], id: unknown): DeskRef | undefined {
+  return typeof id === "string" ? refs.find((r) => r.id === id.replace(/[[\]\s]/g, "")) : undefined;
+}
+
 /** The reference card Haiku named by line id and phrase, as an edit to the draft; null when the id is not a line it was sent or the phrase is not the draft's. */
 export function referenceEdit(refs: DeskRef[], id: unknown, find: unknown, draft: string): { op: "replace"; find: string; with: string } | null {
   if (typeof id !== "string" || typeof find !== "string") return null;
-  const ref = refs.find((r) => r.id === id.replace(/[[\]\s]/g, ""));
+  const ref = lineOf(refs, id);
   if (!ref || !find.trim() || find.length > FIND_CAP || !draft.includes(find)) return null;
   return { op: "replace", find, with: referenceText(ref, find) };
 }

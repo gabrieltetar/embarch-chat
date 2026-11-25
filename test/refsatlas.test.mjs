@@ -129,3 +129,76 @@ test("two cards calls with no atlas change run the verb once; a change runs it a
   await lines(r, "the datasheet section", reader);
   assert.equal(reader.spawns, 3);
 });
+
+// Decision 115: the atlas's Kconfig symbols and devicetree nodes, from the same read.
+
+/** The block's lines for a draft over all three atlas sources and the cards `why` the stale note rides on. */
+async function all(folder, draft) {
+  process.env.FAKE_ATLAS_LOG = path.join(folder, "calls.jsonl");
+  const reader = new core.AtlasRefs();
+  await reader.refresh(folder, FAKE, () => {});
+  const refs = core.linkReferences([core.atlasSource(reader.get(folder), draft), core.kconfigSource(reader.doc(folder)), core.dtSource(reader.doc(folder))], draft);
+  return { refs, calls: fs.readFileSync(path.join(folder, "calls.jsonl"), "utf8").trim().split("\n").length };
+}
+const linesOf = async (folder, draft) => (await all(folder, draft)).refs.map((r) => r.line);
+
+test("the shell history option offers the symbol, written with its prompt and no value", async () => {
+  const r = repo();
+  const { refs, calls } = await all(r, "turn on the shell history option");
+  // Best first: "history" is held by one symbol, "shell" by two, so the other shell symbol may follow.
+  assert.deepEqual([refs[0].kind, refs[0].line], ["symbol", 'CONFIG_SHELL_HISTORY ("Enable shell history")']);
+  assert.equal(calls, 1, "sections, symbols and nodes are one run");
+});
+
+test("a symbol named exactly gets its line with no cue word: CONFIG_<NAME>, and the bare capitals with an underscore", async () => {
+  const r = repo();
+  assert.deepEqual(await linesOf(r, "see CONFIG_SHELL_HISTORY here"), ['CONFIG_SHELL_HISTORY ("Enable shell history")']);
+  assert.deepEqual(await linesOf(r, "SHELL_CMD_BUFF_SIZE is too small"), ['CONFIG_SHELL_CMD_BUFF_SIZE ("Shell command buffer size")']);
+  // Lower case and no underscore are no bare name; a word of the prompt without a cue word offers nothing.
+  assert.deepEqual(await linesOf(r, "the shell_history thing"), []);
+  assert.deepEqual(await linesOf(r, "enable shell history"), []);
+});
+
+test("a node by words, by label, by alias and by path", async () => {
+  const r = repo();
+  const i2c1 = "&i2c1 (/soc/i2c@40004000, nordic,nrf-twim)";
+  const i2c0 = "&i2c0 (/soc/i2c@40003000, nordic,nrf-twim)";
+  assert.deepEqual(await linesOf(r, "the second I2C bus node"), [i2c0, i2c1]);
+  assert.deepEqual(await linesOf(r, "pull-up on &i2c1"), [i2c1]);
+  assert.deepEqual(await linesOf(r, "use sensor-bus for it"), [i2c1]);
+  assert.deepEqual(await linesOf(r, "see /soc/i2c@40004000"), [i2c1]);
+  // No label: the path alone.
+  assert.deepEqual(await linesOf(r, "the gpio leds node"), ["/leds/led_0"]);
+  assert.deepEqual(await linesOf(r, "the i2c bus"), []);
+});
+
+test("a stale atlas still offers, and the card's why says it is at an older commit", async () => {
+  const r = repo();
+  process.env.FAKE_ATLAS_STALE = "1";
+  try {
+    const { refs } = await all(r, "turn on the shell history option");
+    assert.equal(refs[0].id, "r1");
+    const cards = core.parseCards({ cards: [{ category: "refs", ref: "r1", find: "the shell history option", title: "Name CONFIG_SHELL_HISTORY", why: "The atlas has that symbol" }] }, "turn on the shell history option", "c", refs);
+    assert.equal(cards.length, 1);
+    assert.match(cards[0].why, /^The atlas has that symbol; the atlas is at an older commit$/);
+    // Not stale: the model's why alone.
+    delete process.env.FAKE_ATLAS_STALE;
+    const fresh = await all(repo(), "turn on the shell history option");
+    const c2 = core.parseCards({ cards: [{ category: "refs", ref: "r1", find: "the shell history option", title: "Name CONFIG_SHELL_HISTORY", why: "The atlas has that symbol" }] }, "turn on the shell history option", "c", fresh.refs);
+    assert.equal(c2[0].why, "The atlas has that symbol");
+  } finally {
+    delete process.env.FAKE_ATLAS_STALE;
+  }
+});
+
+test("documents with no built atlas offer sections and no symbol or node", async () => {
+  const r = repo();
+  process.env.FAKE_ATLAS_NOATLAS = "1";
+  try {
+    assert.deepEqual(await linesOf(r, "the TPS2595 protection"), ['tps2595@A p14 §7.3 "Protection features"']);
+    assert.deepEqual(await linesOf(r, "turn on CONFIG_SHELL_HISTORY, the shell history option"), []);
+    assert.deepEqual(await linesOf(r, "the second I2C bus node, &i2c1"), []);
+  } finally {
+    delete process.env.FAKE_ATLAS_NOATLAS;
+  }
+});

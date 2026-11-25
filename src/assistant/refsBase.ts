@@ -22,6 +22,8 @@ export interface RefEntry {
   text(find: string): string;
   /** Free text the entry carries that a card may not copy into a draft (copiesTitle). */
   titles?: string[];
+  /** Said on the entry's reference card, after the model's why (the extension's words, not Haiku's): "the atlas is at an older commit". */
+  note?: string;
   /** The scoring group when it is not the kind: a word's rarity counts among the group's entries. */
   pool?: string;
   /** Other entries this line already shows (`kind:key`), so they are not offered again. */

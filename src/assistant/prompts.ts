@@ -9,7 +9,7 @@
 // extension's to write, never Haiku's.
 
 import { Card, CardCategory, DraftEdit, applyEdit } from "./edits";
-import { DeskRef, copiesTitle, kindExample, kindNouns, kindPointers, referenceEdit } from "./references";
+import { DeskRef, copiesTitle, kindExample, kindNouns, kindPointers, lineOf, referenceEdit } from "./references";
 
 export interface AssistInput {
   draft: string;
@@ -241,7 +241,9 @@ export function parseCards(o: Record<string, unknown> | null, draft: string, idB
       if (!edit || copiesTitle(added(edit), draft, refs)) continue;
       card = { id: "", category, title, edit };
     } else continue;
-    const why = str(c.why, 200);
+    // The atlas's staleness is the entry's to say, not the model's (115): its note follows the model's why.
+    const note = "ref" in c ? lineOf(refs, c.ref)?.entry.note : undefined;
+    const why = note ? [str(c.why, 200 - note.length - 2), note].filter(Boolean).join("; ") : str(c.why, 200);
     if (why) card.why = why;
     if (applyEdit(draft, card.edit) === null) continue;
     card.id = `${idBase}-${out.length}`;
