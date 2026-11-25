@@ -219,6 +219,21 @@ const scenarios = {
     });
     await r.close();
   },
+  // Options whose previews differ in height (decision 104): the option under
+  // a still pointer must not move as the preview opens.
+  async questionpreview() {
+    const r = new Rec("questionpreview", ["--tools", "AskUserQuestion"]);
+    r.user(
+      "Use the AskUserQuestion tool once, with one question: which layout I prefer, with four options: Short, Tall, Medium and None, each with a short description. Give Short a preview of one line, Tall a preview of eight short lines, Medium a preview of four short lines, and None no preview. Then tell me in one line what I picked.",
+    );
+    await r.result((o) => {
+      const inp = { ...o.request.input };
+      const q = inp.questions?.[0];
+      inp.answers = q ? { [q.question]: q.options[1].label } : {};
+      r.respond(o, { behavior: "allow", updatedInput: inp });
+    });
+    await r.close();
+  },
   async plan() {
     const r = new Rec("plan", ["--permission-mode", "plan", "--tools", "Read,Write,ExitPlanMode"]);
     r.user("Plan how to create hello.txt containing hi, then present the plan for approval with ExitPlanMode. Keep the plan to two lines. After approval, create the file.");

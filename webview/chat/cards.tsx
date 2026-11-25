@@ -8,7 +8,7 @@
 // that comes while the owner types waits as a quiet line until the draft is
 // sent or cleared, the input is left, or the typing pauses (decision 55).
 
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { NoteEntry, Pending } from "../../src/wire/reducer";
 import { Markdown, MdCtx } from "../shared/markdown";
 import { vscodeApi } from "../shared/vscode";
@@ -120,6 +120,9 @@ interface Question {
   options: Array<{ label: string; description?: string; preview?: string }>;
 }
 
+/** How long the pointer rests on an option before its preview shows (decision 104). */
+const PREVIEW_REST_MS = 100;
+
 /** A textarea as tall as its lines, up to a few. */
 function fit(el: HTMLTextAreaElement) {
   el.style.height = "auto";
@@ -152,36 +155,68 @@ function QuestionCard({ p, ctx }: { p: Pending; ctx: ToolCtx }) {
     qs.forEach((q, i) => (answers[q.question] = answerOf(i)));
     post({ t: "answer", requestId: p.requestId, answers });
   };
+  // The pointer's option, else the one picked, shows its preview. The pointer's shows once it rests there;
+  // a pick, or the pointer leaving the options, shows at once (104).
+  const rest = useRef(0);
+  useEffect(() => () => clearTimeout(rest.current), []);
+  const peek = (i: number, n: number, ms = 0) => {
+    clearTimeout(rest.current);
+    const set = () => setHover((all) => ({ ...all, [i]: n }));
+    if (ms) rest.current = window.setTimeout(set, ms);
+    else set();
+  };
+  const shown = qs.map((q, i) => ((hover[i] ?? -1) >= 0 ? hover[i] : q.options.findIndex((o) => (picked[i] ?? []).includes(o.label))));
+  // A preview opens above its options, where the card grows, so they stay under a still pointer (104); where
+  // the card scrolls instead, it scrolls by what they moved. Where they were is read here, before Preact
+  // changes the page.
+  const opts = useRef<Array<HTMLDivElement | null>>([]);
+  const drawn = useRef<number[]>([]);
+  const was = useRef<{ i: number; top: number } | null>(null);
+  const moved = shown.findIndex((n, i) => drawn.current[i] !== undefined && drawn.current[i] !== n);
+  const anchor = moved >= 0 ? opts.current[moved] : null;
+  if (anchor) was.current = { i: moved, top: anchor.getBoundingClientRect().top };
+  useLayoutEffect(() => {
+    drawn.current = shown;
+    const w = was.current;
+    was.current = null;
+    const el = w && opts.current[w.i];
+    const box = el?.closest(".cards");
+    if (el && box) box.scrollTop += el.getBoundingClientRect().top - w.top;
+  });
   return (
     <div class="card">
       <div class="card-title">Claude asks</div>
       {qs.map((q, i) => {
         const sel = picked[i] ?? [];
-        const shownIdx = hover[i] ?? q.options.findIndex((o) => sel.includes(o.label));
-        const preview = shownIdx >= 0 ? q.options[shownIdx]?.preview : undefined;
+        const preview = shown[i] >= 0 ? q.options[shown[i]]?.preview : undefined;
         return (
           <div class="q" key={i}>
             {q.header && <div class="q-head">{q.header}</div>}
             <div class="q-text">{q.question}</div>
-            {q.options.map((o, n) => (
-              <label
-                class={`opt ${sel.includes(o.label) ? "sel" : ""}`}
-                key={n}
-                onMouseEnter={() => setHover({ ...hover, [i]: n })}
-                onMouseLeave={() => setHover({ ...hover, [i]: -1 })}
-              >
-                <input type={q.multiSelect ? "checkbox" : "radio"} name={`q${i}`} checked={sel.includes(o.label)} onChange={() => toggle(i, o.label, !!q.multiSelect)} />
-                <span>
-                  <div>{o.label}</div>
-                  {o.description && <div class="desc">{o.description}</div>}
-                </span>
-              </label>
-            ))}
             {preview && (
               <div class="opt-preview">
                 <Markdown text={preview} ctx={ctx} />
               </div>
             )}
+            <div class="opts" ref={(el) => (opts.current[i] = el)} onMouseLeave={() => peek(i, -1)}>
+              {q.options.map((o, n) => (
+                <label class={`opt ${sel.includes(o.label) ? "sel" : ""}`} key={n} onMouseEnter={() => peek(i, n, PREVIEW_REST_MS)}>
+                  <input
+                    type={q.multiSelect ? "checkbox" : "radio"}
+                    name={`q${i}`}
+                    checked={sel.includes(o.label)}
+                    onChange={() => {
+                      toggle(i, o.label, !!q.multiSelect);
+                      peek(i, n);
+                    }}
+                  />
+                  <span>
+                    <div>{o.label}</div>
+                    {o.description && <div class="desc">{o.description}</div>}
+                  </span>
+                </label>
+              ))}
+            </div>
             {/* Several lines, as a pasted pin list has: Shift+Enter breaks the line, Enter answers (79). */}
             <textarea
               class="other"

@@ -1654,6 +1654,64 @@ await check("a 💡 open while the panel narrows measures its previews again: a 
   await settle();
 });
 
+// Claude's question with previews of different heights (decision 104).
+const askPreview = async () => {
+  const lines = outLines("questionpreview");
+  await send([snapshot(), sent("q"), ...events(upTo(lines, (o) => o.type === "control_request"))]);
+  return lines.find((o) => o.type === "control_request").request.input.questions[0].options;
+};
+const flat = (s) => (s ?? "").replace(/\s+/g, "");
+const shownPreview = () => exec("return document.querySelector('.card .opt-preview')?.textContent ?? ''");
+const optEl = async (label) => {
+  await exec("const e=[...document.querySelectorAll('.card .opt')].find(x => x.querySelector('span > div').textContent === arguments[0]); e.setAttribute('data-o', arguments[0]);", [label]);
+  return Object.values(await wd("POST", `${S}/element`, { using: "css selector", value: `.card .opt[data-o='${label}']` }))[0];
+};
+
+await check("a question's preview opens above its options: the option under a still pointer never moves, in a tall panel or a short one, and shows its own preview (104)", async () => {
+  let options = [];
+  for (const h of [1400, 600]) {
+    await wd("POST", `${S}/window/rect`, { width: 460, height: h });
+    options = await askPreview();
+    for (const o of options.filter((x) => x.preview)) {
+      await mouseAway();
+      const before = await exec("return [...document.querySelectorAll('.card .opt')].map(o => o.getBoundingClientRect().top)");
+      await hover(".card .opt", o.label);
+      // The pointer stays still for half a second: every frame the options are where they were.
+      const seen = await wd("POST", `${S}/execute/async`, {
+        script: `const done = arguments[0]; const t0 = performance.now(); let most = 0;
+          const tick = () => { [...document.querySelectorAll('.card .opt')].forEach((e, n) => (most = Math.max(most, Math.abs(e.getBoundingClientRect().top - arguments[1][n]))));
+            if (performance.now() - t0 < 500) requestAnimationFrame(tick); else done(most); };
+          requestAnimationFrame(tick);`,
+        args: [before],
+      });
+      assert.ok(seen <= 1, `${h} px tall, on ${o.label}: the options moved ${seen} px`);
+      assert.equal(flat(await shownPreview()), flat(o.preview), `${h} px tall, on ${o.label}: its own preview`);
+    }
+    await shot(`question-preview-${h}`);
+  }
+  // A pick's preview stays once the pointer leaves the options.
+  await exec("[...document.querySelectorAll('.card .opt')].find(e => e.textContent.includes('Medium')).querySelector('input').click()");
+  await mouseAway();
+  assert.equal(flat(await shownPreview()), flat(options.find((o) => o.label === "Medium").preview), "the picked option's preview");
+  await wd("POST", `${S}/window/rect`, { width: 460, height: 900 });
+});
+
+await check("a pointer passing over a question's options previews only the one it rests on (104)", async () => {
+  await wd("POST", `${S}/window/rect`, { width: 460, height: 1400 });
+  const options = await askPreview();
+  await mouseAway();
+  const [short, medium, tall] = [await optEl("Short"), await optEl("Medium"), await optEl("Tall")];
+  await exec("window.__previews = []; window.__mo = new MutationObserver(() => window.__previews.push(document.querySelector('.card .opt-preview')?.textContent ?? '')); window.__mo.observe(document.querySelector('.card'), { childList: true, subtree: true, characterData: true });");
+  const to = (el) => ({ type: "pointerMove", duration: 0, origin: { "element-6066-11e4-a52e-4f735466cecf": el }, x: 0, y: 0 });
+  await wd("POST", `${S}/actions`, { actions: [{ type: "pointer", id: "mouse", parameters: { pointerType: "mouse" }, actions: [to(short), { type: "pause", duration: 30 }, to(medium), { type: "pause", duration: 30 }, to(tall)] }] });
+  await sleep(300);
+  const seen = await exec("window.__mo.disconnect(); return [...new Set(window.__previews.filter(Boolean))]");
+  const tallPreview = options.find((o) => o.label === "Tall").preview;
+  assert.deepEqual(seen.map(flat), [flat(tallPreview)], "only the option the pointer rests on");
+  await mouseAway();
+  await wd("POST", `${S}/window/rect`, { width: 460, height: 900 });
+});
+
 await check("the compact card adds /compact focus on: …; Enter sends the draft and the rest waits for the compaction", async () => {
   const draft = "the widget is done. next, move on to the UART driver: add a ring buffer for RX and a test for it";
   const sid = await fresh({ context: { totalTokens: 136000, maxTokens: 200000, percentage: 68, categories: [] } });
