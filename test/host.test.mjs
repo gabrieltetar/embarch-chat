@@ -1808,7 +1808,7 @@ test("the window's desk's reference index reaches each chat page, and the cards 
   // Ghost text keeps its latency: no references (26).
   chatView.webview.fromPage({ t: "assist", kind: "ghost", text: VAGUE, seq: 881 });
   await waitFor(() => posted((m) => m.t === "ghost" && m.seq === 881 && m.done), 5000, "the ghost text");
-  assert.ok(!calls().filter((x) => x.task === "ghost").at(-1).prompt.includes("desk_references"));
+  assert.ok(!calls().filter((x) => x.task === "ghost").at(-1).prompt.includes("<references>"));
   // The cards: the references the draft matches, in the same single call, and the card names the PR.
   process.env.FAKE_HAIKU_CARDS = path.join(here, "fixtures", "haiku", "cards-refs.jsonl");
   try {
@@ -1817,7 +1817,7 @@ test("the window's desk's reference index reaches each chat page, and the cards 
     const c = await waitFor(() => posted((m) => m.t === "cards" && m.seq === 882), 5000, "the cards");
     const made = calls().slice(n);
     assert.deepEqual(made.map((x) => x.task), ["cards"], "one call");
-    assert.ok(made[0].prompt.includes('<desk_references>\nIssues and PRs on this desk that the draft names, or whose titles share its words, best first:\n[r1] ABC-154 "Create the Widget" Done · PR owner/repo#36 "Widget" merged\n</desk_references>'), made[0].prompt);
+    assert.ok(made[0].prompt.includes('<references>\nIssues and PRs on this desk that the draft names, or whose titles share its words, best first:\n[r1] issue: ABC-154 "Create the Widget" Done · PR owner/repo#36 "Widget" merged\n</references>'), made[0].prompt);
     // Haiku named line r1; the reference is the extension's, from the index.
     assert.equal(c.cards[0].edit.op, "replace");
     assert.equal(c.cards[0].edit.with, 'PR owner/repo#36 "Widget" (ABC-154)');
@@ -1832,7 +1832,7 @@ test("the window's desk's reference index reaches each chat page, and the cards 
       chatView.webview.fromPage({ t: "assist", kind: "cards", text: "add a test like PR 36 did and do step #3", seq: 883 });
       await waitFor(() => posted((m) => m.t === "cards" && m.seq === 883), 5000, "the cards");
       const p = calls().slice(k)[0].prompt;
-      assert.ok(p.includes('[r1] ABC-154 "Create the Widget" Done · PR owner/repo#36 "Widget" merged'), p);
+      assert.ok(p.includes('[r1] issue: ABC-154 "Create the Widget" Done · PR owner/repo#36 "Widget" merged'), p);
       assert.ok(!p.includes("[r2]"), "step #3 named nothing");
     } finally {
       fs.rmSync(path.join(folder, ".git"), { recursive: true, force: true });

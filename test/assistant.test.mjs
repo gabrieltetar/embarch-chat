@@ -122,6 +122,9 @@ test("the recorded ghost call streams a completion that grows to the final one",
   assert.equal(core.cleanCompletion("fix it", "fix it now"), " now", "never a repeat of the draft");
 });
 
+/** A line as the linker hands it over (decision 112), written by its own entry. */
+const ref = (line) => ({ id: "r1", kind: "issue", line, prs: [], entry: { kind: "issue", key: "ABC-1", words: new Set(), names: [], line, text: () => line } });
+
 test("the recorded cards parse into edits that apply to their draft; decision 28's kinds are Promptu's now and go (97)", () => {
   // Recorded before the split: missing-context and improvement cards, which the 💡 no longer offers.
   const raw = core.parseObject(answer("cards")).cards;
@@ -135,7 +138,7 @@ test("the recorded cards parse into edits that apply to their draft; decision 28
   // A bracketed question about a reference stays the linker's (88), and only when the call had references.
   const ask = { cards: [{ category: "refs", title: "Which PR?", why: "w", edit: { op: "append", text: " [which PR?]" } }] };
   assert.deepEqual(core.parseCards(ask, "do it like the PR did", "t"), []);
-  assert.deepEqual(core.parseCards(ask, "do it like the PR did", "t", [{ id: "r1", line: "x", prs: [] }]).map((c) => [c.category, c.title]), [["refs", "Which PR?"]]);
+  assert.deepEqual(core.parseCards(ask, "do it like the PR did", "t", [ref("x")]).map((c) => [c.category, c.title]), [["refs", "Which PR?"]]);
   assert.deepEqual(core.CATEGORIES.map((c) => c.label), ["References"]);
 });
 
@@ -155,7 +158,7 @@ test("the prompts carry what the assistant sees (27), and the draft only where i
   assert.match(core.cardsPrompt(i), /^TASK: cards/);
   // Only the references, when there are some: what a prompt lacks and how high-context work is carried is Promptu's (97).
   assert.ok(!/"category": "(missing|improve)"/.test(core.cardsPrompt(i)) && !core.cardsPrompt(i).includes('"category": "refs"'));
-  assert.ok(core.cardsPrompt({ ...i, references: [{ id: "r1", line: "ABC-1 \"x\" Done", prs: [] }] }).includes('"category": "refs"'));
+  assert.ok(core.cardsPrompt({ ...i, references: [ref('ABC-1 "x" Done')] }).includes('"category": "refs"'));
   const t = core.turnPrompt({ ...i, cliSuggestion: "go ahead" }, { chips: true, name: false });
   assert.ok(!t.includes("<draft>") && t.includes('"go ahead"') && !t.includes('"name"'));
   assert.ok(core.contextBlock({ ...INPUT, item: null }).includes("untracked"));
@@ -200,7 +203,7 @@ test("the next keystroke cancels a stale call", async () => {
   a.dispose();
   // A new call for the same chat cancels the one before it.
   const { a: b } = assistant();
-  const withRefs = { ...INPUT, draft: "fix the flash thing", references: [{ id: "r1", line: "ABC-1 \"x\" Done", prs: [] }] };
+  const withRefs = { ...INPUT, draft: "fix the flash thing", references: [ref('ABC-1 "x" Done')] };
   const first = b.cards("s1", withRefs);
   const second = b.cards("s1", withRefs);
   assert.equal(await first, null);
@@ -211,7 +214,7 @@ test("the next keystroke cancels a stale call", async () => {
 test("off, the assistant makes no call", async () => {
   const a = new core.HaikuAssistant(() => ({ claudePath: "/nonexistent", enabled: false, log: () => {} }));
   assert.equal(await a.ghost("s", { ...INPUT, draft: "x" }, () => {}), null);
-  assert.equal(await a.cards("s", { ...INPUT, draft: "x", references: [{ id: "r1", line: "x", prs: [] }] }), null);
+  assert.equal(await a.cards("s", { ...INPUT, draft: "x", references: [ref("x")] }), null);
 });
 
 test("without the desk's references the cards make no call: nothing else is judged there (97)", async () => {

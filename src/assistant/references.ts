@@ -1,274 +1,262 @@
-// The desk's references for the cards call (decision 88). Before the call
-// the draft is matched here, locally, against the window's desk's reference
-// index (its issues and PRs, mirrored by the host): the draft's significant
-// words against their titles, plus any key or PR number it already names.
-// The best few go into the cards prompt's <desk_references> block — at most
-// 8 lines, about 600 tokens, inside decision 27's 1–3K — so "the widget PR"
-// can become the PR itself in the same single call: no extra wave, and no
-// network on a keystroke (26). Ghost text never gets the block (26's
-// latency).
+// The linker for the cards call (decisions 88, 112). Before the call the draft
+// is matched here, locally, against every source's entries (the desk's issues
+// and PRs first, refsDesk.ts; each later kind is one more source file): the
+// entries the draft names exactly, then those whose words match the draft's
+// significant words, scored among their own kind and merged best first. The
+// best go into the cards prompt's <references> block — at most REFS_LINES
+// lines and REFS_CHARS characters, REFS_PER_KIND lines of one kind before the
+// best of the rest fill it, about 900 tokens, inside decision 27's 1–3K — so
+// "the widget PR" can become the PR itself in the same single call: no extra
+// wave, and no network on a keystroke (26). Ghost text never gets the block
+// (26's latency).
 //
-// A title is anyone's to write — a PR opened on a repo in the desk's scope
-// is in the index — so none reaches the draft through Haiku: each line has
-// an id, Haiku answers a reference card by that id and the vague phrase it
-// replaces, and the replacement is written here from the index entry (its
-// key, `owner/repo#N` and its title quoted, cleaned and clipped). A title
-// in the block or the draft carries no `<`, `>`, line break or character
-// that shows nothing. Pure, so the node tests run it.
+// A title or a name is anyone's to write, so none reaches the draft through
+// Haiku: each line has an id, Haiku answers a reference card by that id and the
+// vague phrase it replaces, and the replacement is written here by the entry
+// itself (`text`), clipped and cleaned. A line in the block or the draft
+// carries no `<`, `>`, line break or character that shows nothing. Pure, so
+// the node tests run it.
 
-import type { IndexIssue, IndexPr, RefIndex } from "../desk/client";
-import { stripInvisible } from "../wire/message";
+import type { RefIndex } from "../desk/client";
+import { RefEntry, RefSource, clipTitle as clip, significantWords } from "./refsBase";
+import { MatchOpts, deskSource } from "./refsDesk";
+
+export { clipTitle, significantWords } from "./refsBase";
+export type { RefEntry, RefSource } from "./refsBase";
+export type { MatchOpts } from "./refsDesk";
 
 /** At most this many lines in the block. */
-export const REFS_LINES = 8;
-/** About 600 tokens, at four characters a token. */
-export const REFS_CHARS = 2400;
-const TITLE_CAP = 90;
-/** PRs shown on one issue's line. */
-const PRS_PER_LINE = 2;
+export const REFS_LINES = 12;
+/** About 900 tokens, at four characters a token. */
+export const REFS_CHARS = 3600;
+/** Lines of one kind before the best of the rest fill the block. */
+export const REFS_PER_KIND = 4;
 /** The longest vague phrase a reference card replaces. */
 const FIND_CAP = 80;
 
-/** Function words and the words a request is written in: never what tells one title from another. */
-const STOP = new Set(
-  `a an the and or but nor so yet for of to in on at by with from into onto over under about after before than then
-  this that these those it its is are was were be been being am do does did done doing have has had having
-  i me my we us our you your he she they them their his her
-  can could would should will shall may might must need needs let lets please just like same similar also too
-  what when where which who whom whose why how all any some each every both more most other such only own very
-  not no yes now here there again once still even ever already
-  make made get got put set use used using want see look go went way thing things stuff something
-  include add fix create update remove implement write check run try keep follow start finish change move
-  pr prs pull request requests issue issues ticket tickets linear github card item work`
-    .split(/\s+/)
-    .filter(Boolean),
-);
-
-/** A word as titles and drafts are compared: lower case, no possessive, a plural as its singular. */
-function norm(w: string): string {
-  let s = w.toLowerCase().replace(/['’]s$/, "").replace(/['’]/g, "");
-  if (s.length > 4 && s.endsWith("ies")) s = s.slice(0, -3) + "y";
-  else if (s.length > 4 && s.endsWith("s") && !/(ss|us|is)$/.test(s)) s = s.slice(0, -1);
-  return s;
+/** What the prompt's rule says of a kind: the plural as the block's header names it, the singular as the draft points at it, and an example line. */
+interface KindInfo {
+  plural: string[];
+  singular: string[];
+  example: { line: string; draft: string; find: string; title: string; why: string };
 }
 
-/** The significant words of a text, once each. */
-export function significantWords(text: string): Set<string> {
-  const out = new Set<string>();
-  for (const raw of text.split(/[^A-Za-z0-9'’]+/)) {
-    const w = norm(raw);
-    if (w.length < 3 || /^\d+$/.test(w) || STOP.has(w)) continue;
-    out.add(w);
+/** One row per kind; a kind with none is named by its tag. Each later kind adds its row (decision 112). */
+const KINDS: Record<string, KindInfo> = {
+  issue: {
+    plural: ["issues", "PRs"],
+    singular: ["an issue", "a PR"],
+    example: {
+      line: 'ABC-12 "Make the parser" Done · PR owner/repo#7 "Parser" merged',
+      draft: "test it like the parser PR did",
+      find: "the parser PR",
+      title: "Name PR owner/repo#7",
+      why: "The desk knows the parser PR",
+    },
+  },
+  pr: {
+    plural: ["PRs"],
+    singular: ["a PR"],
+    example: {
+      line: 'PR owner/repo#7 "Parser" merged',
+      draft: "test it like the parser PR did",
+      find: "the parser PR",
+      title: "Name PR owner/repo#7",
+      why: "The desk knows the parser PR",
+    },
+  },
+};
+
+const kindInfo = (kind: string): KindInfo => KINDS[kind] ?? { plural: [`${kind}s`], singular: [`a ${kind}`], example: KINDS.issue.example };
+
+/** The kinds a block holds, in the order its lines first show them. */
+export function kindsOf(refs: Array<{ kind: string }>): string[] {
+  return [...new Set(refs.map((r) => r.kind))];
+}
+
+const listed = (xs: string[], last: string): string => (xs.length < 2 ? (xs[0] ?? "") : `${xs.slice(0, -1).join(", ")} ${last} ${xs[xs.length - 1]}`);
+const unique = (xs: string[]) => [...new Set(xs)];
+
+/** What the kinds in a block are called, plural (the block's header, the rule): "issues and PRs". */
+export function kindNouns(refs: Array<{ kind: string }>): string {
+  return listed(unique(kindsOf(refs).flatMap((k) => kindInfo(k).plural)), "and");
+}
+
+/** What the draft may point at, singular: "an issue or a PR". */
+export function kindPointers(refs: Array<{ kind: string }>): string {
+  return listed(unique(kindsOf(refs).flatMap((k) => kindInfo(k).singular)), "or");
+}
+
+/** The rule's example: the first kind present with its line, the draft and the card it gets. */
+export function kindExample(refs: Array<{ kind: string }>): KindInfo["example"] & { kind: string } {
+  const kind = kindsOf(refs)[0];
+  return { kind, ...kindInfo(kind).example };
+}
+
+/** One line of the <references> block. */
+export interface DeskRef {
+  /** Its id in the block, `r1`…: a reference card names its line by it. */
+  id: string;
+  kind: string;
+  /** The line as the prompt shows it, after `[id] <kind>: `. */
+  line: string;
+  entry: RefEntry;
+  /** The desk's kinds: the issue the line shows, and the PRs on it, the one the draft matched first. */
+  issue?: RefEntry["issue"];
+  prs: NonNullable<RefEntry["prs"]>;
+}
+
+const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const word = (s: string) => new RegExp(`(?<![\\p{L}\\p{N}_])${escape(s)}(?![\\p{L}\\p{N}_])`, "iu");
+
+const idOf = (e: RefEntry) => `${e.kind}:${e.key.toLowerCase()}`;
+
+interface Pool {
+  n: number;
+  /** How many entries of the pool hold each word: a word most hold tells little. */
+  df: Map<string, number>;
+}
+/** A source's entries are replaced whole when it changes, so their counts are kept per array. */
+const pools = new WeakMap<RefEntry[], Map<string, Pool>>();
+
+function poolsOf(entries: RefEntry[]): Map<string, Pool> {
+  const got = pools.get(entries);
+  if (got) return got;
+  const out = new Map<string, Pool>();
+  for (const e of entries) {
+    const key = e.pool ?? e.kind;
+    const p = out.get(key) ?? { n: 0, df: new Map() };
+    p.n++;
+    for (const w of e.words) p.df.set(w, (p.df.get(w) ?? 0) + 1);
+    out.set(key, p);
+  }
+  pools.set(entries, out);
+  return out;
+}
+
+interface Scored {
+  e: RefEntry;
+  score: number;
+  order: number;
+}
+
+/**
+ * The draft's significant words against a source's entries: each word scores
+ * by how few entries of its pool (its kind) hold it (log(1 + N/df)). An entry
+ * counts when it shares a word few hold, two words, or all of its own; then
+ * those within 40 % of the pool's best, best first, newest first among equals.
+ */
+function byWords(src: RefSource, draft: string, want: Set<string>, base: number): Scored[] {
+  const stats = poolsOf(src.entries);
+  const boost = src.boost?.(draft);
+  const byPool = new Map<string, Scored[]>();
+  src.entries.forEach((e, i) => {
+    if (src.skip?.(e)) return;
+    const pool = stats.get(e.pool ?? e.kind)!;
+    const rare = Math.max(2, Math.ceil(pool.n * 0.03));
+    let score = 0;
+    let shared = 0;
+    let distinct = false;
+    for (const w of e.words) {
+      if (!want.has(w)) continue;
+      const df = pool.df.get(w) ?? 1;
+      score += Math.log(1 + pool.n / df);
+      shared++;
+      if (df <= rare) distinct = true;
+    }
+    if (!shared || !(distinct || shared >= 2 || shared === e.words.size)) return;
+    if (boost) score *= boost(e);
+    const key = e.pool ?? e.kind;
+    byPool.set(key, [...(byPool.get(key) ?? []), { e, score, order: base + i }]);
+  });
+  const out: Scored[] = [];
+  for (const list of byPool.values()) {
+    const best = Math.max(...list.map((s) => s.score));
+    out.push(...list.filter((s) => s.score >= best * 0.4));
   }
   return out;
 }
 
-interface Doc {
-  issue?: IndexIssue;
-  pr?: IndexPr;
-  words: Set<string>;
-  /** Its place in the index: issues newest first, then PRs newest first per repo. */
-  order: number;
-}
-
-interface Prepared {
-  docs: Doc[];
-  /** How many titles hold each word: a word most titles hold tells little. */
-  df: Map<string, number>;
-  issues: Map<string, IndexIssue>;
-  /** The PRs that name each issue key, newest first. */
-  prsOf: Map<string, IndexPr[]>;
-}
-
-/** The index is replaced whole when it changes, so its preparation is kept per object. */
-const prepared = new WeakMap<RefIndex, Prepared>();
-
-function prepare(index: RefIndex): Prepared {
-  const got = prepared.get(index);
-  if (got) return got;
-  const docs: Doc[] = [];
-  const df = new Map<string, number>();
-  const issues = new Map<string, IndexIssue>();
-  const prsOf = new Map<string, IndexPr[]>();
-  for (const i of index.issues) {
-    issues.set(i.key.toUpperCase(), i);
-    docs.push({ issue: i, words: significantWords(i.title), order: docs.length });
-  }
-  for (const p of index.prs) {
-    docs.push({ pr: p, words: significantWords(p.title), order: docs.length });
-    for (const k of p.keys ?? []) {
-      const K = k.toUpperCase();
-      prsOf.set(K, [...(prsOf.get(K) ?? []), p]);
+/** The entries a draft names by an exact string of theirs, in the draft's order. */
+function byNames(src: RefSource, lower: string, draft: string): RefEntry[] {
+  const hits: Array<{ at: number; e: RefEntry }> = [];
+  for (const e of src.entries) {
+    for (const n of e.names) {
+      if (!n || !lower.includes(n.toLowerCase())) continue;
+      const m = word(n).exec(draft);
+      if (m) {
+        hits.push({ at: m.index, e });
+        break;
+      }
     }
   }
-  for (const d of docs) for (const w of d.words) df.set(w, (df.get(w) ?? 0) + 1);
-  const p = { docs, df, issues, prsOf };
-  prepared.set(index, p);
-  return p;
-}
-
-/** A title as the prompt and the draft carry it: one line, no `<`/`>` to close a block with, no quote to end its own, nothing unseen, clipped. */
-export function clipTitle(t: string): string {
-  const s = stripInvisible(t)
-    .text.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
-    .replace(/[<>]/g, "")
-    .replace(/"/g, "'")
-    .replace(/\s+/g, " ")
-    .trim();
-  return s.length <= TITLE_CAP ? s : s.slice(0, TITLE_CAP - 1) + "…";
-}
-
-/** A PR as the prompt names it: `PR owner/repo#36 "Widget" merged`. */
-export function prLine(p: { repo: string; number: number; title?: string; state: string; draft?: boolean }): string {
-  const state = p.draft && p.state === "open" ? "draft" : p.state;
-  return `PR ${p.repo}#${p.number}${p.title?.trim() ? ` "${clipTitle(p.title)}"` : ""} ${state}`;
-}
-
-function issueLine(i: IndexIssue): string {
-  return `${i.key} "${clipTitle(i.title)}" ${i.state}`.trimEnd();
-}
-
-const prId = (p: { repo: string; number: number }) => `${p.repo.toLowerCase()}#${p.number}`;
-
-export interface MatchOpts {
-  /** The chat's own work item: its card is already in the prompt, so its words find nothing. */
-  ownKey?: string;
-  ownPrs?: Array<{ repo: string; number: number }>;
-  /** The chat's folder's GitHub repo (githubRepo.ts): "PR 36" with no repo written is that repo's. */
-  repo?: string | null;
-}
-
-type Cand = { issue: IndexIssue } | { pr: IndexPr };
-
-/**
- * The references the draft names itself, in its order: keys, `owner/repo#N`
- * and a PR's link, and "PR 36" or "pull request #36" in the chat's own repo.
- * A bare `#36` is none — "step #3" is no PR (as in prose, refprose.ts).
- */
-function named(draft: string, idx: Prepared, index: RefIndex, opts: MatchOpts): Cand[] {
-  const hits: Array<{ at: number; c: Cand[] }> = [];
-  for (const m of draft.matchAll(/(?<![\w/.-])([A-Za-z][A-Za-z0-9]{0,9}-\d{1,7})(?![\w-])/g)) {
-    const i = idx.issues.get(m[1].toUpperCase());
-    if (i) hits.push({ at: m.index!, c: [{ issue: i }] });
-  }
-  for (const m of draft.matchAll(/(?<![\w.-])([\w.-]+\/[\w.-]+)#(\d{1,7})\b|github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d{1,7})\b/g)) {
-    const [repo, n] = m[1] ? [m[1], m[2]] : [m[3], m[4]];
-    const p = index.prs.find((x) => x.number === Number(n) && x.repo.toLowerCase() === repo.toLowerCase());
-    if (p) hits.push({ at: m.index!, c: [{ pr: p }] });
-  }
-  const own = opts.repo?.toLowerCase();
-  for (const m of own ? draft.matchAll(/(?<![\w/.#-])(?:PR|pull request) ?#?(\d{1,7})(?![\w-])/gi) : []) {
-    const p = index.prs.find((x) => x.number === Number(m[1]) && x.repo.toLowerCase() === own);
-    if (p) hits.push({ at: m.index!, c: [{ pr: p }] });
-  }
-  return hits.sort((a, b) => a.at - b.at).flatMap((h) => h.c);
+  return hits.sort((a, b) => a.at - b.at).map((h) => h.e);
 }
 
 /**
- * The draft's significant words against every title: each word scores by
- * how few titles hold it (log(1 + N/df)). A title counts when it shares a
- * word few titles have, two words, or all of its own; then those within
- * 40 % of the best, best first, newest first among equals. "PR" in the
- * draft favours PRs, "issue" or "ticket" issues.
+ * The lines of the <references> block for a draft: what it names first, then
+ * what its words match, merged best first; each entry once, at most
+ * REFS_LINES lines and REFS_CHARS characters, REFS_PER_KIND of one kind
+ * before the best of the rest fill it. A gated source (`cues`) offers words
+ * only when the draft carries one of its cue words, and otherwise only the
+ * entries the draft names.
  */
-function byWords(draft: string, idx: Prepared, opts: MatchOpts): Cand[] {
+export function linkReferences(sources: Array<RefSource | null>, draft: string): DeskRef[] {
+  const srcs = sources.filter((s): s is RefSource => !!s && s.entries.length > 0);
+  if (!srcs.length || !draft.trim()) return [];
+  const lower = draft.toLowerCase();
   const want = significantWords(draft);
-  if (!want.size) return [];
-  const n = idx.docs.length;
-  const rare = Math.max(2, Math.ceil(n * 0.03));
-  const prWord = /\b(?:PRs?|pull requests?)\b/i.test(draft);
-  const issueWord = /\b(?:issues?|tickets?)\b/i.test(draft);
-  const own = new Set((opts.ownPrs ?? []).map(prId));
-  const ownKey = opts.ownKey?.toUpperCase();
-  const scored: Array<{ d: Doc; score: number }> = [];
-  for (const d of idx.docs) {
-    if (d.issue && d.issue.key.toUpperCase() === ownKey) continue;
-    if (d.pr && (own.has(prId(d.pr)) || (ownKey && d.pr.keys.some((k) => k.toUpperCase() === ownKey)))) continue;
-    let score = 0;
-    let shared = 0;
-    let distinct = false;
-    for (const w of d.words) {
-      if (!want.has(w)) continue;
-      const df = idx.df.get(w) ?? 1;
-      score += Math.log(1 + n / df);
-      shared++;
-      if (df <= rare) distinct = true;
-    }
-    if (!shared || !(distinct || shared >= 2 || shared === d.words.size)) continue;
-    if ((prWord && d.pr) || (issueWord && d.issue)) score *= 1.25;
-    scored.push({ d, score });
+  const cands: RefEntry[] = [];
+  const scored: Scored[] = [];
+  let base = 0;
+  for (const src of srcs) {
+    cands.push(...(src.find?.(draft) ?? []), ...byNames(src, lower, draft));
+    const open = !src.cues || src.cues.some((c) => word(c).test(draft));
+    if (open && want.size) scored.push(...byWords(src, draft, want, base));
+    base += src.entries.length;
   }
-  if (!scored.length) return [];
-  const best = Math.max(...scored.map((s) => s.score));
-  return scored
-    .filter((s) => s.score >= best * 0.4)
-    .sort((a, b) => b.score - a.score || a.d.order - b.d.order)
-    .map(({ d }) => (d.issue ? { issue: d.issue } : { pr: d.pr! }));
-}
+  scored.sort((a, b) => b.score - a.score || a.order - b.order);
+  cands.push(...scored.map((s) => s.e));
 
-/** One line of the <desk_references> block: an issue with the PRs that name it, or a PR alone. */
-export interface DeskRef {
-  /** Its id in the block, `r1`…: a reference card names its line by it. */
-  id: string;
-  /** The line as the prompt shows it, after `[id] `. */
-  line: string;
-  issue?: IndexIssue;
-  /** The PRs on its line, the one the draft matched first. */
-  prs: IndexPr[];
-}
-
-/**
- * The lines of the <desk_references> block for a draft: what it names
- * first, then what its words match, each an issue with the PRs that name
- * it — `ABC-154 "Create the Widget" Done · PR owner/repo#36 "Widget"
- * merged` — or a PR alone; each issue and PR once, at most REFS_LINES lines
- * and REFS_CHARS characters.
- */
-export function deskReferences(index: RefIndex | null, draft: string, opts: MatchOpts = {}): DeskRef[] {
-  if (!index || (!index.issues.length && !index.prs.length) || !draft.trim()) return [];
-  const idx = prepare(index);
-  const shownIssues = new Set<string>();
-  const shownPrs = new Set<string>();
-  const refs: DeskRef[] = [];
+  const shown = new Set<string>();
+  const picked: Array<{ rank: number; e: RefEntry }> = [];
+  const perKind = new Map<string, number>();
   let chars = 0;
-  const add = (r: Omit<DeskRef, "id">): boolean => {
-    const id = `r${refs.length + 1}`;
-    const size = id.length + 3 + r.line.length + 1;
-    if (refs.length >= REFS_LINES || chars + size > REFS_CHARS) return false;
-    refs.push({ id, ...r });
-    chars += size;
-    return true;
+  // An id is at most `r12`: its size is counted at the longest, so the block never outgrows its cap.
+  const fits = (e: RefEntry) => picked.length < REFS_LINES && chars + `[r${REFS_LINES}] ${e.kind}: ${e.line}\n`.length <= REFS_CHARS;
+  const take = (rank: number, c: RefEntry, capped: boolean): "taken" | "capped" | "skipped" => {
+    // A PR whose issue the index has is shown on that issue's line, when that is not shown yet.
+    const lead = c.lead?.() ?? null;
+    const e = lead && !shown.has(idOf(lead)) ? lead : c;
+    if (shown.has(idOf(e))) return "skipped";
+    if (capped && (perKind.get(e.kind) ?? 0) >= REFS_PER_KIND) return "capped";
+    if (!fits(e)) return "skipped";
+    picked.push({ rank, e });
+    perKind.set(e.kind, (perKind.get(e.kind) ?? 0) + 1);
+    chars += `[r${REFS_LINES}] ${e.kind}: ${e.line}\n`.length;
+    shown.add(idOf(e));
+    for (const k of e.covers ?? []) shown.add(k);
+    return "taken";
   };
-  for (const c of [...named(draft, idx, index, opts), ...byWords(draft, idx, opts)]) {
-    if (refs.length >= REFS_LINES) break;
-    // A PR that names an issue the index has is shown on that issue's line, first among its PRs.
-    const pr = "pr" in c ? c.pr : null;
-    const issue = "issue" in c ? c.issue : (pr?.keys ?? []).map((k) => idx.issues.get(k.toUpperCase())).find(Boolean);
-    if (issue && !shownIssues.has(issue.key.toUpperCase())) {
-      const prs = [...(pr ? [pr] : []), ...(idx.prsOf.get(issue.key.toUpperCase()) ?? []).filter((p) => !pr || prId(p) !== prId(pr))].slice(0, PRS_PER_LINE);
-      if (!add({ line: [issueLine(issue), ...prs.map(prLine)].join(" · "), issue, prs })) continue;
-      shownIssues.add(issue.key.toUpperCase());
-      for (const p of prs) shownPrs.add(prId(p));
-    } else if (pr && !shownPrs.has(prId(pr))) {
-      if (add({ line: prLine(pr), prs: [pr] })) shownPrs.add(prId(pr));
-    }
+  const over: Array<{ rank: number; c: RefEntry }> = [];
+  for (const [rank, c] of cands.entries()) {
+    if (picked.length >= REFS_LINES) break;
+    if (take(rank, c, true) === "capped") over.push({ rank, c });
   }
-  return refs;
+  for (const { rank, c } of over) if (picked.length < REFS_LINES) take(rank, c, false);
+  return picked
+    .sort((a, b) => a.rank - b.rank)
+    .map(({ e }, i) => ({ id: `r${i + 1}`, kind: e.kind, line: e.line, entry: e, issue: e.issue, prs: e.prs ?? [] }));
 }
 
-/**
- * What a reference card puts in place of the vague phrase, written here,
- * never by Haiku: the PR as `PR owner/repo#36 "Widget" (ABC-154)`, or the
- * issue first — `ABC-154 "Create the Widget" (PR owner/repo#36)` — when the
- * phrase says issue, ticket or card, or the line has no PR.
- */
+/** The desk's issues and PRs alone: the first source (decision 88). */
+export function deskReferences(index: RefIndex | null, draft: string, opts: MatchOpts = {}): DeskRef[] {
+  return linkReferences([deskSource(index, opts)], draft);
+}
+
+/** What a reference card puts in place of the vague phrase, written by the entry, never by Haiku. */
 export function referenceText(ref: DeskRef, find: string): string {
-  const pr = ref.prs[0];
-  const issueFirst = !pr || (ref.issue && /\b(?:issues?|tickets?|cards?)\b/i.test(find));
-  const title = (t: string | undefined) => (t && clipTitle(t) ? ` "${clipTitle(t)}"` : "");
-  const prText = pr ? `PR ${pr.repo}#${pr.number}${title(pr.title)}` : "";
-  if (issueFirst && ref.issue) return `${ref.issue.key}${title(ref.issue.title)}${pr ? ` (${prText})` : ""}`;
-  return `${prText}${ref.issue ? ` (${ref.issue.key})` : ""}`;
+  return ref.entry.text(find);
 }
 
 /** The reference card Haiku named by line id and phrase, as an edit to the draft; null when the id is not a line it was sent or the phrase is not the draft's. */
@@ -279,20 +267,20 @@ export function referenceEdit(refs: DeskRef[], id: unknown, find: unknown, draft
   return { op: "replace", find, with: referenceText(ref, find) };
 }
 
-const lower = (s: string) => clipTitle(s).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+const lower = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 
 /**
- * Whether text a card would add copies a run of a reference title's words
- * — four in a row, or all of a shorter one of three — that the draft does
- * not already hold: a card other than a reference card never carries a
- * title into the draft (the titles are anyone's to write).
+ * Whether text a card would add copies a run of an entry's title words — four
+ * in a row, or all of a shorter one of three — that the draft does not
+ * already hold: a card other than a reference card never carries a title into
+ * the draft (the titles are anyone's to write).
  */
 export function copiesTitle(added: string, draft: string, refs: DeskRef[]): boolean {
-  const a = ` ${lower(added)} `;
-  const d = ` ${lower(draft)} `;
+  const a = ` ${lower(clip(added))} `;
+  const d = ` ${lower(clip(draft))} `;
   for (const r of refs) {
-    for (const t of [r.issue?.title, ...r.prs.map((p) => p.title)]) {
-      const w = t ? lower(t).split(" ").filter(Boolean) : [];
+    for (const t of r.entry.titles ?? []) {
+      const w = t ? lower(clip(t)).split(" ").filter(Boolean) : [];
       if (w.length < 3) continue;
       const n = Math.min(4, w.length);
       for (let i = 0; i + n <= w.length; i++) {

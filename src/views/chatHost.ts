@@ -15,7 +15,8 @@ import { atlasInfo, citationTarget } from "../atlas";
 import { githubRepo } from "../githubRepo";
 import { DeskError } from "../desk/client";
 import type { PrRef } from "../desk/client";
-import { deskReferences, prLine } from "../assistant/references";
+import { linkReferences } from "../assistant/references";
+import { deskSource, prLine } from "../assistant/refsDesk";
 import { openAt, openFileLink } from "../openFile";
 import { mentionItems, mentionOf } from "../mentions";
 import type { WireMessage } from "../wire/types";
@@ -131,7 +132,8 @@ export function headerFor(ctx: HostCtx, rec: ChatRecord): Header {
  * What the assistant sees (decision 27): the draft, Claude's last reply, the
  * item's card — its PRs by title, the desk's index filling one the card
  * lacks — the library's names, the context usage. `references`: also the
- * desk's issues and PRs the draft matches, for the cards call (decision 88).
+ * references the draft matches, from every source (the desk's issues and PRs
+ * first), for the cards call (decisions 88, 112).
  */
 export function assistInput(ctx: HostCtx, rec: ChatRecord, draft: string, opts: { references?: boolean } = {}): AssistInput {
   const h = headerFor(ctx, rec);
@@ -144,7 +146,7 @@ export function assistInput(ctx: HostCtx, rec: ChatRecord, draft: string, opts: 
     item: h.untracked ? null : { key: h.issueKey, title: h.title, state: h.stateName, prs: h.prs.map((p) => prLine(titled(p))) },
     library: ctx.library().map((e) => invocation(e, st.slashCommands) ?? e.name),
     context: st.context ? { percentage: st.context.percentage, totalTokens: st.context.totalTokens, maxTokens: st.context.maxTokens } : null,
-    ...(opts.references ? { references: deskReferences(index, draft, { ownKey: h.issueKey, ownPrs: h.prs, repo: githubRepo(rec.chat.opts.cwd || st.cwd || "") }) } : {}),
+    ...(opts.references ? { references: linkReferences([deskSource(index, { ownKey: h.issueKey, ownPrs: h.prs, repo: githubRepo(rec.chat.opts.cwd || st.cwd || "") })], draft) } : {}),
   };
 }
 
