@@ -301,7 +301,7 @@ export class DeskService extends EventEmitter {
     try {
       this.refs = await this.client.refs(this.scopedTo);
       this.refsAt = at;
-      this.log(`desk: reference index ${this.refs.desk_id ?? "(no desk)"}: ${this.refs.issues.length} issues, ${this.refs.prs.length} PRs`);
+      this.log(`desk: reference index ${this.refs.desk_id ?? "(no desk)"}: ${this.refs.issues.length} issues, ${this.refs.prs.length} PRs, ${this.refs.projects?.length ?? 0} projects, ${this.refs.documents?.length ?? 0} documents`);
       this.emit("refs");
     } catch (e) {
       if (this.refsFailed !== at) this.log(`desk: the reference index was not read: ${(e as Error).message}`);

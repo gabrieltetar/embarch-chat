@@ -304,6 +304,9 @@ export class DeskClient {
       synced_ms: typeof r?.synced_ms === "number" ? r.synced_ms : null,
       issues: Array.isArray(r?.issues) ? r.issues.filter((i) => i && typeof i.key === "string" && typeof i.title === "string") : [],
       prs: Array.isArray(r?.prs) ? r.prs.filter((p) => p && typeof p.repo === "string" && typeof p.number === "number").map((p) => ({ ...p, keys: Array.isArray(p.keys) ? p.keys : [] })) : [],
+      // A desk from before EMB-407 omits both: they read as none.
+      projects: Array.isArray(r?.projects) ? r.projects.filter((p) => p && typeof p.id === "string" && typeof p.name === "string" && typeof p.url === "string") : [],
+      documents: Array.isArray(r?.documents) ? r.documents.filter((d) => d && typeof d.id === "string" && typeof d.title === "string" && typeof d.url === "string") : [],
     };
   }
 }
@@ -331,13 +334,32 @@ export interface IndexPr {
   keys: string[];
 }
 
-/** `GET /refs`: issues newest first; PRs by repo, newest first. */
+/** A Linear project in a desk's scope: `state` is Linear's project state type (`started`, `completed`, ...). */
+export interface IndexProject {
+  id: string;
+  name: string;
+  state?: string;
+  url: string;
+}
+
+/** A Linear document of an indexed project: title and link, never its text. */
+export interface IndexDocument {
+  id: string;
+  title: string;
+  url: string;
+  project_id?: string;
+  project_name?: string;
+}
+
+/** `GET /refs`: issues newest first; PRs by repo, newest first; projects and documents (an older desk omits both). */
 export interface RefIndex {
   desk_id: string | null;
   /** When a refresh last changed it; null before the first. */
   synced_ms: number | null;
   issues: IndexIssue[];
   prs: IndexPr[];
+  projects?: IndexProject[];
+  documents?: IndexDocument[];
 }
 
 // ------------------------------------------------------------------- shapes

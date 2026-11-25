@@ -20,6 +20,7 @@ import { deskSource, prLine } from "../assistant/refsDesk";
 import { AtlasRefs, atlasSource, dtSource, kconfigSource } from "../assistant/refsAtlas";
 import { GitRefs, gitSource } from "../assistant/refsGit";
 import { ApiRunner } from "../assistant/apiRun";
+import { documentSource, projectSource } from "../assistant/refsLinear";
 import { INSTRUMENTS_VERB, instrumentSource, parseInstruments } from "../assistant/refsInstruments";
 import { openAt, openFileLink } from "../openFile";
 import { mentionItems, mentionOf } from "../mentions";
@@ -163,7 +164,7 @@ export function assistInput(ctx: HostCtx, rec: ChatRecord, draft: string, opts: 
       ? (() => {
           const cwd = rec.chat.opts.cwd || st.cwd || "";
           const repo = githubRepo(cwd);
-          return { references: linkReferences([deskSource(index, { ownKey: h.issueKey, ownPrs: h.prs, repo }), gitSource(gitRefs.get(cwd), index, { repo }), atlasSource(atlasRefs.get(cwd), draft), kconfigSource(atlasRefs.doc(cwd)), dtSource(atlasRefs.doc(cwd)), instrumentSource(parseInstruments(apiRefs.get(cwd, INSTRUMENTS_VERB)), draft)], draft) };
+          return { references: linkReferences([deskSource(index, { ownKey: h.issueKey, ownPrs: h.prs, repo }), gitSource(gitRefs.get(cwd), index, { repo }), atlasSource(atlasRefs.get(cwd), draft), kconfigSource(atlasRefs.doc(cwd)), dtSource(atlasRefs.doc(cwd)), instrumentSource(parseInstruments(apiRefs.get(cwd, INSTRUMENTS_VERB)), draft), projectSource(index), documentSource(index)], draft) };
         })()
       : {}),
   };

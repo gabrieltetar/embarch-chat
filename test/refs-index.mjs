@@ -25,7 +25,20 @@ export const PRS = [
   pr("owner/docs", 12, "Document the release process", "merged", "abc-150-release", ["ABC-150"]),
 ];
 
+export const PROJECTS = [
+  { id: "p1", name: "Logger", state: "started", url: "https://linear.app/acme/project/logger-1a2b3c", team_keys: ["ABC"] },
+  { id: "p2", name: "Release tooling", state: "planned", url: "https://linear.app/acme/project/release-tooling-4d5e6f", team_keys: ["ABC"] },
+];
+
+export const DOCUMENTS = [
+  { id: "d1", title: "Bring-up notes", url: "https://linear.app/acme/document/bring-up-notes-7a8b9c", project_id: "p1", project_name: "Logger", updated_ms: 900 },
+  { id: "d2", title: "Flash timing", url: "https://linear.app/acme/document/flash-timing-0d1e2f", project_id: "p2", project_name: "Release tooling", updated_ms: 800 },
+];
+
 export const INDEX = { desk_id: "k1", synced_ms: 1_000, issues: ISSUES, prs: PRS };
+
+/** The index as a newer desk serves it, with projects and documents. */
+export const INDEX_LINEAR = { ...INDEX, projects: PROJECTS, documents: DOCUMENTS };
 
 /** The chat's own item in the recorded case: the gadget parser, its own draft PR on its card. */
 export const OWN = { key: "ABC-170", title: "Add the gadget parser", state: "In Progress", prs: [{ repo: "owner/repo", number: 44 }] };
