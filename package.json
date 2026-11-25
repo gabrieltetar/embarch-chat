@@ -338,6 +338,12 @@
             "scope": "machine",
             "description": "Promptu's `promptu` CLI (embarch-promptu), which turns the first prompt of a task into a better one in the draft (decisions 94–98). Defaults to the one on PATH. Not found, the Promptu icon stays dark and Enter sends as it always did. User or Remote settings only — a workspace cannot set it."
           },
+          "embarchChat.atlasPath": {
+            "type": "string",
+            "default": "embarch-atlas",
+            "scope": "machine",
+            "description": "The `embarch-atlas` CLI, which the 💡 linker reads the repo's datasheet and spec sections with (decision 114). Defaults to the one on PATH. Not found, or the repo has no atlas, no section is offered. User or Remote settings only — a workspace cannot set it."
+          },
           "embarchChat.idleMinutes": {
             "type": "number",
             "default": 5,

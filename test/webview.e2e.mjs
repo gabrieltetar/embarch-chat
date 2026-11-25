@@ -1092,6 +1092,15 @@ await check("atlas citations become links when the repo has an atlas", async () 
   assert.equal((await text("a.cite")).length, 0, "no atlas, no links");
 });
 
+await check("a section the linker wrote is a citation link in prose, whole line kept as text around it", async () => {
+  const say = { t: "event", e: { type: "assistant", message: { id: "m-sec", content: [{ type: "text", text: 'See abc123@A p14 §7.3 "Protection features" first.' }] }, parent_tool_use_id: null } };
+  await send([snapshot({}, { ...OURS, atlas: { docs: ["abc123@A"], boards: [] } }), say]);
+  assert.deepEqual(await text("a.cite"), ["abc123@A p14"]);
+  await clearPosts();
+  await click("a.cite", "abc123@A p14");
+  assert.deepEqual((await posts()).filter((x) => x.t === "atlas"), [{ t: "atlas", doc: "abc123@A", page: 14 }]);
+});
+
 // A real (trusted) click, as the owner's: VS Code's own handler acts only on those.
 const realClick = async (el) => {
   await wd("POST", `${S}/element/${Object.values(el)[0]}/click`, {});

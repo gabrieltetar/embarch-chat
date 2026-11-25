@@ -87,6 +87,17 @@ const KINDS: Record<string, KindInfo> = {
       why: "The repo has the worktree /home/me/repo-fan",
     },
   },
+  section: {
+    plural: ["datasheet and spec sections"],
+    singular: ["a datasheet or spec section"],
+    example: {
+      line: 'tps2595@A p14 §7.3 "Protection features"',
+      draft: "check the protection section of the switch datasheet",
+      find: "the protection section of the switch datasheet",
+      title: "Name tps2595@A p14 §7.3",
+      why: "The atlas has that section",
+    },
+  },
 };
 
 const kindInfo = (kind: string): KindInfo => KINDS[kind] ?? { plural: [`${kind}s`], singular: [`a ${kind}`], example: KINDS.issue.example };

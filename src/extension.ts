@@ -67,6 +67,8 @@ function cfg() {
     // Where a chat opens (decision 92): an editor tab, unless the owner keeps the sidebar.
     inTabs: c.get<string>("chatLocation", "editor") !== "sidebar",
     // Promptu's CLI (decision 95): on PATH unless a path is set.
+    // The atlas CLI the linker reads sections with (decision 114): on PATH unless a path is set.
+    atlasPath: c.get<string>("atlasPath", "embarch-atlas") || "embarch-atlas",
     promptuPath: c.get<string>("promptuPath", "promptu") || "promptu",
     logins: c.get<Record<string, LoginConfig>>("logins", { [DEFAULT_LOGIN]: {} }),
     desks: c.get<Record<string, DeskConfig>>("desks", {}),
@@ -338,6 +340,7 @@ export function activate(context: vscode.ExtensionContext): void {
     remembered: context.globalState,
     log,
     claudePath: () => cfg().claudePath,
+    atlasPath: () => cfg().atlasPath,
     deskUrl,
     uiUrl: () => serverUrl(),
     warning: () => warning,

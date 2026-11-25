@@ -17,6 +17,7 @@ import { DeskError } from "../desk/client";
 import type { PrRef } from "../desk/client";
 import { linkReferences } from "../assistant/references";
 import { deskSource, prLine } from "../assistant/refsDesk";
+import { AtlasRefs, atlasSource } from "../assistant/refsAtlas";
 import { GitRefs, gitSource } from "../assistant/refsGit";
 import { openAt, openFileLink } from "../openFile";
 import { mentionItems, mentionOf } from "../mentions";
@@ -60,6 +61,8 @@ export interface HostCtx {
   /** The extension's global state: where the owner last chose to save an "always allow" (78), and an export (74). */
   remembered: vscode.Memento;
   log: (s: string) => void;
+  /** `embarchChat.atlasPath` (114). */
+  atlasPath: () => string;
   claudePath: () => string;
   deskUrl: (itemId: string | null) => string;
   uiUrl: () => string;
@@ -109,6 +112,8 @@ export interface HostCtx {
 
 /** The branches and worktrees the linker offers (decision 113), read before a cards call. */
 const gitRefs = new GitRefs();
+/** The datasheet and spec sections the linker offers (decision 114), read before a cards call when the atlas changed. */
+const atlasRefs = new AtlasRefs();
 
 /** Where an "always allow" was last saved, in the extension's global state (78). */
 const DESTINATION_KEY = "embarchChat.permissionDestination";
@@ -154,7 +159,7 @@ export function assistInput(ctx: HostCtx, rec: ChatRecord, draft: string, opts: 
       ? (() => {
           const cwd = rec.chat.opts.cwd || st.cwd || "";
           const repo = githubRepo(cwd);
-          return { references: linkReferences([deskSource(index, { ownKey: h.issueKey, ownPrs: h.prs, repo }), gitSource(gitRefs.get(cwd), index, { repo })], draft) };
+          return { references: linkReferences([deskSource(index, { ownKey: h.issueKey, ownPrs: h.prs, repo }), gitSource(gitRefs.get(cwd), index, { repo }), atlasSource(atlasRefs.get(cwd), draft)], draft) };
         })()
       : {}),
   };
@@ -480,7 +485,10 @@ export class ChatHost implements vscode.Disposable {
         if (!rec.ours) return;
         // The desk's references only for the cards (decision 88): ghost text keeps its latency (26).
         // The branches and worktrees are read here, at most once a minute (113).
-        if (m.kind === "cards") await gitRefs.refresh(chat.opts.cwd || chat.state.cwd || "", this.ctx.log);
+        if (m.kind === "cards") {
+          const folder = chat.opts.cwd || chat.state.cwd || "";
+          await Promise.all([gitRefs.refresh(folder, this.ctx.log), atlasRefs.refresh(folder, this.ctx.atlasPath(), this.ctx.log)]);
+        }
         const input = assistInput(this.ctx, rec, m.text, { references: m.kind === "cards" });
         if (m.kind === "ghost") {
           const text = await this.ctx.assistant.ghost(chat.sessionId, input, (t) => this.post({ t: "ghost", seq: m.seq, text: t, done: false }));
