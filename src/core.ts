@@ -32,6 +32,8 @@ export * from "./assistant/references";
 export * from "./assistant/refsDesk";
 export * from "./assistant/refsGit";
 export * from "./assistant/refsAtlas";
+export * from "./assistant/apiRun";
+export * from "./assistant/refsInstruments";
 export * from "./githubRepo";
 export * from "./assistant/history";
 export * from "./assistant/assistant";

@@ -19,6 +19,8 @@ import { linkReferences } from "../assistant/references";
 import { deskSource, prLine } from "../assistant/refsDesk";
 import { AtlasRefs, atlasSource, dtSource, kconfigSource } from "../assistant/refsAtlas";
 import { GitRefs, gitSource } from "../assistant/refsGit";
+import { ApiRunner } from "../assistant/apiRun";
+import { INSTRUMENTS_VERB, instrumentSource, parseInstruments } from "../assistant/refsInstruments";
 import { openAt, openFileLink } from "../openFile";
 import { mentionItems, mentionOf } from "../mentions";
 import type { WireMessage } from "../wire/types";
@@ -114,6 +116,8 @@ export interface HostCtx {
 const gitRefs = new GitRefs();
 /** The datasheet and spec sections the linker offers (decision 114), read before a cards call when the atlas changed. */
 const atlasRefs = new AtlasRefs();
+/** `embarch-api --json <verb>`, run for the cards call and kept 5 minutes (decision 116). */
+const apiRefs = new ApiRunner();
 
 /** Where an "always allow" was last saved, in the extension's global state (78). */
 const DESTINATION_KEY = "embarchChat.permissionDestination";
@@ -159,7 +163,7 @@ export function assistInput(ctx: HostCtx, rec: ChatRecord, draft: string, opts: 
       ? (() => {
           const cwd = rec.chat.opts.cwd || st.cwd || "";
           const repo = githubRepo(cwd);
-          return { references: linkReferences([deskSource(index, { ownKey: h.issueKey, ownPrs: h.prs, repo }), gitSource(gitRefs.get(cwd), index, { repo }), atlasSource(atlasRefs.get(cwd), draft), kconfigSource(atlasRefs.doc(cwd)), dtSource(atlasRefs.doc(cwd))], draft) };
+          return { references: linkReferences([deskSource(index, { ownKey: h.issueKey, ownPrs: h.prs, repo }), gitSource(gitRefs.get(cwd), index, { repo }), atlasSource(atlasRefs.get(cwd), draft), kconfigSource(atlasRefs.doc(cwd)), dtSource(atlasRefs.doc(cwd)), instrumentSource(parseInstruments(apiRefs.get(cwd, INSTRUMENTS_VERB)), draft)], draft) };
         })()
       : {}),
   };
@@ -487,7 +491,7 @@ export class ChatHost implements vscode.Disposable {
         // The branches and worktrees are read here, at most once a minute (113).
         if (m.kind === "cards") {
           const folder = chat.opts.cwd || chat.state.cwd || "";
-          await Promise.all([gitRefs.refresh(folder, this.ctx.log), atlasRefs.refresh(folder, this.ctx.atlasPath(), this.ctx.log)]);
+          await Promise.all([gitRefs.refresh(folder, this.ctx.log), atlasRefs.refresh(folder, this.ctx.atlasPath(), this.ctx.log), apiRefs.refresh(folder, INSTRUMENTS_VERB, this.ctx.log)]);
         }
         const input = assistInput(this.ctx, rec, m.text, { references: m.kind === "cards" });
         if (m.kind === "ghost") {
