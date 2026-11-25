@@ -318,3 +318,79 @@ test("a reference card naming a line of the test kind is written from that entry
   const bad = core.parseCards({ cards: [{ category: "refs", title: "Say it", why: "w", edit: { op: "append", text: " about the widget calibration step 1" } }] }, draft, "t", refs);
   assert.deepEqual(bad, []);
 });
+
+// ------------------------------------------------ branches and worktrees (113)
+
+import { execFileSync } from "node:child_process";
+
+const sh = (cwd, ...args) => execFileSync("git", args, { cwd, stdio: "pipe", encoding: "utf8" });
+/** A scratch repo with branches main, fix/abc-9-fan-curve and feature/logger, a worktree on the latter, and the chat in a second worktree. */
+function scratchRepo() {
+  const main = fs.mkdtempSync(path.join(ROOT, "repo-"));
+  sh(main, "init", "-q", "-b", "main");
+  sh(main, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "one");
+  sh(main, "branch", "fix/abc-9-fan-curve");
+  sh(main, "branch", "feature/logger");
+  const logger = path.join(ROOT, path.basename(main) + "-logger");
+  const own = path.join(ROOT, path.basename(main) + "-own");
+  sh(main, "worktree", "add", "-q", logger, "feature/logger");
+  sh(main, "worktree", "add", "-q", "-b", "agent/own-chat", own);
+  return { main, logger, own };
+}
+const gitLines = async (reader, folder, draft, index = null, now = 0) => {
+  await reader.refresh(folder, () => {}, now);
+  return core.linkReferences([core.gitSource(reader.get(folder), index, {})], draft);
+};
+
+test("the linker offers the branch a draft describes by a cue word and a title word, and not the chat's own", async () => {
+  const { own } = scratchRepo();
+  const reader = new core.GitRefs();
+  assert.deepEqual((await gitLines(reader, own, "rebase it on the fan branch")).map((r) => r.line), ["branch fix/abc-9-fan-curve"]);
+  // The chat's own branch and worktree are never offered, whatever the draft says.
+  const all = await gitLines(reader, own, "merge agent/own-chat and the own worktree branch into main");
+  assert.ok(!all.some((r) => r.line.includes("agent/own-chat") || r.line.includes("-own")), all.map((r) => r.line).join("|"));
+});
+
+test("a second worktree is offered with its path and branch", async () => {
+  const { own, logger } = scratchRepo();
+  const reader = new core.GitRefs();
+  const refs = await gitLines(reader, own, "do it in the logger worktree");
+  assert.deepEqual(refs.filter((r) => r.kind === "worktree").map((r) => r.line), [`worktree ${fs.realpathSync(logger)} (branch feature/logger)`]);
+  assert.equal(refs.find((r) => r.kind === "worktree").entry.text("x"), refs.find((r) => r.kind === "worktree").line);
+});
+
+test("a branch the desk has a PR on is written with that PR", async () => {
+  const { own } = scratchRepo();
+  const reader = new core.GitRefs();
+  const index = { ...INDEX, prs: [...INDEX.prs, { repo: "owner/repo", number: 51, title: "Fan", state: "open", draft: false, url: "u", branch: "fix/abc-9-fan-curve", keys: [] }] };
+  assert.deepEqual((await gitLines(reader, own, "rebase it on the fan branch", index)).map((r) => r.line), ["branch fix/abc-9-fan-curve (PR owner/repo#51)"]);
+});
+
+test("no cue word and no exact name offers no branch line; an exact name offers it with none", async () => {
+  const { own } = scratchRepo();
+  const reader = new core.GitRefs();
+  assert.deepEqual(await gitLines(reader, own, "tune the fan curve for the logger"), []);
+  assert.deepEqual((await gitLines(reader, own, "look at fix/abc-9-fan-curve")).map((r) => r.line), ["branch fix/abc-9-fan-curve"]);
+});
+
+test("git is read at most once a minute, and a failure leaves the kind empty and logs once", async () => {
+  const { main, own } = scratchRepo();
+  const reader = new core.GitRefs();
+  await reader.refresh(own, () => {}, 0);
+  sh(main, "branch", "fix/new-fan-thing");
+  await reader.refresh(own, () => {}, 59_000);
+  assert.ok(!reader.get(own).branches.includes("fix/new-fan-thing"));
+  await reader.refresh(own, () => {}, 61_000);
+  assert.ok(reader.get(own).branches.includes("fix/new-fan-thing"));
+  const none = fs.mkdtempSync(path.join(ROOT, "nogit-"));
+  const logs = [];
+  const r2 = new core.GitRefs();
+  await r2.refresh(none, (s) => logs.push(s), 0);
+  await r2.refresh(none, (s) => logs.push(s), 61_000);
+  assert.equal(r2.get(none), null);
+  assert.equal(logs.length, 1);
+});
+
+test("a remote branch with a local twin appears once", () => {
+  assert.deepEqual(core.parseBranches("refs/heads/a\nrefs/remotes/origin/a\nrefs/remotes/origin/HEAD\nrefs/remotes/origin/b\n"), ["a", "b"]);
+});

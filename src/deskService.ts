@@ -26,20 +26,25 @@ const TRANSCRIPT_MS = 30000;
 const RECHECK_MS = 60_000;
 const DAY = 86_400_000;
 
-function git(dir: string, args: string[]): Promise<string> {
+export function git(dir: string, args: string[]): Promise<string> {
   return new Promise((resolve) => {
     cp.execFile("git", ["-C", dir, ...args], { timeout: 5000 }, (err, out) => resolve(err ? "" : out.trim()));
   });
 }
 
 /** The main clone a folder belongs to: itself, or the repo a worktree hangs off. */
-async function mainRepo(folder: string): Promise<string> {
+export async function mainRepo(folder: string): Promise<string> {
   const common = await git(folder, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
   return common.endsWith("/.git") ? common.slice(0, -5) : folder;
 }
 
+/** `git worktree list --porcelain` as it prints: the linker (refsGit.ts) reads each worktree's branch from it too. */
+export function listWorktrees(repo: string): Promise<string> {
+  return git(repo, ["worktree", "list", "--porcelain"]);
+}
+
 async function worktrees(repo: string): Promise<string[]> {
-  const out = await git(repo, ["worktree", "list", "--porcelain"]);
+  const out = await listWorktrees(repo);
   return out
     .split("\n")
     .filter((l) => l.startsWith("worktree "))

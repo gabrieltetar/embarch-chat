@@ -81,13 +81,13 @@ export function significantWords(text: string): Set<string> {
 }
 
 /** A title as the prompt and the draft carry it: one line, no `<`/`>` to close a block with, no quote to end its own, nothing unseen, clipped. */
-export function clipTitle(t: string): string {
+export function clipTitle(t: string, cap = TITLE_CAP): string {
   const s = stripInvisible(t)
     .text.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
     .replace(/[<>]/g, "")
     .replace(/"/g, "'")
     .replace(/\s+/g, " ")
     .trim();
-  return s.length <= TITLE_CAP ? s : s.slice(0, TITLE_CAP - 1) + "…";
+  return s.length <= cap ? s : s.slice(0, cap - 1) + "…";
 }
 

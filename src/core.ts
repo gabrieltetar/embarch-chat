@@ -30,6 +30,7 @@ export * from "./assistant/haiku";
 export * from "./assistant/prompts";
 export * from "./assistant/references";
 export * from "./assistant/refsDesk";
+export * from "./assistant/refsGit";
 export * from "./githubRepo";
 export * from "./assistant/history";
 export * from "./assistant/assistant";

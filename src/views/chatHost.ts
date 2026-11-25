@@ -17,6 +17,7 @@ import { DeskError } from "../desk/client";
 import type { PrRef } from "../desk/client";
 import { linkReferences } from "../assistant/references";
 import { deskSource, prLine } from "../assistant/refsDesk";
+import { GitRefs, gitSource } from "../assistant/refsGit";
 import { openAt, openFileLink } from "../openFile";
 import { mentionItems, mentionOf } from "../mentions";
 import type { WireMessage } from "../wire/types";
@@ -106,6 +107,9 @@ export interface HostCtx {
   finish: (itemId: string) => void;
 }
 
+/** The branches and worktrees the linker offers (decision 113), read before a cards call. */
+const gitRefs = new GitRefs();
+
 /** Where an "always allow" was last saved, in the extension's global state (78). */
 const DESTINATION_KEY = "embarchChat.permissionDestination";
 
@@ -146,7 +150,13 @@ export function assistInput(ctx: HostCtx, rec: ChatRecord, draft: string, opts: 
     item: h.untracked ? null : { key: h.issueKey, title: h.title, state: h.stateName, prs: h.prs.map((p) => prLine(titled(p))) },
     library: ctx.library().map((e) => invocation(e, st.slashCommands) ?? e.name),
     context: st.context ? { percentage: st.context.percentage, totalTokens: st.context.totalTokens, maxTokens: st.context.maxTokens } : null,
-    ...(opts.references ? { references: linkReferences([deskSource(index, { ownKey: h.issueKey, ownPrs: h.prs, repo: githubRepo(rec.chat.opts.cwd || st.cwd || "") })], draft) } : {}),
+    ...(opts.references
+      ? (() => {
+          const cwd = rec.chat.opts.cwd || st.cwd || "";
+          const repo = githubRepo(cwd);
+          return { references: linkReferences([deskSource(index, { ownKey: h.issueKey, ownPrs: h.prs, repo }), gitSource(gitRefs.get(cwd), index, { repo })], draft) };
+        })()
+      : {}),
   };
 }
 
@@ -469,6 +479,8 @@ export class ChatHost implements vscode.Disposable {
       case "assist": {
         if (!rec.ours) return;
         // The desk's references only for the cards (decision 88): ghost text keeps its latency (26).
+        // The branches and worktrees are read here, at most once a minute (113).
+        if (m.kind === "cards") await gitRefs.refresh(chat.opts.cwd || chat.state.cwd || "", this.ctx.log);
         const input = assistInput(this.ctx, rec, m.text, { references: m.kind === "cards" });
         if (m.kind === "ghost") {
           const text = await this.ctx.assistant.ghost(chat.sessionId, input, (t) => this.post({ t: "ghost", seq: m.seq, text: t, done: false }));

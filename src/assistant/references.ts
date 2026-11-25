@@ -65,6 +65,28 @@ const KINDS: Record<string, KindInfo> = {
       why: "The desk knows the parser PR",
     },
   },
+  branch: {
+    plural: ["branches"],
+    singular: ["a branch"],
+    example: {
+      line: "branch fix/abc-9-fan-curve",
+      draft: "rebase it on the fan branch",
+      find: "the fan branch",
+      title: "Name branch fix/abc-9-fan-curve",
+      why: "The repo has the branch fix/abc-9-fan-curve",
+    },
+  },
+  worktree: {
+    plural: ["worktrees"],
+    singular: ["a worktree"],
+    example: {
+      line: "worktree /home/me/repo-fan (branch fix/abc-9-fan-curve)",
+      draft: "finish it in the fan worktree",
+      find: "the fan worktree",
+      title: "Name worktree /home/me/repo-fan",
+      why: "The repo has the worktree /home/me/repo-fan",
+    },
+  },
 };
 
 const kindInfo = (kind: string): KindInfo => KINDS[kind] ?? { plural: [`${kind}s`], singular: [`a ${kind}`], example: KINDS.issue.example };
