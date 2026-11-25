@@ -783,7 +783,7 @@ test("a live foreign thread follows its transcript by what was added, as events"
 });
 
 // A stopped or failed compaction, through a scripted CLI (test/fake-compact.mjs).
-function compactChat(env = {}) {
+function compactChat(env = {}, t) {
   const dir = tmp("compact-");
   const logFile = path.join(dir, "in.jsonl");
   const FC = path.join(here, "fake-compact.mjs");
@@ -791,13 +791,15 @@ function compactChat(env = {}) {
   const chat = new core.Chat({ sessionId: "33333333-2222-4333-8444-555555555555", cwd: dir, claudePath: FC, existing: false, idleMs: 600000, env: { ...process.env, FC_LOG: logFile, ...env } });
   const sent = () => (fs.existsSync(logFile) ? fs.readFileSync(logFile, "utf8").trim().split("\n").map((l) => JSON.parse(l)).filter((o) => o.type === "user").map((o) => o.message.content) : []);
   const unsent = [];
-  chat.on("unsent", (t) => unsent.push(t));
+  chat.on("unsent", (text) => unsent.push(text));
+  // A failed assertion must not leave the scripted CLI alive for idleMs.
+  t.after(() => chat.dispose());
   return { chat, sent, unsent };
 }
 const held = (chat) => chat.state.timeline.map((id) => chat.state.entries[id]).filter((e) => e.kind === "user" && (e.held || e.unsent));
 
-test("Stop during a held /compact: its rest is not sent, then or later, and goes back to the draft", async () => {
-  const { chat, sent, unsent } = compactChat();
+test("Stop during a held /compact: its rest is not sent, then or later, and goes back to the draft", async (t) => {
+  const { chat, sent, unsent } = compactChat({}, t);
   chat.sendAfterCompact("/compact focus on: the widget", "now add the blink test");
   await waitFor(() => chat.state.compacting);
   const stopped = turns(chat, 1);
@@ -805,72 +807,67 @@ test("Stop during a held /compact: its rest is not sent, then or later, and goes
   await stopped;
   assert.deepEqual(unsent, ["now add the blink test"], "back to the draft");
   assert.deepEqual(held(chat).map((e) => [e.text, !!e.pending, !!e.unsent]), [["now add the blink test", false, true]], "shown as not sent");
-  let t = turns(chat, 1);
+  let tn = turns(chat, 1);
   chat.send("something else");
-  await t;
-  t = turns(chat, 1);
+  await tn;
+  tn = turns(chat, 1);
   chat.send("auto"); // a later turn auto-compacts
-  await t;
+  await tn;
   assert.deepEqual(sent(), ["/compact focus on: the widget", "something else", "auto"], "the old rest never went out");
-  chat.dispose();
 });
 
-test("a held /compact that fails gives its rest back too", async () => {
-  const { chat, sent, unsent } = compactChat({ FC_FAIL: "1" });
+test("a held /compact that fails gives its rest back too", async (t) => {
+  const { chat, sent, unsent } = compactChat({ FC_FAIL: "1" }, t);
   const failed = turns(chat, 1);
   chat.sendAfterCompact("/compact focus on: the widget", "now add the blink test");
   await failed;
   assert.deepEqual(unsent, ["now add the blink test"]);
-  const t = turns(chat, 1);
+  const tn = turns(chat, 1);
   chat.send("auto");
-  await t;
+  await tn;
   assert.deepEqual(sent(), ["/compact focus on: the widget", "auto"]);
-  chat.dispose();
 });
 
-test("a model picked while a /compact waits behind a turn does not end the hold: the rest goes after the compaction's own result (decision 36)", async () => {
-  const { chat, sent } = compactChat({ FC_OK: "1" });
+test("a model picked while a /compact waits behind a turn does not end the hold: the rest goes after the compaction's own result (decision 36)", async (t) => {
+  const { chat, sent } = compactChat({ FC_OK: "1" }, t);
   chat.send("slow: a long step");
   chat.sendAfterCompact("/compact focus on: the widget", "now add the blink test");
   // Its line ("Set model to …") is a local command's output too.
   await chat.setModel("haiku");
-  await turns(chat, 1);
-  assert.deepEqual(sent(), ["slow: a long step", "/compact focus on: the widget"], "the running turn's end is not the compaction's");
+  // Read at the turn's own end event: later, under load, the rest may be out.
+  const atEnd = await new Promise((r) => chat.once("turn", () => r(sent())));
+  assert.deepEqual(atEnd, ["slow: a long step", "/compact focus on: the widget"], "the running turn's end is not the compaction's");
   const after = turns(chat, 1);
   await waitFor(() => sent().includes("now add the blink test"));
   await after;
   assert.equal(chat.turns, 2, "the compaction's own result is no turn");
   assert.ok(top(chat.state).some((e) => e.kind === "note" && e.tone === "compact"));
-  chat.dispose();
 });
 
-test("a compaction's result that names no command still lets the rest go: it ran no turn after its boundary (decision 36)", async () => {
-  const { chat, sent } = compactChat({ FC_OK: "1", FC_UNNAMED: "1" });
+test("a compaction's result that names no command still lets the rest go: it ran no turn after its boundary (decision 36)", async (t) => {
+  const { chat, sent } = compactChat({ FC_OK: "1", FC_UNNAMED: "1" }, t);
   chat.sendAfterCompact("/compact focus on: the widget", "now add the blink test");
   await waitFor(() => sent().includes("now add the blink test"));
   assert.deepEqual(sent(), ["/compact focus on: the widget", "now add the blink test"]);
-  chat.dispose();
 });
 
-test("a /compact's rest the CLI took is held no more: a rewind or a fork may name it (review r6 L1)", async () => {
-  const { chat, sent } = compactChat({ FC_OK: "1" });
+test("a /compact's rest the CLI took is held no more: a rewind or a fork may name it (review r6 L1)", async (t) => {
+  const { chat, sent } = compactChat({ FC_OK: "1" }, t);
   chat.sendAfterCompact("/compact focus on: the widget", "now add the blink test");
   await waitFor(() => sent().includes("now add the blink test"));
   const rest = () => Object.values(chat.state.entries).find((e) => e.kind === "user" && e.text === "now add the blink test");
   await waitFor(() => rest() && !rest().pending);
   assert.deepEqual([!!rest().held, !!rest().unsent, typeof rest().uuid], [false, false, "string"], "taken, under the uuid it went with");
-  chat.dispose();
 });
 
-test("a message written while a /compact's rest waits goes after that rest, not before it (decision 36)", async () => {
-  const { chat, sent } = compactChat({ FC_OK: "1" });
+test("a message written while a /compact's rest waits goes after that rest, not before it (decision 36)", async (t) => {
+  const { chat, sent } = compactChat({ FC_OK: "1" }, t);
   chat.send("slow: a long step");
   chat.sendAfterCompact("/compact focus on: the widget", "now add the blink test");
   chat.send("and then the docs");
   assert.deepEqual(held(chat).length, 0, "both wait above the input");
   await waitFor(() => sent().length === 4);
   assert.deepEqual(sent(), ["slow: a long step", "/compact focus on: the widget", "now add the blink test", "and then the docs"]);
-  chat.dispose();
 });
 
 // ---- what the CLI asks besides permission prompts (decision 66)
@@ -1635,7 +1632,7 @@ test("pastes: Claude Code's 800 characters or 2 line breaks, invisible character
   assert.equal(core.looksBinary("an ordinary paste with a � in it, long enough to count"), false);
 });
 
-test("a chip, the handoff or Start work's prompt goes without what shows nothing, as a draft does (56)", async () => {
+test("a chip, the handoff or Start work's prompt goes without what shows nothing, as a draft does (56)", async (t) => {
   // Unicode tag characters: invisible, so a chip reads "Run the tests" with more behind it.
   const hide = (s) => [...s].map((c) => String.fromCodePoint(0xe0000 + c.charCodeAt(0))).join("");
   const { chat, events, inputs } = makeChat("basic");
@@ -1645,14 +1642,13 @@ test("a chip, the handoff or Start work's prompt goes without what shows nothing
   assert.equal(events.find((e) => e.type === "_sent").text, "Run the tests", "and the timeline shows it");
   chat.dispose();
   // The compact card's draft (36): its /compact line, and the rest held for after it.
-  const c = compactChat({ FC_FAIL: "1" });
+  const c = compactChat({ FC_FAIL: "1" }, t);
   const failed = turns(c.chat, 1);
   c.chat.sendAfterCompact("/compact focus on: the widget" + hide(" and x"), "now add the blink test" + hide(" and y"));
   await failed;
   assert.deepEqual(c.sent(), ["/compact focus on: the widget"]);
   assert.deepEqual(c.unsent, ["now add the blink test"], "the rest, back to the draft as it would have gone");
   assert.deepEqual(held(c.chat).map((e) => e.text), ["now add the blink test"]);
-  c.chat.dispose();
 });
 
 // ------------------------------------------------------------ side questions (57)
