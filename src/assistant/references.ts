@@ -120,6 +120,28 @@ const KINDS: Record<string, KindInfo> = {
       why: "The atlas has that section",
     },
   },
+  trace: {
+    plural: ["outpost traces"],
+    singular: ["an outpost trace"],
+    example: {
+      line: 'trace "pd-trace" of study s-300 "Soak run" (OutpostTrace, 2026-11-25)',
+      draft: "compare it with yesterday's trace",
+      find: "yesterday's trace",
+      title: "Name trace pd-trace of study s-300",
+      why: "Core retains that study's trace",
+    },
+  },
+  capture: {
+    plural: ["study captures"],
+    singular: ["a study capture"],
+    example: {
+      line: 'capture "vbus" of study s-300 "Soak run" (samples, 2026-11-25)',
+      draft: "the VBUS capture from the soak run",
+      find: "the VBUS capture from the soak run",
+      title: "Name capture vbus of study s-300",
+      why: "Core retains that study's capture",
+    },
+  },
 };
 
 const kindInfo = (kind: string): KindInfo => KINDS[kind] ?? { plural: [`${kind}s`], singular: [`a ${kind}`], example: KINDS.issue.example };

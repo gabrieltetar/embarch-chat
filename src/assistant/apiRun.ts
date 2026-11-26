@@ -4,7 +4,8 @@
 // `embarch/embarch.toml` upward as every verb does. A 10 s limit, a result —
 // or a failure — kept 5 minutes per folder and verb, so a run happens only on
 // a cards call after the last one went stale. No binary: no spawn. A failure
-// leaves the answer null and logs once per cause. Later linker kinds reuse it.
+// leaves the answer null and logs once per cause. Later linker kinds reuse it: the cache and the failure rule are the verb's own
+// whatever it is (`list-studies --limit 20` is one verb here, words and all).
 
 import * as cp from "child_process";
 import { findBinary } from "../promptu/cli";
@@ -102,7 +103,7 @@ export class ApiRunner {
     const exe = findBinary(this.binary);
     if (!exe) return void this.reads.set(key, { at: now, json: null, logged: "no-binary" });
     this.spawns++;
-    const r = await run(exe, ["--json", verb], folder, timeoutMs);
+    const r = await run(exe, ["--json", ...verb.split(" ")], folder, timeoutMs);
     if (!r.ok) return fail(`run:${r.error}`, r.error);
     let json: unknown;
     try {

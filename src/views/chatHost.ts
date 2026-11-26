@@ -22,6 +22,7 @@ import { GitRefs, gitSource } from "../assistant/refsGit";
 import { ApiRunner } from "../assistant/apiRun";
 import { documentSource, projectSource } from "../assistant/refsLinear";
 import { INSTRUMENTS_VERB, instrumentSource, parseInstruments } from "../assistant/refsInstruments";
+import { STUDIES_VERB, parseStudies, studySource } from "../assistant/refsStudies";
 import { openAt, openFileLink } from "../openFile";
 import { mentionItems, mentionOf } from "../mentions";
 import type { WireMessage } from "../wire/types";
@@ -164,7 +165,7 @@ export function assistInput(ctx: HostCtx, rec: ChatRecord, draft: string, opts: 
       ? (() => {
           const cwd = rec.chat.opts.cwd || st.cwd || "";
           const repo = githubRepo(cwd);
-          return { references: linkReferences([deskSource(index, { ownKey: h.issueKey, ownPrs: h.prs, repo }), gitSource(gitRefs.get(cwd), index, { repo }), atlasSource(atlasRefs.get(cwd), draft), kconfigSource(atlasRefs.doc(cwd)), dtSource(atlasRefs.doc(cwd)), instrumentSource(parseInstruments(apiRefs.get(cwd, INSTRUMENTS_VERB)), draft), projectSource(index), documentSource(index)], draft) };
+          return { references: linkReferences([deskSource(index, { ownKey: h.issueKey, ownPrs: h.prs, repo }), gitSource(gitRefs.get(cwd), index, { repo }), atlasSource(atlasRefs.get(cwd), draft), kconfigSource(atlasRefs.doc(cwd)), dtSource(atlasRefs.doc(cwd)), instrumentSource(parseInstruments(apiRefs.get(cwd, INSTRUMENTS_VERB)), draft), studySource(parseStudies(apiRefs.get(cwd, STUDIES_VERB))), projectSource(index), documentSource(index)], draft) };
         })()
       : {}),
   };
@@ -492,7 +493,7 @@ export class ChatHost implements vscode.Disposable {
         // The branches and worktrees are read here, at most once a minute (113).
         if (m.kind === "cards") {
           const folder = chat.opts.cwd || chat.state.cwd || "";
-          await Promise.all([gitRefs.refresh(folder, this.ctx.log), atlasRefs.refresh(folder, this.ctx.atlasPath(), this.ctx.log), apiRefs.refresh(folder, INSTRUMENTS_VERB, this.ctx.log)]);
+          await Promise.all([gitRefs.refresh(folder, this.ctx.log), atlasRefs.refresh(folder, this.ctx.atlasPath(), this.ctx.log), apiRefs.refresh(folder, INSTRUMENTS_VERB, this.ctx.log), apiRefs.refresh(folder, STUDIES_VERB, this.ctx.log)]);
         }
         const input = assistInput(this.ctx, rec, m.text, { references: m.kind === "cards" });
         if (m.kind === "ghost") {

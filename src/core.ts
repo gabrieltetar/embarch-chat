@@ -34,6 +34,7 @@ export * from "./assistant/refsGit";
 export * from "./assistant/refsAtlas";
 export * from "./assistant/apiRun";
 export * from "./assistant/refsInstruments";
+export * from "./assistant/refsStudies";
 export * from "./assistant/refsLinear";
 export * from "./githubRepo";
 export * from "./assistant/history";
