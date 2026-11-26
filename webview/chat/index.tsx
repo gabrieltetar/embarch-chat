@@ -12,7 +12,7 @@
 
 import "../shared/style.css";
 import { render } from "preact";
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { ChatState, Entry, chatStatus, liveBlocks, reduce } from "../../src/wire/reducer";
 import { Link } from "../shared/link";
 import { LiveMarkdown, Markdown } from "../shared/markdown";
@@ -321,7 +321,9 @@ function App() {
     return () => window.removeEventListener("message", on);
   }, []);
 
-  useEffect(() => {
+  // A layout effect, not an effect: Preact runs an effect after the next paint, up to 100 ms later on a loaded machine, and a
+  // scroll event or a read in that gap sees the timeline above the bottom it is about to follow (EMB-571).
+  useLayoutEffect(() => {
     const el = scroller.current;
     if (el && stick.current) el.scrollTop = el.scrollHeight;
   });
