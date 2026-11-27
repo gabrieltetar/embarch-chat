@@ -1479,15 +1479,22 @@ const CTRL_Z = "z";
 const TAB = "";
 const ENTER = "";
 const lastAssist = async (kind) => (await posts()).filter((p) => p.t === "assist" && p.kind === kind).at(-1);
-/** The page's latest ask of a kind, once it has made one (timers in a loaded headless browser run late). */
-const waitAssist = async (kind, ms = 5000) => {
-  const t0 = Date.now();
-  for (;;) {
-    const a = await lastAssist(kind);
-    if (a) return a;
-    if (Date.now() - t0 > ms) throw new Error(`no ${kind} request in ${ms} ms`);
-    await sleep(50);
-  }
+/**
+ * The page's latest ask of a kind, once it has made one (timers in a loaded headless browser run late).
+ * The deadline runs on the page's own clock, inside one async script: a loaded driver can hold a poll's
+ * answer back for seconds, and a deadline on the test's clock took that for the page never asking (EMB-574).
+ * 15 s, not 5: a starved page has been seen to post more than 5 s after the 2 s timer (assistant decision 120).
+ */
+const waitAssist = async (kind, ms = 15000) => {
+  const a = await wd("POST", `${S}/execute/async`, {
+    script: `const [kind, ms, done] = [arguments[0], arguments[1], arguments[2]]; const t0 = Date.now();
+      const look = () => { const a = window.__posts.filter((p) => p.t === "assist" && p.kind === kind).at(-1);
+        if (a) done(a); else if (Date.now() - t0 > ms) done(null); else setTimeout(look, 25); };
+      look();`,
+    args: [kind, ms],
+  });
+  if (!a) throw new Error(`no ${kind} request in ${ms} ms`);
+  return a;
 };
 
 await check("the instant wave: the owner's own past prompts complete the draft; typing through, Tab takes it", async () => {
