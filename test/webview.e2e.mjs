@@ -58,8 +58,11 @@ function page(bundle, title, kind = KINDS.dark) {
 <style>${kind.vars}</style>
 <script nonce="${nonce}">
 window.__posts = []; window.__state = undefined; window.__violations = []; window.__vscode = [];
+// The page's own clock for the pauses: when each post was made, and when the draft last moved (EMB-578).
+window.__postAt = new WeakMap(); window.__lastInput = 0;
+window.addEventListener("input", () => { window.__lastInput = performance.now(); }, true);
 document.addEventListener("securitypolicyviolation", (e) => window.__violations.push(e.violatedDirective + " " + e.blockedURI));
-window.acquireVsCodeApi = () => ({ postMessage: (m) => window.__posts.push(JSON.parse(JSON.stringify(m))), getState: () => window.__state, setState: (s) => (window.__state = s) });
+window.acquireVsCodeApi = () => ({ postMessage: (m) => { const c = JSON.parse(JSON.stringify(m)); window.__postAt.set(c, performance.now()); window.__posts.push(c); }, getState: () => window.__state, setState: (s) => (window.__state = s) });
 const hostMessaging = { postMessage: (channel, data) => window.__vscode.push([channel, data && data.uri]) };
 ${VSCODE_CLICK}
 window.addEventListener("click", handleInnerClick);
@@ -1518,9 +1521,10 @@ await check("the instant wave: the owner's own past prompts complete the draft; 
 await check("Haiku's ghost text after a 300 ms pause, streamed; Tab takes it; the next keystroke cancels a stale call", async () => {
   await fresh();
   await type("now flash it on the");
-  await sleep(150);
-  assert.equal(await lastAssist("ghost"), undefined, "not before the pause");
   const ask = await waitAssist("ghost");
+  // The pause is measured on the page's clock: a runner-side sleep drifts from the page's timer under load (assistant decision 121).
+  const pause = await exec("const a = window.__posts.find((p) => p.t === 'assist' && p.kind === 'ghost'); return window.__postAt.get(a) - window.__lastInput;");
+  assert.ok(pause >= 300, `not before the pause: the page posted ${pause} ms after its last keystroke`);
   assert.equal(ask.text, "now flash it on the");
   const stream = ghostStream("ghost", ask.seq, ask.text);
   await send([stream[0]]);
