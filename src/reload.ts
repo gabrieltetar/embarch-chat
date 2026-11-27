@@ -241,7 +241,7 @@ export async function restoreAfterReload(o: RestoreCtx): Promise<void> {
     // still a fork, showing what it starts from (73). Any other is
     // read-only until nothing else runs it (31); a reload's own process is
     // gone by then. Either way in its own mode, never a new chat's auto.
-    const file = findTranscript(c.sid, c.cwd || undefined);
+    const file = o.manager.findTranscript(c.sid, c.cwd);
     const fresh = !file || !holdsMessage(file);
     const mode = c.mode && MODES.includes(c.mode) ? c.mode : ((file && transcriptMode(file)) ?? "default");
     const rec = fresh
@@ -251,7 +251,7 @@ export async function restoreAfterReload(o: RestoreCtx): Promise<void> {
       o.memory.settled(c.sid);
       continue;
     }
-    const parent = fresh && c.fork ? findTranscript(c.fork.from, c.cwd || undefined) : null;
+    const parent = fresh && c.fork ? o.manager.findTranscript(c.fork.from, c.cwd) : null;
     if (parent) rec.chat.preload(historyUpTo(parent, c.fork!.at));
     if (fresh && c.title) void rec.chat.renameByHand(c.title);
     rec.untracked = c.untracked;

@@ -19,6 +19,10 @@ export interface HandoffPort {
   readonly sessionId?: string;
   /** The chat's own login's `projects/` folder, so `last_session` reads that login, not the host's (101). */
   readonly projectsRoot?: string;
+  /** The folder `last_session` names the chat's transcripts for: a container login's working path (122), else the chat's own folder. */
+  readonly transcriptCwd?: string;
+  /** Set for a container login (122): the panel declares no host-acting hook or tool for it. */
+  readonly container?: unknown;
   handoff(prompt: string, how: "card" | "immediate"): Promise<string>;
   /** The chat's own switch in the rail's Limits menu (109): on, no card. Read at each call, so a switch flipped mid-session holds. */
   readonly autoHandoff?: boolean;

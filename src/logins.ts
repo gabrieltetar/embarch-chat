@@ -3,10 +3,13 @@
 
 import * as path from "path";
 import { expandHome } from "./desk/client";
+import type { ContainerConfig, ContainerLogin } from "./containerLogin";
 
 export interface LoginConfig {
   /** Run `claude` with `CLAUDE_CONFIG_DIR` here; absent, the CLI's own default folder. */
   configDir?: string;
+  /** Kind `container` (decision 122): its chats run `claude` in the agent container this record describes, and `configDir` is not used. */
+  container?: ContainerConfig;
 }
 
 export interface DeskConfig {
@@ -51,4 +54,9 @@ export function loginEnv(base: NodeJS.ProcessEnv, login: LoginConfig | undefined
   if (login?.configDir) env.CLAUDE_CONFIG_DIR = expandHome(login.configDir);
   for (const [k, v] of Object.entries(desk?.env ?? {})) env[k] = expandHome(v);
   return env;
+}
+
+/** The container a login runs its chats in (`read` reads its record), or null for a login that runs on the host. */
+export function loginContainer(login: LoginConfig | undefined, read: (c: ContainerConfig) => ContainerLogin): ContainerLogin | null {
+  return login?.container ? read(login.container) : null;
 }

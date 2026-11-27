@@ -37,13 +37,14 @@ import { memoryPassConfig } from "./memoryPass";
 import { CHAT_VIEW, ChatPanels, ChatViewProvider, THREADS_VIEW, ThreadsViewProvider } from "./views/views";
 import { claudeVersion, versionWarning } from "./wire/version";
 import { chatEnv } from "./wire/process";
-import { DEFAULT_LOGIN, DeskConfig, FolderRule, LoginConfig, currentLogin, loginEnv, matchFolderRule, ruleDesk } from "./logins";
+import { DEFAULT_LOGIN, DeskConfig, FolderRule, LoginConfig, currentLogin, loginContainer, loginEnv, matchFolderRule, ruleDesk } from "./logins";
+import { readContainerLogin } from "./containerLogin";
 import { LOGIN_STATE_PATH, RELOAD_LABEL, mirrorWindow, pickNotice, resolveChatLogin, updateLoginState } from "./loginState";
 import { ACCOUNT_POLL_MS, accountFile, credentialsFile, loginItem, readAccount } from "./loginAccount";
 import { haikuEnv } from "./assistant/haiku";
 import { LoginGate, warmUp } from "./loginGate";
 import { StartupProbes } from "./startupProbe";
-import { findTranscript, isSessionId } from "./wire/transcript";
+import { isSessionId } from "./wire/transcript";
 import { appendTitle, forkPoint, historyUpTo } from "./wire/history";
 import type { WireMessage } from "./wire/types";
 
@@ -128,15 +129,18 @@ export function activate(context: vscode.ExtensionContext): void {
    * window's: its own login (106), kept for life across idle closes and
    * resumes, and the window's desk. See ChatSettings.env.
    */
-  const chatSpawnEnv = (sid: string, from: string | null, keep: boolean): NodeJS.ProcessEnv => {
+  const chatLoginName = (sid: string, from: string | null, keep: boolean): string => {
     let login = windowLogin();
     try {
       login = resolveChatLogin(loginStateFile, sid, from, login, cfg().logins, keep);
     } catch (e) {
       log(`login state: ${(e as Error).message}`);
     }
-    return loginEnv(chatEnv(), cfg().logins[login], activeDesk());
+    return login;
   };
+  const chatSpawnEnv = (sid: string, from: string | null, keep: boolean): NodeJS.ProcessEnv => loginEnv(chatEnv(), cfg().logins[chatLoginName(sid, from, keep)], activeDesk());
+  /** The container a chat's login runs it in (122), read from the agent's record each time a chat starts or resumes; throws when it cannot be read. */
+  const chatContainer = (sid: string, from: string | null) => loginContainer(cfg().logins[chatLoginName(sid, from, false)], readContainerLogin);
   /** The window's pick, mirrored for claude-login (106): Claude Code's panel and a terminal in its folders start on it too. */
   const mirrorLogin = () => {
     const picked = pickedLogin && cfg().logins[pickedLogin] ? pickedLogin : null;
@@ -234,6 +238,7 @@ export function activate(context: vscode.ExtensionContext): void {
     hold: (sid) => promptuRuns?.holdReason(sid, shownNow(sid)) ?? null,
     open: (sid) => openNow(sid),
     env: chatSpawnEnv,
+    container: chatContainer,
     gate: (env) => loginGate.wait(env),
     recover: (env) => loginGate.recover(env),
     seed: cfg().startupProbe ? (chat, env) => probes.get(env, chat.opts.cwd, (info) => chat.seedStartup(info)) : undefined,
@@ -886,7 +891,7 @@ export function activate(context: vscode.ExtensionContext): void {
       void vscode.window.showErrorMessage("Not forked: this chat worked in a folder that is not this window's.");
       return;
     }
-    const file = findTranscript(sid, cwd);
+    const file = manager.findTranscript(sid, cwd);
     const point = file ? forkPoint(file, uuid) : undefined;
     if (!file || !point) {
       void vscode.window.showErrorMessage("Not forked: the message is not in this chat's transcript yet.");
@@ -941,7 +946,7 @@ export function activate(context: vscode.ExtensionContext): void {
     else {
       // Asked again at the moment it writes: two writers on one transcript is what this prevents.
       const pid = await agentPid(cfg().claudePath, sid);
-      const file = findTranscript(sid, rec?.chat.opts.cwd || t?.cwd || undefined);
+      const file = manager.findTranscript(sid, rec?.chat.opts.cwd || t?.cwd);
       if (typeof pid === "number" || !file) {
         void vscode.window.showErrorMessage(`Not renamed: ${file ? "something else runs this chat now" : "no transcript for this chat on this machine"}.`);
         return;

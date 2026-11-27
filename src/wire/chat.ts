@@ -19,6 +19,7 @@ import type { AppliedSettings, ContextUsage, ModelInfo, PermissionDecision, Wire
 import { DIALOG_CANCELLED, answerable, unansweredNote } from "./dialogs";
 import { Destination, PlanComment, alwaysPermissions, planFeedback } from "./cards";
 import { isRefreshLockError } from "../loginGate";
+import { ContainerLogin, containerDownLine, containerEnv, containerProjectsRoot, containerWorkdir } from "../containerLogin";
 import { DEFAULT_LIMIT_PREFS, LimitPrefs, LimitWait, MAX_FRUITLESS, RESET_SLACK_MS, RateLimitInfo, WAIT_TICK_MS, continueText, limitHitOf, limitName, limitReply, rateLimitOf, sendAt } from "../afterLimit";
 
 export interface ChatOptions {
@@ -30,6 +31,8 @@ export interface ChatOptions {
   idleMs: number;
   mode?: string;
   env?: NodeJS.ProcessEnv;
+  /** A container login (decision 122): `claude` runs in the agent container, and its transcripts are on the exchange folder. */
+  container?: ContainerLogin;
   /** Extra CLI flags, for tests (a stripped model, no MCP, ...). */
   extraArgs?: string[];
   /** A fork (decision 73): the first process copies `from`'s conversation up to its entry `at`. */
@@ -254,7 +257,20 @@ export class Chat extends EventEmitter implements HandoffPort {
 
   /** The chat's own login's `projects/` folder (decision 101), where `last_session` reads. */
   get projectsRoot(): string {
-    return projectsRoot(this.opts.env ?? chatEnv());
+    return this.rootFor(this.opts.env ?? chatEnv());
+  }
+
+  private rootFor(env: NodeJS.ProcessEnv): string {
+    return this.opts.container ? containerProjectsRoot(this.opts.container) : projectsRoot(env);
+  }
+
+  /** The folder the transcript's project folder is named for: the container's working path, not the host folder the chat is shown in. */
+  get transcriptCwd(): string {
+    return this.opts.container ? containerWorkdir(this.opts.container) : this.opts.cwd;
+  }
+
+  get container(): ContainerLogin | undefined {
+    return this.opts.container;
   }
 
   get running(): boolean {
@@ -327,7 +343,7 @@ export class Chat extends EventEmitter implements HandoffPort {
   private settleSession(env: NodeJS.ProcessEnv): void {
     // A brand-new id has no transcript until a process of this chat's ran.
     if (this.hasSession || (!this.proc && !this.opts.settle)) return;
-    const file = findTranscript(this.sessionId, this.opts.cwd || undefined, projectsRoot(env));
+    const file = findTranscript(this.sessionId, this.transcriptCwd || undefined, this.rootFor(env));
     if (!file) return;
     if (holdsMessage(file)) {
       this.hasSession = true;
@@ -356,19 +372,23 @@ export class Chat extends EventEmitter implements HandoffPort {
     if (rerun) env = { ...env, CLAUDE_CODE_RESUME_INTERRUPTED_TURN: "1", CLAUDE_CODE_RESUME_INTERRUPTED_TURN_MAX_AGE_MS: String(RERUN_MAX_AGE_MS) };
     let label = rerun;
     // The panel's own hooks and MCP servers (61, 65), read as each process starts, in its one initialize.
-    const hooks = this.opts.hooks?.(this.opts.cwd, this) ?? {};
+    const declared = this.opts.hooks?.(this.opts.cwd, this) ?? {};
+    // A container login declares no hook that acts on the host (122): its paths are the container's, not the editor's.
+    const { beforeFileTool: _hostHook, ...inContainer } = declared;
+    const hooks = this.opts.container ? inContainer : declared;
     const init = initializeRequest(hooks);
     // A due token is refreshed by one warm-up first (105): the spawn waits, what is sent meanwhile is held for it.
     const ready = this.opts.gate?.() ?? null;
     if (ready) this.log("the login's token is due: the process starts after its warm-up");
     const spec: SpawnSpec = {
-      claudePath: this.opts.claudePath,
+      claudePath: this.opts.container ? this.opts.container.runtime : this.opts.claudePath,
       cwd: this.opts.cwd,
+      ...(this.opts.container ? { container: this.opts.container } : {}),
       sessionId: this.sessionId,
       resume: this.hasSession,
       permissionMode: this.state.mode,
       model: this.model,
-      env,
+      env: this.opts.container ? containerEnv(env) : env,
       extraArgs: this.opts.extraArgs,
       ...(init ? { initialize: init } : {}),
       fork: this.hasSession ? undefined : this.opts.fork,
@@ -477,11 +497,13 @@ export class Chat extends EventEmitter implements HandoffPort {
     proc.on("error", (err: Error) => {
       if (this.proc !== proc) return;
       // Node gives a missing cwd the same ENOENT as a missing executable.
-      const cwdGone = this.opts.cwd !== "" && !fs.existsSync(this.opts.cwd);
+      const cwdGone = !this.opts.container && this.opts.cwd !== "" && !fs.existsSync(this.opts.cwd);
       const msg =
         (err as NodeJS.ErrnoException).code !== "ENOENT"
           ? err.message
-          : cwdGone
+          : this.opts.container
+            ? `container runtime not found: ${this.opts.container.runtime}`
+            : cwdGone
             ? `the chat's folder no longer exists: ${this.opts.cwd}`
             : `claude not found: ${this.opts.claudePath}`;
       this.log(`spawn failed: ${msg}`);
@@ -499,7 +521,8 @@ export class Chat extends EventEmitter implements HandoffPort {
       this.log(`exit ${info.code ?? info.signal}${expected ? " (idle close)" : ""}`);
       // A signal (killed, out of memory, a crash) is no idle close either.
       if (!expected && (info.code || info.signal)) {
-        this.dispatch({ type: "_process", state: "error", error: info.stderr.split("\n").slice(-3).join("\n") || `claude exited with ${info.code ?? info.signal}`, at: Date.now() });
+        const down = this.opts.container ? containerDownLine(this.opts.container, info.stderr) : null;
+        this.dispatch({ type: "_process", state: "error", error: down ?? (info.stderr.split("\n").slice(-3).join("\n") || `claude exited with ${info.code ?? info.signal}`), at: Date.now() });
       } else {
         this.dispatch({ type: "_process", state: "closed", at: Date.now() });
       }
@@ -1239,7 +1262,7 @@ export class Chat extends EventEmitter implements HandoffPort {
       await this.rename(title);
       return;
     }
-    const file = this.hasSession ? findTranscript(this.sessionId, this.opts.cwd || undefined, projectsRoot(this.opts.env ?? chatEnv())) : null;
+    const file = this.hasSession ? findTranscript(this.sessionId, this.transcriptCwd || undefined, this.projectsRoot) : null;
     if (file) {
       appendTitle(file, this.sessionId, title);
       this.pendingTitle = null;

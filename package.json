@@ -445,7 +445,7 @@
             "type": "object",
             "default": { "work": {} },
             "scope": "machine",
-            "description": "The Claude logins this machine runs chats under. Each key names one; `configDir` runs its `claude` with `CLAUDE_CONFIG_DIR` set there, and with none it uses the CLI's default folder (decision 101). User or Remote settings only — a workspace cannot set it."
+            "description": "The Claude logins this machine runs chats under. Each key names one; `configDir` runs its `claude` with `CLAUDE_CONFIG_DIR` set there, and with none it uses the CLI's default folder (decision 101). `container` (`record`: the agent's container.toml, `manifestPath`: the repo's folder under /work) makes a login of kind container: its chats run `claude` inside the agent container, started by `embarch agent up` (decision 122). User or Remote settings only — a workspace cannot set it."
           },
           "embarchChat.desks": {
             "type": "object",

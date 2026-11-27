@@ -8,10 +8,17 @@ import { EventEmitter } from "events";
 import type { WireMessage } from "./types";
 import { isSessionId } from "./transcript";
 import { DIALOG_KINDS } from "./dialogs";
+import { ContainerLogin, containerExecArgs } from "../containerLogin";
 
 export interface SpawnSpec {
   claudePath: string;
+  /** The folder the process starts in; not used by a container login, whose `claude` runs in the container. */
   cwd: string;
+  /**
+   * A container login (decision 122): `claudePath` is the runtime, and the args start
+   * `exec -i -u agent -w /work/<repo> <name> claude`, then the flags below.
+   */
+  container?: ContainerLogin;
   sessionId: string;
   /** Resume an existing session (`--resume`) rather than start one with this id (`--session-id`). */
   resume: boolean;
@@ -60,7 +67,7 @@ export function claudeArgs(spec: SpawnSpec): string[] {
   if (spec.model) args.push("--model", spec.model);
   if (spec.settings && Object.keys(spec.settings).length) args.push("--settings", JSON.stringify(spec.settings));
   if (spec.extraArgs) args.push(...spec.extraArgs);
-  return args;
+  return spec.container ? [...containerExecArgs(spec.container), ...args] : args;
 }
 
 /** The extension host's environment, minus what would make the chat look like a child of some other Claude session. */
@@ -143,7 +150,7 @@ export class ClaudeProcess extends EventEmitter {
 
   private spawn(args: string[]): void {
     const child = cp.spawn(this.spec.claudePath, args, {
-      cwd: this.spec.cwd,
+      cwd: this.spec.container ? undefined : this.spec.cwd,
       env: this.spec.env ?? chatEnv(),
       stdio: ["pipe", "pipe", "pipe"],
     });

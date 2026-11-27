@@ -18,6 +18,7 @@ import { PERMISSION_MODES } from "./wire/types";
 import type { WireMessage } from "./wire/types";
 import type { OwnChat } from "./desk/threads";
 import type { AssignBody } from "./desk/client";
+import { ContainerLogin, containerProjectsRoot, containerWorkdir } from "./containerLogin";
 
 /**
  * What the desk still has to hear about a chat of this window's, kept while
@@ -79,6 +80,11 @@ export interface ChatSettings {
    * login not on record is put on record.
    */
   env?: (sessionId: string, from: string | null, keep: boolean) => NodeJS.ProcessEnv;
+  /**
+   * The container a chat runs in when its login is of kind container (122), resolved as `env` resolves the login. Throws when the
+   * login's record cannot be read: a container login never falls back to the host.
+   */
+  container?: (sessionId: string, from: string | null) => ContainerLogin | null;
   /** What a chat's process waits on before it spawns, given the chat's environment: its login's warm-up while the token is due (105). */
   gate?: (env: NodeJS.ProcessEnv) => Promise<void> | null;
   /** After a turn ended on the CLI's refresh lock: warms the chat's login up until it is fresh (105). */
@@ -90,10 +96,12 @@ export interface ChatSettings {
 }
 
 /** A chat's environment, kept for life, and its login's warm-up (105), which goes by that environment. */
-function loginOpts(s: ChatSettings, sessionId: string, from: string | null, keep: boolean): Pick<ChatOptions, "env" | "gate" | "recover"> {
+function loginOpts(s: ChatSettings, sessionId: string, from: string | null, keep: boolean): Pick<ChatOptions, "env" | "gate" | "recover" | "container"> {
   const env = s.env?.(sessionId, from, keep);
   const own = env ?? chatEnv();
-  return { env, gate: s.gate && (() => s.gate!(own)), recover: s.recover && (() => s.recover!(own)) };
+  const container = s.container?.(sessionId, from) ?? undefined;
+  // A container login has no host token to warm up (122).
+  return { env, container, gate: !container && s.gate ? () => s.gate!(own) : undefined, recover: !container && s.recover ? () => s.recover!(own) : undefined };
 }
 
 /**
@@ -191,9 +199,23 @@ export class ChatManager extends EventEmitter {
     };
     this.records.set(sessionId, rec);
     this.wire(sessionId, rec);
-    s.seed?.(chat, login.env ?? chatEnv());
+    if (!login.container) s.seed?.(chat, login.env ?? chatEnv());
     this.emit("changed");
     return rec;
+  }
+
+  /**
+   * The transcript of a chat of this window's, from where its login keeps them: the exchange folder for a container login (122).
+   * Without a login on record for it, the host's own.
+   */
+  findTranscript(sessionId: string, cwd: string | null | undefined): string | null {
+    let c: ContainerLogin | null = null;
+    try {
+      c = this.settings().container?.(sessionId, null) ?? null;
+    } catch {
+      return null;
+    }
+    return c ? findTranscript(sessionId, containerWorkdir(c), containerProjectsRoot(c)) : findTranscript(sessionId, cwd || undefined);
   }
 
   /**
@@ -214,7 +236,7 @@ export class ChatManager extends EventEmitter {
       }
       return existing;
     }
-    const file = findTranscript(sessionId, cwd ?? undefined);
+    const file = this.findTranscript(sessionId, cwd);
     const s = this.settings();
     const ran = file ? transcriptMode(file) : null;
     const m = mode ?? (ran && (PERMISSION_MODES as string[]).includes(ran) ? ran : "default");
@@ -250,7 +272,7 @@ export class ChatManager extends EventEmitter {
   reloadViewer(sessionId: string): void {
     const rec = this.records.get(sessionId);
     if (!rec || !rec.viewer) return;
-    const file = rec.transcript?.file ?? findTranscript(sessionId, rec.chat.opts.cwd || undefined);
+    const file = rec.transcript?.file ?? this.findTranscript(sessionId, rec.chat.opts.cwd);
     if (!file) return;
     try {
       const st = fs.statSync(file);
@@ -285,7 +307,7 @@ export class ChatManager extends EventEmitter {
     Object.assign(rec.chat.opts, loginOpts(s, sessionId, null, true));
     rec.ours = true;
     rec.viewer = false;
-    s.seed?.(rec.chat, rec.chat.opts.env ?? chatEnv());
+    if (!rec.chat.opts.container) s.seed?.(rec.chat, rec.chat.opts.env ?? chatEnv());
     this.emit("changed");
     return rec;
   }

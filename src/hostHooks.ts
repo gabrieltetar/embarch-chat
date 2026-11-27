@@ -10,19 +10,22 @@ import { DIAGNOSTICS_TOOL, FileDiagnostics, PANEL_MCP_SERVER, formatDiagnostics 
 import { HANDOFF_TOOL, HandoffPort, handoffHow, handoffSetting } from "./handoff";
 import { LAST_SESSION_TOOL, lastSessionCall } from "./lastSession";
 import { McpTool, mcpServer } from "./mcpServer";
+import { panelParts } from "./containerLogin";
 
 /** For one chat's process: `cwd` is the folder the chat runs in, the only one besides the window's whose files autosave touches (61). */
 export function hostHooks(log: (s: string) => void, cwd: string, chat: HandoffPort): HostHooks {
   const c = vscode.workspace.getConfiguration("embarchChat");
   const h: HostHooks = {};
-  if (c.get<boolean>("autosave", true)) h.beforeFileTool = (tool, file, hookCwd) => saveIfDirty(tool, file, hookCwd, cwd, log);
+  // A container login declares neither the autosave hook nor the diagnostics tool: both act on the editor, and the chat's paths are the container's (122).
+  const parts = panelParts({ autosave: c.get<boolean>("autosave", true), diagnostics: c.get<boolean>("diagnosticsTool", false), handoff: handoffSetting(c.get<string>("handoff", "card")) }, !!chat.container);
+  if (parts.autosave) h.beforeFileTool = (tool, file, hookCwd) => saveIfDirty(tool, file, hookCwd, cwd, log);
   // The panel's one MCP server carries whichever tools are on; with none, it is not declared (65, 103).
   const tools: McpTool[] = [];
-  if (c.get<boolean>("diagnosticsTool", false)) tools.push({ ...DIAGNOSTICS_TOOL, call: getDiagnostics });
+  if (parts.diagnostics) tools.push({ ...DIAGNOSTICS_TOOL, call: getDiagnostics });
   const how = handoffSetting(c.get<string>("handoff", "card"));
   // The chat's own switch (109) picks card or immediate at each call; the setting's `off` still declares no tool.
-  if (how !== "off") tools.push({ ...HANDOFF_TOOL, call: (args) => chat.handoff(typeof args.prompt === "string" ? args.prompt : "", handoffHow(chat, how)) });
-  tools.push({ ...LAST_SESSION_TOOL, call: lastSessionCall(cwd, chat.sessionId, chat.projectsRoot) });
+  if (parts.handoff) tools.push({ ...HANDOFF_TOOL, call: (args) => chat.handoff(typeof args.prompt === "string" ? args.prompt : "", handoffHow(chat, how === "off" ? "card" : how)) });
+  tools.push({ ...LAST_SESSION_TOOL, call: lastSessionCall(chat.transcriptCwd ?? cwd, chat.sessionId, chat.projectsRoot) });
   if (tools.length) h.mcp = { [PANEL_MCP_SERVER]: mcpServer({ name: PANEL_MCP_SERVER, version: "0.1.0" }, tools) };
   return h;
 }
