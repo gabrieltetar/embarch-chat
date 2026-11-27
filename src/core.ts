@@ -19,6 +19,7 @@ export * from "./wire/transcript";
 export * from "./wire/history";
 export * from "./desk/client";
 export * from "./desk/threads";
+export * from "./desk/rule";
 export * from "./atlas";
 export * from "./fileLinks";
 export * from "./mcpServer";

@@ -353,15 +353,13 @@
           },
           "embarchChat.deskUrl": {
             "type": "string",
-            "default": "http://127.0.0.1:4891",
             "scope": "machine",
-            "description": "The embarch-desk service, on this machine only: a loopback address (127.0.0.1, ::1 or localhost); the extension refuses any other host and never sends the token to one. Only the extension's Node side calls it; the webview never holds the token. User or Remote settings only — a workspace cannot set it."
+            "description": "The embarch-desk service, on this machine only. Unset, it follows the desk's own rule: http://127.0.0.1 on EMBARCH_DESK_PORT, else 4891. It must be a loopback address (127.0.0.1, ::1 or localhost); the extension refuses any other host and never sends the token to one. Only the extension's Node side calls it; the webview never holds the token. User or Remote settings only — a workspace cannot set it."
           },
           "embarchChat.deskTokenPath": {
             "type": "string",
-            "default": "~/.config/embarch-desk/desk-token",
             "scope": "machine",
-            "description": "The desk's bearer token file. User or Remote settings only — a workspace cannot set it."
+            "description": "The desk's bearer token file. Unset, it follows the desk's own rule: desk-token in EMBARCH_DESK_CONFIG_DIR, else $XDG_CONFIG_HOME/embarch-desk, else ~/.config/embarch-desk. User or Remote settings only — a workspace cannot set it."
           },
           "embarchChat.assistant": {
             "type": "boolean",

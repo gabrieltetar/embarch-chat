@@ -243,6 +243,7 @@ const vscode = {
         if (!machineOnly && key in state.workspaceConfig) return state.workspaceConfig[key];
         return key in state.config ? state.config[key] : d;
       },
+      inspect: (k) => ({ globalValue: state.config[`${section}.${k}`] }),
     }),
     onDidChangeConfiguration: () => disposable(),
     onDidChangeWorkspaceFolders: event(bus, "folders"),

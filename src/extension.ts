@@ -14,6 +14,7 @@ import { LibraryEntry } from "./library/entries";
 import { readLibrary } from "./library/files";
 import { ChatManager, ChatRecord, DeskDue } from "./chats";
 import { chatStatus } from "./wire/reducer";
+import { resolveDeskEndpoint } from "./desk/rule";
 import { AssignBody, DeskClient, DeskError, MailboxEntry, expandHome } from "./desk/client";
 import { DeskService } from "./deskService";
 import { CONTENT_SCHEME, ContentDocs } from "./content";
@@ -54,13 +55,21 @@ let assistant: HaikuAssistant | undefined;
 let reloadMemory: ReloadMemory | undefined;
 let promptuRuns: PromptuRuns | undefined;
 
+// A value the engineer set in User or Remote settings, not a default; a workspace cannot set these (machine scope).
+function setValue<T>(c: vscode.WorkspaceConfiguration, key: string): T | undefined {
+  const i = c.inspect<T>(key);
+  return i?.globalValue;
+}
+
 function cfg() {
   const c = vscode.workspace.getConfiguration("embarchChat");
+  const desk = resolveDeskEndpoint(setValue<string>(c, "deskUrl"), setValue<string>(c, "deskTokenPath"));
   return {
     claudePath: c.get<string>("claudePath", "claude"),
     idleMs: Math.max(1, c.get<number>("idleMinutes", 5)) * 60_000,
-    deskUrl: c.get<string>("deskUrl", "http://127.0.0.1:4891"),
-    deskTokenPath: c.get<string>("deskTokenPath", "~/.config/embarch-desk/desk-token"),
+    // Set values win; unset ones follow the desk's own rule from this host's environment (decision 124).
+    deskUrl: desk.url,
+    deskTokenPath: desk.tokenPath,
     assistant: c.get<boolean>("assistant", true),
     startupProbe: c.get<boolean>("startupProbe", true),
     attachOpenFile: c.get<boolean>("attachOpenFile", true),
