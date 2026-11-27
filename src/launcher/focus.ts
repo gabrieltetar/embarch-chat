@@ -2,8 +2,8 @@
 // second one. The capability is a registry of topology strategies and
 // exactly one of them is implemented (WSL + a Chromium browser on the
 // Windows host); every other topology falls back to opening a tab, which
-// is what this extension did unconditionally before (embarch-ui decision
-// 28). A second topology is a new file plus one line of STRATEGIES here —
+// is what this extension did unconditionally before (embarch-chat decision
+// 123). A second topology is a new file plus one line of STRATEGIES here —
 // not a refactor of extension.ts.
 
 import * as cp from "child_process";
@@ -46,32 +46,12 @@ function onPath(name: string): string | undefined {
 
 /** The UI Automation script, with the tab title it matches on baked in.
  *
- * Four properties of this script are load-bearing; each was a real defect
- * found by measuring against the live browser before it was written:
- *
- * 1. `-cmatch 'Tab$'` is **case-sensitive**. A plain TabItem descendant
- *    search also returns the page's own in-page tab widgets — GitHub's
- *    `tabnav-tab`, Harvest's `pds-tab`, chess.com's `tabs-tab`, VS Code's
- *    own editor `tab` — which all end in lowercase `tab`. PowerShell's
- *    `-match` is case-insensitive and would let every one of them through,
- *    and clicking one clicks inside a page instead of switching tabs.
- * 2. **Every** window is enumerated, not `FindFirst`. The UIA root orders
- *    its children by z-order, so FindFirst returns whichever window is on
- *    top right now — and one browser process owned four windows here.
- *    Search first, raise second.
- * 3. The restore is **gated on `IsIconic`**. Calling `ShowWindow(RESTORE)`
- *    unconditionally un-maximizes a window that was maximized.
- * 4. The browser is never named. Chromium windows are found by their
- *    window class, which covers Brave, Chrome, Edge, Vivaldi and Opera
- *    without an allowlist to keep up to date. (Firefox is not Chromium and
- *    is not covered; it would be a second strategy, not a wider regex.)
- *
- * The UIA `Name` of a tab is not the document title — Brave appends its
- * own status annotations to it, e.g. `EmbArch - Memory usage - 22.3 MB` —
- * so the suffixes are stripped before the comparison, which is otherwise
- * exact. An exact match is why the page is titled just `EmbArch`: a
- * substring match on `embarch-ui` would also hit a GitHub tab or a local
- * file listing. */
+ * Its four load-bearing properties (the case-sensitive `-cmatch 'Tab$'`,
+ * enumerating every window, the `IsIconic` gate on restore, and no browser
+ * named) and why each exists are embarch-chat decision 123; change none
+ * without reading it. The UIA `Name` of a tab is not the document title
+ * (Brave appends status annotations), so the suffixes are stripped before
+ * the otherwise exact comparison. */
 function focusScript(title: string): string {
   const t = title.replace(/'/g, "''");
   return [
